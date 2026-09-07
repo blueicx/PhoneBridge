@@ -1,0 +1,7 @@
+<resources>
+    <color name="app_background">#07100D</color>
+    <color name="mote_mint">#8FF0C4</color>
+    <color name="mote_amber">#FFC86B</color>
+    <color name="mote_coral">#FF6B6B</color>
+    <color name="panel_stroke">#28453A</color>
+</resources>

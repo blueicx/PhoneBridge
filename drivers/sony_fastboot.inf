@@ -1,0 +1,44 @@
+;
+; Sony Xperia Fastboot WinUSB driver for VID_0FCE PID_0DDE
+;
+[Version]
+Signature = "$Windows NT$"
+Class = AndroidUsbDeviceClass
+ClassGuid = {3F966BD9-FA04-4ec5-991C-D326973B5128}
+Provider = %ProviderName%
+DriverVer = 08/22/2026,1.0.0.0
+CatalogFile = sony_fastboot.cat
+
+[ClassInstall32]
+Addreg = AndroidWinUsbClassReg
+
+[AndroidWinUsbClassReg]
+HKR,,,0,%ClassName%
+HKR,,Icon,,-1
+
+[Manufacturer]
+%ProviderName% = Standard,NT$ARCH$
+
+[Standard.NT$ARCH$]
+%DeviceName% = USB_Install, USB\VID_0FCE&PID_0DDE
+
+[USB_Install]
+Include = winusb.inf
+Needs = WINUSB.NT
+
+[USB_Install.Services]
+Include = winusb.inf
+AddService = WinUSB,0x00000002,WUDF_USB_Install_1
+
+[WUDF_USB_Install_1]
+DisplayName = %WinUsb_SvcDesc%
+ServiceType = 1
+StartType = 3
+ErrorControl = 1
+ServiceBinary = %12%\WinUSB.sys
+
+[Strings]
+ProviderName = "Sony"
+ClassName = "Android Bootloader Interface"
+DeviceName = "Sony Xperia Bootloader"
+WinUsb_SvcDesc = "WinUSB"

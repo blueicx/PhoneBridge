@@ -1,0 +1,14 @@
+{
+  "eventId": "fixture-event-1",
+  "origin": "phone-fixture",
+  "sequence": 1,
+  "type": "workspace.message",
+  "payload": {
+    "sessionId": "session-fixture",
+    "messageId": "message-fixture",
+    "role": "user",
+    "text": "fixture"
+  },
+  "createdAt": "2026-08-30T00:00:00.000Z",
+  "ack": false
+}

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="12dp">
+
+    <ImageView
+        android:layout_width="34dp"
+        android:layout_height="34dp"
+        android:importantForAccessibility="no"
+        android:src="@drawable/ic_launcher" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/widgetTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Mote · Lv.1"
+            android:textColor="#EFFAF4"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widgetStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="情绪平缓 · 能量 82%"
+            android:textColor="#A7D7C1"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/widgetMeta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="离线 · 0 fps"
+            android:textColor="#7C8A99"
+            android:textSize="10sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <Button
+            android:id="@+id/widgetFeed"
+            android:layout_width="match_parent"
+            android:layout_height="26dp"
+            android:backgroundTint="#183326"
+            android:minWidth="0dp"
+            android:paddingHorizontal="7dp"
+            android:text="@string/action_feed"
+            android:textColor="#D8F5E7"
+            android:textSize="9sp" />
+
+        <Button
+            android:id="@+id/widgetListen"
+            android:layout_width="match_parent"
+            android:layout_height="26dp"
+            android:layout_marginTop="3dp"
+            android:backgroundTint="#183326"
+            android:minWidth="0dp"
+            android:paddingHorizontal="7dp"
+            android:text="@string/continuous_listen_short"
+            android:textColor="#FFDFA3"
+            android:textSize="9sp" />
+
+        <Button
+            android:id="@+id/widgetCamera"
+            android:layout_width="match_parent"
+            android:layout_height="26dp"
+            android:layout_marginTop="3dp"
+            android:backgroundTint="#183326"
+            android:minWidth="0dp"
+            android:paddingHorizontal="7dp"
+            android:text="@string/action_lens_short"
+            android:textColor="#A5F3CB"
+            android:textSize="9sp" />
+    </LinearLayout>
+</LinearLayout>

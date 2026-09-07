@@ -1,0 +1,57 @@
+# Secrets and local credentials
+server/access.token
+.env
+.env.*
+!.env.example
+**/*secret*
+**/*credential*
+**/*password*
+
+# Runtime state, logs and local service artifacts
+server/runtime-state*.json
+server/handoff.json
+server/node.lock
+server/*.log
+server/*.out.log
+server/*.err.log
+server/*.bak
+server/backups/
+server/frames/
+server/screenshots/
+watchdog.log
+*.log
+
+# Dependencies and generated caches
+server/node_modules/
+**/node_modules/
+**/__pycache__/
+**/*.pyc
+**/.gradle/
+**/build/
+**/.idea/
+android/local.properties
+
+# APKs and other generated binaries
+**/*.apk
+**/*.aab
+cloudflared.exe
+
+# Local orchestration, backup and verification material
+.backup*/
+.backups/
+/ocr_check.py
+.dispatch-*
+.render-backup*/
+.takeover-backup*/
+.verify-*/
+.superpowers/
+.tools/
+
+# Root-level device captures and dumps (Android source XML remains tracked)
+/*.png
+/*.jpg
+/*.jpeg
+/*.wav
+/*.xml
+/*.txt
+/*.pyc

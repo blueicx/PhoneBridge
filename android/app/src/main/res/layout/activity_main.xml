@@ -1,0 +1,1115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_app"
+    android:paddingHorizontal="14dp"
+    android:paddingTop="14dp">
+
+    <TextView
+        android:id="@+id/titleText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.08"
+        android:text="@string/companion_name"
+        android:textColor="#F4FAF6"
+        android:textSize="26sp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/subtitleText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="1dp"
+        android:letterSpacing="0.04"
+        android:text="@string/companion_subtitle"
+        android:textAllCaps="false"
+        android:textColor="#87A495"
+        android:textSize="10sp"
+        app:layout_constraintStart_toStartOf="@id/titleText"
+        app:layout_constraintTop_toBottomOf="@id/titleText" />
+
+    <LinearLayout
+        android:id="@+id/themeSwitcher"
+        android:layout_width="wrap_content"
+        android:layout_height="27dp"
+        android:layout_marginEnd="8dp"
+        android:orientation="horizontal"
+        app:layout_constraintEnd_toStartOf="@id/statusChip"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <Button android:id="@+id/themeGlass" style="@style/PetAction" android:minWidth="0dp" android:layout_height="match_parent" android:paddingHorizontal="10dp" android:text="玻璃" android:textSize="10sp"/>
+        <Button android:id="@+id/themeLiquid" style="@style/PetAction" android:minWidth="0dp" android:layout_height="match_parent" android:paddingHorizontal="10dp" android:text="流光" android:textSize="10sp"/>
+        <Button android:id="@+id/themeNoir" style="@style/PetAction" android:minWidth="0dp" android:layout_height="match_parent" android:paddingHorizontal="10dp" android:text="夜芯" android:textSize="10sp"/>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/statusChip"
+        android:layout_width="wrap_content"
+        android:layout_height="30dp"
+        android:background="@drawable/bg_chip"
+        android:gravity="center"
+        android:paddingHorizontal="15dp"
+        android:text="@string/status_idle"
+        android:textColor="#A5F3CB"
+        android:textSize="11sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/heroPanel"
+        android:layout_width="match_parent"
+        android:layout_height="236dp"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_hero"
+        android:elevation="2dp"
+        app:layout_constraintTop_toBottomOf="@id/subtitleText">
+
+        <com.phonebridge.CompanionView
+            android:id="@+id/companionView"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_marginEnd="-18dp"
+            android:contentDescription="@string/companion_stage"
+            app:layout_constraintBottom_toBottomOf="parent"
+            android:layout_marginBottom="32dp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <LinearLayout
+            android:id="@+id/petVitals"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_marginStart="14dp"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <TextView
+                android:id="@+id/petLevelChip"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:background="@drawable/bg_chip"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="Lv.1"
+                android:textColor="#8FF0C4"
+                android:textSize="11sp"/>
+
+            <TextView
+                android:id="@+id/petEnergyChip"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_chip"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="能量 82%"
+                android:textColor="#FFC86B"
+                android:textSize="11sp"/>
+
+            <TextView
+                android:id="@+id/petAffectionChip"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_chip"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+            android:text="好感 40"
+            android:textColor="#FF9D9D"
+            android:textSize="11sp"/>
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/petGrowthRow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal"
+            app:layout_constraintEnd_toStartOf="@+id/previewFrame"
+            app:layout_constraintHorizontal_bias="0"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@+id/petVitals">
+
+            <TextView
+                android:id="@+id/petGrowthChip"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:background="@drawable/bg_chip"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="经验 0/45 · 技能 1"
+                android:textColor="#A5F3CB"
+                android:textSize="11sp"/>
+        </LinearLayout>
+
+        <com.google.android.material.card.MaterialCardView
+        android:id="@+id/previewFrame"
+        android:layout_width="88dp"
+        android:layout_height="116dp"
+        android:layout_marginTop="14dp"
+        android:layout_marginEnd="14dp"
+        app:cardCornerRadius="18dp"
+        app:cardElevation="8dp"
+        app:strokeColor="#8FF0C4"
+        app:strokeWidth="2dp"
+        app:cardBackgroundColor="#08120E"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+            <androidx.camera.view.PreviewView
+            android:id="@+id/previewView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="invisible"
+            app:implementationMode="compatible"
+            android:clipToOutline="true" />
+
+            <LinearLayout
+                android:id="@+id/cameraStateOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#EE08120E"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:padding="10dp">
+
+                <TextView
+                    android:id="@+id/cameraStateBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_chip"
+                    android:gravity="center"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="4dp"
+                    android:text="@string/camera_collapsed_badge"
+                    android:textColor="#8FF0C4"
+                    android:textSize="10sp" />
+
+                <TextView
+                    android:id="@+id/cameraStateTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center"
+                    android:text="@string/camera_collapsed_title"
+                    android:textColor="#F4FAF6"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/cameraStateSubtitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center"
+                    android:text="@string/camera_collapsed_summary"
+                    android:textColor="#87A495"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <com.phonebridge.RealityLensView
+                android:id="@+id/realityLensView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+        </com.google.android.material.card.MaterialCardView>
+
+        <TextView
+            android:id="@+id/speechText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="18dp"
+            android:layout_marginEnd="116dp"
+            android:layout_marginBottom="14dp"
+            android:alpha=".95"
+            android:background="@drawable/bg_speech"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="10dp"
+            android:text="@string/companion_hello"
+            android:textColor="#EAFFF5"
+            android:textSize="12sp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent" />
+
+        <FrameLayout
+            android:id="@+id/focusSpeechLayer"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:clickable="false"
+            android:focusable="false"
+            android:visibility="gone"
+            app:layout_constraintBottom_toTopOf="@id/focusToolbar"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+        <ScrollView
+            android:id="@+id/focusSpeechScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/focusSpeechStack"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical" />
+        </ScrollView>
+        </FrameLayout>
+
+        <Button
+            android:id="@+id/focusExit"
+            style="@style/PetAction"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="16dp"
+            android:minWidth="0dp"
+            android:background="@drawable/bg_hud_close"
+            android:paddingHorizontal="0dp"
+            android:elevation="8dp"
+            android:text="×"
+            android:contentDescription="退出沉浸模式"
+            android:textSize="18sp"
+            android:visibility="gone"
+            app:layout_constraintBottom_toTopOf="@id/focusToolbar"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+        <LinearLayout
+            android:id="@+id/focusToolbar"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="12dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone"
+            app:layout_constraintBottom_toTopOf="@id/focusInputRow"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent">
+
+            <Button
+                android:id="@+id/focusToolsToggle"
+                style="@style/PetAction"
+                android:layout_width="34dp"
+                android:layout_height="match_parent"
+                android:contentDescription="展开沉浸工具栏"
+                android:minWidth="0dp"
+                android:paddingHorizontal="0dp"
+                android:text="▾"
+                android:textSize="15sp" />
+
+            <HorizontalScrollView
+                android:id="@+id/focusToolScroll"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="7dp"
+                android:layout_weight="1"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:orientation="horizontal">
+
+                    <Button android:id="@+id/focusAiSpaceButton" style="@style/PetAction" android:minWidth="0dp" android:text="AI 空间" android:contentDescription="打开 AI 空间"/>
+                    <Button android:id="@+id/focusCameraButton" style="@style/PetAction" android:minWidth="0dp" android:text="相机"/>
+                    <Button android:id="@+id/focusLensButton" style="@style/PetAction" android:minWidth="0dp" android:text="换眼"/>
+                    <Button android:id="@+id/focusListenButton" style="@style/PetAction" android:minWidth="0dp" android:text="监听"/>
+                    <Button android:id="@+id/focusVoiceButton" style="@style/PetAction" android:minWidth="0dp" android:text="连聊"/>
+                    <Button android:id="@+id/focusMemoryButton" style="@style/PetAction" android:minWidth="0dp" android:text="记忆"/>
+                    <Button android:id="@+id/focusGameButton" style="@style/PetAction" android:minWidth="0dp" android:text="游戏"/>
+                    <Button android:id="@+id/focusRealityButton" style="@style/PetAction" android:minWidth="0dp" android:text="现实"/>
+                    <Button android:id="@+id/focusCommandButton" style="@style/PetAction" android:minWidth="0dp" android:layout_marginEnd="0dp" android:text="指令"/>
+                </LinearLayout>
+            </HorizontalScrollView>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/focusInputRow"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent">
+
+            <EditText
+                android:id="@+id/focusChatInput"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/bg_input"
+                android:hint="和 Mote 说点什么"
+                android:importantForAutofill="no"
+                android:imeOptions="actionSend"
+                android:inputType="textShortMessage|textCapSentences"
+                android:maxLines="1"
+                android:paddingHorizontal="12dp"
+                android:textColor="#EFFAF4"
+                android:textColorHint="#657A6E"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/focusSendButton"
+                style="@style/PetAction"
+                android:layout_width="42dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="7dp"
+                android:contentDescription="发送消息"
+                android:minWidth="0dp"
+                android:paddingHorizontal="0dp"
+                android:text="↑"
+                android:textSize="17sp" />
+
+            <Button
+                android:id="@+id/focusPttButton"
+                android:layout_width="52dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="7dp"
+                android:background="@drawable/bg_action"
+                android:contentDescription="按住说话"
+                android:paddingHorizontal="0dp"
+                android:textColor="#EFFAF4"
+                app:icon="@drawable/ic_voice"
+                app:iconGravity="textStart"
+                app:iconPadding="0dp"
+                app:iconSize="19dp"
+                app:iconTint="#EFFAF4" />
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <LinearLayout
+        android:id="@+id/appearanceRow"
+        android:layout_width="match_parent"
+        android:layout_height="32dp"
+        android:layout_marginTop="7dp"
+        android:orientation="horizontal"
+        app:layout_constraintTop_toBottomOf="@id/heroPanel">
+
+        <Button android:id="@+id/appearanceMote" style="@style/AppearanceSelector" app:icon="@drawable/ic_form_mote" android:text="星核"/>
+        <Button android:id="@+id/appearanceSprite" style="@style/AppearanceSelector" app:icon="@drawable/ic_form_sprite" android:text="叶狐"/>
+        <Button android:id="@+id/appearanceGhost" style="@style/AppearanceSelector" app:icon="@drawable/ic_form_ghost" android:text="雾猫"/>
+        <Button android:id="@+id/appearanceCircuit" style="@style/AppearanceSelector" app:icon="@drawable/ic_form_circuit" android:text="机甲兽"/>
+        <Button android:id="@+id/appearanceCloudWhale" style="@style/AppearanceSelector" app:icon="@drawable/ic_form_whale" android:text="云鲸"/>
+        <Button android:id="@+id/appearanceRimuru" style="@style/AppearanceSelector" android:layout_marginEnd="0dp" app:icon="@drawable/ic_form_rimuru" android:text="利姆鲁"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/metricRow"
+        android:layout_width="match_parent"
+        android:layout_height="34dp"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal"
+        app:layout_constraintTop_toBottomOf="@id/appearanceRow">
+
+        <TextView android:id="@+id/linkMetric" style="@style/MetricChip"/>
+        <TextView android:id="@+id/audioMetric" style="@style/MetricChip"/>
+        <TextView android:id="@+id/fpsMetric" style="@style/MetricChip"/>
+        <TextView android:id="@+id/taskMetric" style="@style/MetricChip" android:layout_marginEnd="0dp"/>
+    </LinearLayout>
+
+    <HorizontalScrollView
+        android:id="@+id/actionScroll"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginTop="8dp"
+        android:scrollbars="none"
+        app:layout_constraintTop_toBottomOf="@id/metricRow">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal">
+
+            <Button android:id="@+id/aiSpaceButton" style="@style/PetAction" android:text="AI 空间" android:contentDescription="打开 AI 空间"/>
+            <Button android:id="@+id/feedButton" style="@style/PetAction" android:text="@string/action_feed"/>
+            <Button android:id="@+id/playButton" style="@style/PetAction" android:text="@string/action_play"/>
+            <Button android:id="@+id/strokeButton" style="@style/PetAction" android:text="@string/action_stroke"/>
+            <Button android:id="@+id/cameraButton" style="@style/PetAction" android:text="@string/start_camera"/>
+            <Button android:id="@+id/lensButton" style="@style/PetAction" android:text="@string/action_lens"/>
+            <Button android:id="@+id/listenButton" style="@style/PetAction" android:text="@string/continuous_listen"/>
+            <Button android:id="@+id/residentButton" style="@style/PetAction" android:text="@string/action_resident"/>
+            <Button android:id="@+id/focusButton" style="@style/PetAction" android:text="沉浸"/>
+            <Button android:id="@+id/serverButton" style="@style/PetAction" android:layout_marginEnd="0dp" android:text="@string/action_server"/>
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <LinearLayout
+        android:id="@+id/cockpitDeck"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="vertical"
+        app:layout_constraintTop_toBottomOf="@id/actionScroll">
+
+        <LinearLayout
+            android:id="@+id/attentionCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_panel"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/attention_center_title"
+                        android:textColor="#F4FAF6"
+                        android:textSize="15sp"
+                        android:fontFamily="sans-serif-medium" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/attention_center_subtitle"
+                        android:textColor="#87A495"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/attentionStateChip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="30dp"
+                    android:background="@drawable/bg_chip"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="@string/attention_state_empty"
+                    android:textColor="#8FF0C4"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/attentionList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="vertical" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/cockpitSummaryCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_panel"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/cockpit_summary_title"
+                        android:textColor="#F4FAF6"
+                        android:textSize="15sp"
+                        android:fontFamily="sans-serif-medium" />
+
+                    <TextView
+                        android:id="@+id/cockpitSummaryStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/cockpit_summary_subtitle"
+                        android:textColor="#87A495"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/cockpitSummaryToggle"
+                    style="@style/PetAction"
+                    android:layout_width="62dp"
+                    android:layout_height="34dp"
+                    android:minWidth="0dp"
+                    android:text="@string/cockpit_expand"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/cockpitSummaryBody"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/currentTaskSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/current_task_empty"
+                    android:textColor="#F4FAF6"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium" />
+
+                <TextView
+                    android:id="@+id/currentTaskMetaSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/current_task_meta_empty"
+                    android:textColor="#87A495"
+                    android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/recentResultSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/recent_result_empty"
+                    android:textColor="#D8EEE2"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/capabilityHealthSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/capability_summary_empty"
+                    android:textColor="#A7C5B6"
+                    android:textSize="11sp" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/pttButton"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="7dp"
+        android:background="@drawable/bg_action"
+        android:fontFamily="sans-serif-medium"
+        android:text="@string/hold_to_talk"
+        android:textAllCaps="false"
+        android:letterSpacing="0.03"
+        android:textColor="#08120D"
+        android:textSize="14sp"
+        app:icon="@drawable/ic_voice"
+        app:iconGravity="textStart"
+        app:iconPadding="8dp"
+        app:iconSize="18dp"
+        app:iconTint="#08120D"
+        app:layout_constraintTop_toBottomOf="@id/cockpitDeck" />
+
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/panelTabs"
+        android:layout_width="match_parent"
+        android:layout_height="38dp"
+        android:layout_marginTop="7dp"
+        app:checkedButton="@id/consoleTab"
+        app:layout_constraintTop_toBottomOf="@id/pttButton"
+        app:selectionRequired="true"
+        app:singleSelection="true">
+
+        <Button android:id="@+id/consoleTab" style="?attr/materialButtonOutlinedStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:insetLeft="0dp" android:insetRight="0dp" android:paddingHorizontal="2dp" android:text="@string/tab_console" android:textSize="10sp"/>
+        <Button android:id="@+id/tasksTab" style="?attr/materialButtonOutlinedStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:insetLeft="0dp" android:insetRight="0dp" android:paddingHorizontal="2dp" android:text="@string/tab_tasks" android:textSize="10sp"/>
+        <Button android:id="@+id/sensorsTab" style="?attr/materialButtonOutlinedStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:insetLeft="0dp" android:insetRight="0dp" android:paddingHorizontal="2dp" android:text="@string/tab_sensors" android:textSize="10sp"/>
+        <Button android:id="@+id/codexTab" style="?attr/materialButtonOutlinedStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:insetLeft="0dp" android:insetRight="0dp" android:paddingHorizontal="2dp" android:text="@string/tab_codex" android:textSize="10sp"/>
+        <Button android:id="@+id/chatTab" style="?attr/materialButtonOutlinedStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:insetLeft="0dp" android:insetRight="0dp" android:paddingHorizontal="2dp" android:text="@string/tab_chat" android:textSize="10sp"/>
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    <FrameLayout
+        android:id="@+id/panelHost"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_panel"
+        android:padding="10dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/panelTabs">
+
+        <LinearLayout
+            android:id="@+id/consolePanel"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/logRecycler"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:paddingBottom="4dp"/>
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button android:id="@+id/quickHelp" style="@style/PetAction" android:text="help"/>
+                    <Button android:id="@+id/quickStatus" style="@style/PetAction" android:text="status"/>
+                    <Button android:id="@+id/quickProcesses" style="@style/PetAction" android:text="ps"/>
+                    <Button android:id="@+id/quickDisk" style="@style/PetAction" android:text="disk"/>
+                    <Button android:id="@+id/quickNetwork" style="@style/PetAction" android:text="net"/>
+                    <Button android:id="@+id/quickScreenshot" style="@style/PetAction" android:layout_marginEnd="0dp" android:text="screenshot"/>
+                </LinearLayout>
+            </HorizontalScrollView>
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button android:id="@+id/quickCamera" style="@style/PetAction" android:text="camera"/>
+                    <Button android:id="@+id/quickSysinfo" style="@style/PetAction" android:text="sysinfo"/>
+                    <Button android:id="@+id/quickPing" style="@style/PetAction" android:text="ping"/>
+                    <Button android:id="@+id/quickSay" style="@style/PetAction" android:text="say"/>
+                    <Button android:id="@+id/quickRefresh" style="@style/PetAction" android:layout_marginEnd="0dp" android:text="refresh"/>
+                </LinearLayout>
+            </HorizontalScrollView>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="7dp"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/commandInput"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_input"
+                    android:hint="@string/command_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:paddingHorizontal="13dp"
+                    android:textColor="#EFFAF4"
+                    android:textColorHint="#657A6E"
+                    android:textSize="13sp"/>
+
+                <Button
+                    android:id="@+id/sendCommand"
+                    style="@style/PetAction"
+                    android:layout_width="60dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="7dp"
+                    android:text="@string/action_send"
+                    android:textSize="13sp"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/tasksPanel"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/taskRecycler"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"/>
+
+            <Button
+                android:id="@+id/refreshTasks"
+                style="@style/PetAction"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:layout_marginEnd="0dp"
+                android:text="@string/action_refresh_tasks"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/sensorsPanel"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <TextView
+                    android:id="@+id/sensorText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:lineSpacingExtra="5dp"
+                    android:text="@string/sensors_loading"
+                    android:textColor="#CDE8DA"
+                    android:textSize="13sp"/>
+            </ScrollView>
+
+            <Button
+                android:id="@+id/refreshSensors"
+                style="@style/PetAction"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:layout_marginEnd="0dp"
+                android:text="@string/action_refresh_sensors"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/codexPanel"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <Spinner
+                android:id="@+id/codexTaskSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:background="@drawable/bg_input"/>
+
+            <Spinner
+                android:id="@+id/modelSpinner"
+                android:layout_marginTop="7dp"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:background="@drawable/bg_input"/>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="7dp" android:orientation="horizontal">
+                <Button android:id="@+id/selectCodexTask" style="@style/PetAction" android:text="@string/action_select_task"/>
+                <Button android:id="@+id/applyModel" style="@style/PetAction" android:text="@string/action_apply_model"/>
+                <Button android:id="@+id/refreshCodex" style="@style/PetAction" android:layout_marginEnd="0dp" android:text="@string/action_refresh"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical"
+                android:paddingTop="2dp">
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+                    <TextView
+                        android:id="@+id/selectedTaskTitle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:text="@string/codex_task_loading"
+                        android:textColor="#EFFAF4"
+                        android:textSize="14sp"/>
+                    <TextView
+                        android:id="@+id/selectedTaskPercent"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="9dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="0%"
+                        android:textColor="#FFD166"
+                        android:textSize="15sp"/>
+                </LinearLayout>
+
+                <ProgressBar
+                    android:id="@+id/selectedTaskProgress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="5dp"
+                    android:layout_marginTop="8dp"
+                    android:max="100"
+                    android:progress="0"
+                    android:progressTint="#FFD166"
+                    android:progressBackgroundTint="#33524A"/>
+
+                <TextView
+                    android:id="@+id/selectedTaskMeta"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="7dp"
+                    android:ellipsize="end"
+                    android:maxLines="2"
+                    android:textColor="#9DBBAE"
+                    android:textSize="11sp"/>
+            </LinearLayout>
+
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_marginTop="8dp" android:layout_weight="1">
+                <TextView
+                    android:id="@+id/selectedTaskDetail"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:lineSpacingExtra="4dp"
+                    android:text="@string/codex_task_timeline_empty"
+                    android:textColor="#CDE8DA"
+                    android:textSize="12sp"/>
+            </ScrollView>
+
+            <TextView
+                android:id="@+id/codexDetail"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="7dp"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:textColor="#88A296"
+                android:textSize="11sp"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/chatPanel"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/chatRecycler"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:paddingBottom="4dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/voiceButton"
+                    style="@style/PetAction"
+                    android:layout_width="64dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="7dp"
+                    android:minWidth="64dp"
+                    android:paddingHorizontal="6dp"
+                    android:text="@string/action_voice"/>
+
+                <Button
+                    android:id="@+id/memoryButton"
+                    style="@style/PetAction"
+                    android:layout_width="54dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="7dp"
+                    android:minWidth="54dp"
+                    android:text="@string/action_memory"/>
+
+                <Button
+                    android:id="@+id/offlineApiButton"
+                    style="@style/PetAction"
+                    android:layout_width="46dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="7dp"
+                    android:minWidth="46dp"
+                    android:text="API"
+                    android:textSize="11sp"/>
+
+                <EditText
+                    android:id="@+id/chatInput"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_input"
+                    android:hint="@string/chat_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="textLongMessage"
+                    android:maxLines="3"
+                    android:paddingHorizontal="12dp"
+                    android:textColor="#EFFAF4"
+                    android:textColorHint="#657A6E"
+                    android:textSize="13sp"/>
+
+                <Button
+                    android:id="@+id/sendChat"
+                    style="@style/PetAction"
+                    android:layout_width="62dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="7dp"
+                    android:text="@string/action_chat"
+                    android:textSize="12sp"/>
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/aiSpacePanel"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="#07100D"
+        android:elevation="24dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <Button android:id="@+id/aiSpaceClose" style="@style/PetAction" android:layout_width="42dp" android:layout_height="38dp" android:minWidth="42dp" android:text="‹" android:textSize="22sp"/>
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:layout_weight="1" android:orientation="vertical">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="AI 空间" android:textColor="#F4FAF6" android:textSize="22sp" android:fontFamily="sans-serif-medium"/>
+                    <TextView android:id="@+id/aiSpaceStatus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="会话、工具与任务" android:textColor="#87A495" android:textSize="11sp"/>
+                </LinearLayout>
+                <Button android:id="@+id/aiEmergencyStop" style="@style/PetAction" android:layout_width="wrap_content" android:layout_height="38dp" android:text="急停" android:textColor="#FFB0B0"/>
+            </LinearLayout>
+
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="每个会话独立保存模型。工具只使用节点已注册能力，授权可随时撤销。" android:textColor="#A7C5B6" android:textSize="12sp"/>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:orientation="horizontal">
+                <Spinner android:id="@+id/aiSessionSpinner" android:layout_width="0dp" android:layout_height="40dp" android:layout_weight="1" android:background="@drawable/bg_input"/>
+                <Button android:id="@+id/aiNewSession" style="@style/PetAction" android:layout_width="76dp" android:layout_height="40dp" android:layout_marginStart="8dp" android:text="新会话"/>
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
+                <EditText android:id="@+id/aiProviderInput" android:layout_width="0dp" android:layout_height="40dp" android:layout_weight="1" android:background="@drawable/bg_input" android:hint="提供方，如 codex" android:paddingHorizontal="10dp" android:textColor="#EFFAF4" android:textColorHint="#657A6E" android:textSize="12sp"/>
+                <EditText android:id="@+id/aiModelInput" android:layout_width="0dp" android:layout_height="40dp" android:layout_marginStart="8dp" android:layout_weight="1.35" android:background="@drawable/bg_input" android:hint="模型 ID" android:paddingHorizontal="10dp" android:textColor="#EFFAF4" android:textColorHint="#657A6E" android:textSize="12sp"/>
+                <Button android:id="@+id/aiAuthorize" style="@style/PetAction" android:layout_width="82dp" android:layout_height="40dp" android:layout_marginStart="8dp" android:text="授权工具"/>
+            </LinearLayout>
+            <TextView android:id="@+id/aiAuthorizationStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="工具未授权" android:textColor="#FFC86B" android:textSize="11sp"/>
+
+            <LinearLayout
+                android:id="@+id/aiPolicyCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_panel"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ai_policy_title"
+                    android:textColor="#F4FAF6"
+                    android:textSize="14sp"
+                    android:fontFamily="sans-serif-medium" />
+
+                <TextView
+                    android:id="@+id/aiPolicyStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/ai_policy_status_loading"
+                    android:textColor="#8FF0C4"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/aiPolicyDetail"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/ai_policy_detail_loading"
+                    android:textColor="#87A495"
+                    android:textSize="11sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/aiPolicyLevelButton"
+                        style="@style/PetAction"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:minWidth="0dp"
+                        android:text="@string/ai_policy_level_default"
+                        android:textSize="11sp" />
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/aiContinuousMicSwitch"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:text="@string/ai_policy_continuous_mic"
+                        android:textColor="#D9F2E5"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/aiPolicyRefresh"
+                        style="@style/PetAction"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:minWidth="0dp"
+                        android:text="@string/action_refresh"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/aiPolicyExpiry"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/ai_policy_expiry_empty"
+                    android:textColor="#A7C5B6"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_marginTop="10dp" android:layout_weight="1" android:background="@drawable/bg_panel" android:padding="12dp">
+                <TextView android:id="@+id/aiConversationText" android:layout_width="match_parent" android:layout_height="wrap_content" android:fontFamily="sans-serif" android:lineSpacingExtra="5dp" android:text="还没有消息。" android:textColor="#D9F2E5" android:textSize="13sp"/>
+            </ScrollView>
+            <TextView android:id="@+id/aiTaskText" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:maxLines="2" android:text="任务：暂无" android:textColor="#8FF0C4" android:textSize="11sp"/>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
+                <EditText android:id="@+id/aiInput" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1" android:background="@drawable/bg_input" android:hint="在 AI 空间开始一件事…" android:inputType="textLongMessage" android:maxLines="3" android:paddingHorizontal="12dp" android:textColor="#EFFAF4" android:textColorHint="#657A6E" android:textSize="13sp"/>
+                <Button android:id="@+id/aiSend" style="@style/PetAction" android:layout_width="68dp" android:layout_height="48dp" android:layout_marginStart="8dp" android:text="发送"/>
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>
