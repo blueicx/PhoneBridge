@@ -4,6 +4,7 @@ const { execFile, spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { WorkspaceStore, createEventEnvelope } = require('./workspace-core');
 const { DeviceHealthStore } = require('./device-health');
+const { MoteStore } = require('./mote-profiles');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -232,6 +233,7 @@ const workspaceStore = new WorkspaceStore({
   journalPath: path.join(RUNTIME_DIR, 'workspace-events.jsonl'),
   snapshotPath: path.join(RUNTIME_DIR, 'workspace-state.json'),
 });
+const moteStore = new MoteStore({ snapshotPath: path.join(RUNTIME_DIR, 'mote-state.json') });
 const deviceHealthStore = new DeviceHealthStore({
   bridge: 'disconnected',
   node: 'inactive',
@@ -286,7 +288,7 @@ function broadcastActionUpdate(actionRun) {
 }
 
 function broadcastTaskAttention(task) {
-  if (!task || !['succeeded', 'failed', 'cancelled'].includes(task.state)) return null;
+  if (!task || !['needs_confirmation', 'succeeded', 'failed', 'cancelled'].includes(task.state)) return null;
   const attention = workspaceStore.getLatestAttentionForTask(task.id);
   broadcastAttention(attention);
   return attention;
@@ -642,6 +644,22 @@ function applyWorkspaceEvent(event) {
   if (event.type === 'device.state') {
     updateDeviceHealth(payload.state || payload);
   }
+  if (event.type === 'mote.exploration' && payload.eventId && payload.clueType) {
+    try { applyMoteClue(payload); } catch (_) {}
+  }
+}
+
+function applyMoteClue(payload) {
+  const result = moteStore.collectClue({ eventId: payload.eventId, clueType: payload.clueType });
+  if (!result.duplicate) broadcastMoteState();
+  return result;
+}
+
+function broadcastMoteState() {
+  const state = moteStore.getState();
+  broadcast({ type: 'mote.roster', roster: moteStore.roster(), state });
+  broadcast({ type: 'mote.profile', profile: moteStore.roster().find(item => item.active) || null });
+  broadcast({ type: 'mote.exploration', exploration: state.exploration, state });
 }
 
 function markInteraction() {
@@ -815,6 +833,7 @@ async function chatWithModel(text, memories = [], options = {}) {
   const proProfile = petState && typeof petState === 'object' ? petState.proProfile : null;
   const proActive = petState?.proMode === true && proProfile && typeof proProfile === 'object';
   const assistantName = proActive ? String(proProfile.name || 'Aria') : 'Mote';
+  const activeMote = moteStore.roster().find(item => item.active) || null;
   const persona = (proActive
     ? [
         `你是 ${assistantName}，用户亲手定制的 Pro 形象助手。`,
@@ -823,6 +842,7 @@ async function chatWithModel(text, memories = [], options = {}) {
       ]
     : [
         '你是 Mote，一台驻留在 Xperia 手机上的感官同伴。',
+        activeMote ? `当前形态是${activeMote.name}：${activeMote.voice}；任务偏好：${activeMote.taskAffinity.join('、')}。` : '',
         '回答要简短、自然、有陪伴感；用户要求技术细节时再展开。',
         '你能够看到摄像头画面、听到麦克风、执行电脑任务，并感知手机电量和温度。'
       ]).join('\n');
@@ -936,6 +956,8 @@ function snapshotPayload() {
     chat: chatHistory.slice(-50),
     deviceHealth: deviceHealthStore.snapshot(),
     workspace: workspaceSnapshot(),
+    motes: { state: moteStore.getState(), roster: moteStore.roster() },
+    autonomy: workspaceStore.getAutonomyPolicy(),
   });
 }
 
@@ -986,6 +1008,8 @@ function workspaceSnapshot() {
     actionRuns: workspaceStore.listActionRuns().slice(0, 100),
     audit: workspaceStore.auditLog().slice(-100),
     emergencyStop: workspaceStore.emergencyStopState(),
+    autonomy: workspaceStore.getAutonomyPolicy(),
+    motes: { state: moteStore.getState(), roster: moteStore.roster() },
   };
 }
 
@@ -1082,6 +1106,7 @@ const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name
 </style><div class="wrap"><div class="top"><div><div class="logo">Mote</div><div class="sub">PhoneBridge · sensory familiar</div></div><div style="margin-left:auto;display:flex;gap:12px;align-items:center"><div class="pill" id="status">loading</div><button onclick="logout()" style="padding:4px 12px;font-size:12px;background:#0d1b15">退出</button></div></div>
 <div class="grid"><div class="panel"><h2>实时感官</h2><img id="frame"><div class="metrics" style="margin-top:12px"><div class="metric"><b id="cpu">-</b><span>手机 CPU</span></div><div class="metric"><b id="mem">-</b><span>内存</span></div><div class="metric"><b id="bat">-</b><span>电量</span></div><div class="metric"><b id="temp">-</b><span>温度</span></div></div><div class="row"><button class="primary" onclick="device('camera_on')">开眼</button><button onclick="device('camera_front')">前眼</button><button onclick="device('camera_back')">后眼</button><button onclick="device('listen_on')">监听</button><button onclick="say()">说话</button></div><div class="row"><input id="speech" placeholder="输入要在手机上播放的话" style="flex:1"></div><div class=row><select id=idleTimeout title="空闲断流时间"><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5 selected>5 分钟</option><option value=10>10 分钟</option><option value=30>30 分钟</option></select><button onclick=setIdleTimeout()>空闲断流</button></div><div class=row><select id=screenOffTimeout title="息屏自动退出时间"><option value=0>不自动退出</option><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5>5 分钟</option><option value=10 selected>10 分钟</option><option value=30>30 分钟</option><option value=60>60 分钟</option></select><button onclick=setScreenOffTimeout()>息屏退出</button></div></div>
 <div class="panel"><h2>指挥台</h2><div class="tabs"><button class="active" data-tab="tasks">任务</button><button data-tab="log">日志</button><button data-tab="sensors">传感器</button><button data-tab="frame">画面</button></div><div id="tasks"></div><div id="log" hidden></div><div id="sensors" hidden></div><div id="framebox" hidden><img id="frame2"></div><div class="row"><input id="cmd" placeholder="help / ping 8.8.8.8 / screenshot / ps / say 你好" style="flex:1"><button class="primary" onclick="sendCmd()">执行</button></div><textarea id="detail" readonly placeholder="选中任务的输出会出现在这里"></textarea></div></div>
+<div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治</h2><div id="workspaceSummary" class="sub">加载中…</div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div></div>
 <script>
 let selected='';
 function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
@@ -1133,6 +1158,15 @@ async function setScreenOffTimeout(){
   await api('/api/screen-off-timeout',{method:'POST',headers:{'content-type':'application/json'},body:'{"minutes":'+screenOffTimeout.value+'}'});
   refresh();
 }
+async function taskAction(id,patch){await api('/api/tasks/'+encodeURIComponent(id),{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(patch)});refreshWorkspace()}
+async function activateMote(id){await api('/api/motes/active',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({id})});refreshWorkspace()}
+async function chooseMote(id){await api('/api/motes/exploration',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({targetId:id})});refreshWorkspace()}
+async function stopAutonomy(){await api('/api/tools/emergency-stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reason:'web'})});refreshWorkspace()}
+async function refreshWorkspace(){try{let s=await api('/api/state'),w=s.workspace||{},p=s.autonomy||w.autonomy||{};workspaceSummary.textContent='自治：'+(p.level||'-')+' · 白名单 '+(p.allowedTools||[]).length+' 项 · 急停 '+(w.emergencyStop?.active?'已启用':'未启用')+' · 任务 '+(w.tasks||[]).length+' 个';
+  const tasksHtml=(w.tasks||[]).slice(0,10).map(t=>'<div class=item><b>'+esc(t.title)+'</b> · '+esc(t.state)+' · '+t.progress+'% <button onclick="taskAction(\''+esc(t.id)+'\',{state:\'paused\'})">暂停</button> <button onclick="taskAction(\''+esc(t.id)+'\',{state:\'running\'})">继续</button> <button onclick="taskAction(\''+esc(t.id)+'\',{retry:true})">重试</button> <button onclick="taskAction(\''+esc(t.id)+'\',{state:\'cancelled\'})">取消</button> <button onclick="taskAction(\''+esc(t.id)+'\',{state:\'archived\'})">归档</button></div>').join('');
+  const roster=(s.motes?.roster||w.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote(\''+m.id+'\')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
+  moteRoster.innerHTML=tasksHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div>'; }catch(e){workspaceSummary.textContent='工作台暂不可用'}}
+refreshWorkspace();
 </script>`;
 
 const server = http.createServer(async (req, res) => {
@@ -1192,6 +1226,41 @@ const server = http.createServer(async (req, res) => {
       if (payload.maxPerHour !== undefined) proactiveState.maxPerHour = Math.max(0, Math.min(60, Math.round(Number(payload.maxPerHour))));
       if (payload.dedupeMinutes !== undefined) proactiveState.dedupeMinutes = Math.max(0, Math.min(1440, Math.round(Number(payload.dedupeMinutes))));
       return sendJson(res, 200, { ok: true, paused: proactiveState.paused, quietStart: proactiveState.quietStart, quietEnd: proactiveState.quietEnd, maxPerHour: proactiveState.maxPerHour, dedupeMinutes: proactiveState.dedupeMinutes });
+    }
+    if (parsedUrl.pathname === '/api/autonomy' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, policy: workspaceStore.getAutonomyPolicy(), emergencyStop: workspaceStore.emergencyStopState() });
+    }
+    if (parsedUrl.pathname === '/api/autonomy' && req.method === 'PATCH') {
+      try {
+        const policy = workspaceStore.updateAutonomyPolicy(await readJson(req));
+        broadcast({ type: 'workspace.policy', scope: 'global', policy });
+        return sendJson(res, 200, { ok: true, policy });
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: error.message });
+      }
+    }
+    if (parsedUrl.pathname === '/api/motes' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, state: moteStore.getState(), roster: moteStore.roster() });
+    }
+    if (parsedUrl.pathname === '/api/motes/active' && req.method === 'PATCH') {
+      try {
+        const state = moteStore.setActive((await readJson(req)).id);
+        broadcastMoteState();
+        return sendJson(res, 200, { ok: true, state, profile: moteStore.roster().find(item => item.active) });
+      } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    if (parsedUrl.pathname === '/api/motes/exploration' && req.method === 'PATCH') {
+      try {
+        const state = moteStore.setExplorationTarget((await readJson(req)).targetId);
+        broadcastMoteState();
+        return sendJson(res, 200, { ok: true, state });
+      } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    if (parsedUrl.pathname === '/api/motes/exploration/clues' && req.method === 'POST') {
+      try {
+        const result = applyMoteClue(await readJson(req));
+        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
+      } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
     if (parsedUrl.pathname === '/api/auth/rotate' && req.method === 'POST') {
       try {
@@ -1389,7 +1458,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/state') {
       res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
-      return res.end(JSON.stringify({stats:statsSnapshot(),deviceHealth:deviceHealthStore.snapshot(),tasks:publicTasks(),logs:publicLogs(),telemetry:phoneTelemetry,pet:petState,codex:{...codexInfo,selectedTaskId:selectedCodexTaskId},chat:chatHistory.slice(-50)}));
+      return res.end(JSON.stringify({stats:statsSnapshot(),deviceHealth:deviceHealthStore.snapshot(),tasks:publicTasks(),logs:publicLogs(),telemetry:phoneTelemetry,pet:petState,codex:{...codexInfo,selectedTaskId:selectedCodexTaskId},chat:chatHistory.slice(-50),workspace:workspaceSnapshot(),motes:{state:moteStore.getState(),roster:moteStore.roster()},autonomy:workspaceStore.getAutonomyPolicy()}));
     }
     if (parsedUrl.pathname === '/api/command') {
       const body = await readBody(req);

@@ -121,6 +121,7 @@ class CompanionView @JvmOverloads constructor(
     private val touchHandler = Handler(Looper.getMainLooper())
     private var longPressFired = false
     private var petting = false
+    private var behaviorHint: MoteBehaviorOutput? = null
     private var petStrokeDistance = 0f
     private var petJoy = 0f
     private var nextPetFeedbackAt = 0f
@@ -160,7 +161,8 @@ class CompanionView @JvmOverloads constructor(
             displayedEmotion.tension * .22f -
             displayedEmotion.fatigue * .34f -
             displayedEmotion.loneliness * .16f
-        return (state.normalizedEnergy() * .54f + (.72f + emotionEnergy) * .46f + petJoy * .10f)
+        val behaviorBoost = behaviorHint?.motionIntensity?.let { .88f + it * .18f } ?: 1f
+        return ((state.normalizedEnergy() * .54f + (.72f + emotionEnergy) * .46f + petJoy * .10f) * behaviorBoost)
             .coerceIn(.34f, 1.18f)
     }
 
@@ -450,6 +452,11 @@ class CompanionView @JvmOverloads constructor(
     fun update(state: PetState) {
         this.state = state
         prepareShaders()
+        requestRedraw()
+    }
+
+    fun setBehaviorHint(hint: MoteBehaviorOutput) {
+        behaviorHint = hint
         requestRedraw()
     }
 

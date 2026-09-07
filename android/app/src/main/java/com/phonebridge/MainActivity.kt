@@ -32,6 +32,7 @@ import android.view.HapticFeedbackConstants
 import android.widget.EditText
 import android.widget.HorizontalScrollView
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.Button
 import android.widget.TextView
@@ -233,6 +234,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private val workspaceTaskMirror = linkedMapOf<String, JSONObject>()
     private val automationRunMirror = linkedMapOf<String, JSONObject>()
     private val actionRunMirror = linkedMapOf<String, JSONObject>()
+    private var moteRosterJson = JSONArray()
+    private var moteStateJson = JSONObject()
     private var cockpitUsesOfflineMirror = false
     private var cockpitSummaryExpanded = false
     private var workspaceEmergencyState: JSONObject? = null
@@ -828,11 +831,14 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun statusLabel(status: String): String = when (status.lowercase()) {
         "open" -> "待处理"
         "pending" -> "待确认"
+        "needs_confirmation" -> "待确认"
         "running" -> "执行中"
         "blocked" -> "受阻"
         "acknowledged", "read" -> "已读"
         "resolved", "succeeded", "done" -> "已完成"
-        "ignored", "dismissed", "cancelled" -> "已忽略"
+        "ignored", "dismissed" -> "已忽略"
+        "cancelled" -> "已取消"
+        "archived" -> "已归档"
         "failed", "error" -> "失败"
         else -> status.ifBlank { "未知" }
     }
@@ -845,7 +851,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             .sortedByDescending { parseEpochMs(it.opt("updatedAt")) ?: 0L }
             .firstOrNull {
                 val state = it.optString("state", it.optString("status", "pending"))
-                state.equals("pending", true) || state.equals("running", true)
+                state.equals("pending", true) || state.equals("running", true) || state.equals("needs_confirmation", true)
             }
         val latestResult = workspaceTasks
             .sortedByDescending { parseEpochMs(it.opt("updatedAt")) ?: 0L }
@@ -946,10 +952,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             val tasks = workspaceRepository.tasks()
             val attention = workspaceRepository.attentionItems()
             val actionRuns = workspaceRepository.actionRuns()
+            val cachedMoteRoster = getSharedPreferences("mote_roster", Context.MODE_PRIVATE).getString("roster", null)
+            val cachedMoteState = getSharedPreferences("mote_roster", Context.MODE_PRIVATE).getString("state", null)
             val attentionJson = JSONArray().apply {
                 attention.forEach { put(JSONObject(it.toJson())) }
             }
             withContext(Dispatchers.Main) {
+                if (!cachedMoteRoster.isNullOrBlank()) handleMoteSnapshot(JSONObject().put("roster", JSONArray(cachedMoteRoster)).put("state", JSONObject(cachedMoteState ?: "{}")))
                 workspaceTaskMirror.clear()
                 automationRunMirror.clear()
                 actionRunMirror.clear()
@@ -984,6 +993,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun applyWorkspaceSnapshot(json: JSONObject) {
         cockpitUsesOfflineMirror = false
+        handleMoteSnapshot(json.optJSONObject("motes"))
         json.optJSONObject("deviceHealth")?.let { deviceHealthState = parseDeviceHealthJson(it) }
         workspaceEmergencyState = json.optJSONObject("emergencyStop")
         workspaceTaskMirror.clear()
@@ -1369,6 +1379,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         residentButton.setOnClickListener { toggleResident() }
         findViewById<Button>(R.id.focusButton).setOnClickListener { enterFocusMode() }
         findViewById<Button>(R.id.aiSpaceButton).setOnClickListener { openAiSpace() }
+        findViewById<Button>(R.id.moteDexButton).setOnClickListener { showMoteDexDialog() }
         findViewById<Button>(R.id.focusAiSpaceButton).setOnClickListener { openAiSpace() }
         findViewById<Button>(R.id.aiSpaceClose).setOnClickListener { closeAiSpace() }
         findViewById<Button>(R.id.aiNewSession).setOnClickListener { createAiSession() }
@@ -1609,6 +1620,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         companionView.update(pet)
         companionView.poke()
         renderAppearanceSelection()
+        if (BridgeLink.isOnline) {
+            workspaceRequest("/api/motes/active", "PATCH", JSONObject().put("id", value.name.lowercase(Locale.ROOT)))
+        }
         say("换成了${value.label}形态。")
     }
 
@@ -1902,6 +1916,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 .put("node", node.id)
                 .put("reward", 4)
                 .put("state", petJson())
+        )
+        enqueueWorkspaceEvent(
+            WorkspaceEventTypes.MOTE_EXPLORATION,
+            JSONObject()
+                .put("eventId", "reality-${node.id}-${System.currentTimeMillis()}" )
+                .put("clueType", node.id)
         )
         logAdapter.add("success", "现实线索 +4 经验：${node.title}")
         say(buildString {
@@ -2633,6 +2653,32 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
     }
 
+    private fun handleMoteSnapshot(snapshot: JSONObject?) {
+        if (snapshot == null) return
+        moteRosterJson = JSONArray((snapshot.optJSONArray("roster") ?: JSONArray()).toString())
+        moteStateJson = JSONObject((snapshot.optJSONObject("state") ?: JSONObject()).toString())
+        getSharedPreferences("mote_roster", Context.MODE_PRIVATE).edit()
+            .putString("roster", moteRosterJson.toString())
+            .putString("state", moteStateJson.toString())
+            .apply()
+        val active = moteStateJson.optString("activeId")
+        if (active.isNotBlank()) {
+            val appearance = PetAppearance.fromWire(active)
+            if (appearance != pet.appearance) {
+                runOnUiThread {
+                    pet = pet.copy(appearance = appearance)
+                    savePet()
+                    renderAppearanceSelection()
+                    renderPet()
+                }
+            }
+        }
+    }
+
+    private fun handleMoteRosterEvent(roster: JSONArray?, state: JSONObject?) {
+        handleMoteSnapshot(JSONObject().put("roster", roster ?: moteRosterJson).put("state", state ?: moteStateJson))
+    }
+
     private fun handleEmergencyStopEvent(state: JSONObject?) {
         runOnUiThread {
             workspaceEmergencyState = state
@@ -3007,6 +3053,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     }
                 }
                 "snapshot" -> {
+                    json.optJSONObject("motes")?.let { handleMoteSnapshot(it) }
                     json.optJSONObject("workspace")?.let { workspace ->
                         runOnUiThread { applyWorkspaceSnapshot(workspace) }
                     }
@@ -3183,6 +3230,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 "action.run", "action.result" -> handleActionRunEvent(json.optJSONObject("actionRun"))
                 "workspace.policy" -> handlePolicyEvent(json.optJSONObject("policy"))
                 "workspace.emergency_stop" -> handleEmergencyStopEvent(json.optJSONObject("state"))
+                "mote.roster" -> handleMoteRosterEvent(json.optJSONArray("roster"), json.optJSONObject("state"))
+                "mote.profile" -> json.optJSONObject("profile")?.let { profile ->
+                    handleMoteRosterEvent(null, JSONObject().put("activeId", profile.optString("id")))
+                }
+                "mote.exploration" -> handleMoteRosterEvent(null, json.optJSONObject("state"))
                 "device.state" -> json.optJSONObject("state")?.let { state ->
                     runOnUiThread {
                         deviceHealthState = parseDeviceHealthJson(state)
@@ -3481,6 +3533,51 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             .setMessage("Lv.${pet.level} · 经验 ${pet.experience}/$required\n\n$skills")
             .setPositiveButton("好的", null)
             .show()
+    }
+
+    private fun showMoteDexDialog() {
+        val cached = getSharedPreferences("mote_roster", Context.MODE_PRIVATE).getString("roster", null)
+        val cachedState = getSharedPreferences("mote_roster", Context.MODE_PRIVATE).getString("state", null)
+        if (!cached.isNullOrBlank()) {
+            handleMoteSnapshot(JSONObject().put("roster", JSONArray(cached)).put("state", JSONObject(cachedState ?: "{}")))
+            renderMoteDexDialog()
+        }
+        if (BridgeLink.isOnline) workspaceRequest("/api/motes", onSuccess = { handleMoteSnapshot(it); renderMoteDexDialog() })
+        else if (cached.isNullOrBlank()) renderMoteDexDialog()
+    }
+
+    private fun renderMoteDexDialog() {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val exploration = moteStateJson.optJSONObject("exploration") ?: JSONObject()
+        val target = exploration.optString("targetId").ifBlank { "暂无" }
+        val fragments = exploration.optJSONObject("fragments")
+        container.addView(TextView(this).apply {
+            text = "探索目标：$target\n地点 ${if (fragments?.optBoolean("location") == true) "✓" else "·"}  物体 ${if (fragments?.optBoolean("object") == true) "✓" else "·"}  光线 ${if (fragments?.optBoolean("light") == true) "✓" else "·"}"
+            setTextColor(Color.parseColor("#D9F5E6"))
+            setPadding(0, 0, 0, dp(8))
+        })
+        for (index in 0 until moteRosterJson.length()) {
+            val profile = moteRosterJson.optJSONObject(index) ?: continue
+            val id = profile.optString("id")
+            val unlocked = profile.optBoolean("unlocked")
+            val button = Button(this).apply {
+                text = if (unlocked) "${profile.optString("name")} · ${profile.optString("voice")}" else "${profile.optString("name")} · 未解锁（设为探索目标）"
+                isAllCaps = false
+                isEnabled = true
+                setOnClickListener {
+                    if (unlocked) {
+                        workspaceRequest("/api/motes/active", "PATCH", JSONObject().put("id", id), onSuccess = { handleMoteSnapshot(it); say("已切换到${profile.optString("name")}") })
+                    } else {
+                        workspaceRequest("/api/motes/exploration", "PATCH", JSONObject().put("targetId", id), onSuccess = { handleMoteSnapshot(it); say("开始探索${profile.optString("name")}") })
+                    }
+                }
+            }
+            container.addView(button)
+        }
+        AlertDialog.Builder(this).setTitle("Mote 图鉴 · ${moteRosterJson.length()}/10").setView(container).setPositiveButton("关闭", null).show()
     }
 
     private fun showSignalGameDialog() {
@@ -3782,6 +3879,20 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         )
         val mood = moodScores.maxByOrNull { it.first }?.second ?: PetMood.CALM
         pet = pet.copy(mood = mood, connected = online, cameraActive = cameraRunning, listening = micRunning, activeTasks = activeTasks.size, emotion = emotion)
+        val behavior = MoteBehaviorEngine.resolve(
+            MoteProfiles.profile(pet.appearance),
+            MoteBehaviorInput(
+                taskState = activeTasks.values.firstOrNull()?.status,
+                deviceHealth = deviceHealthState.overall.name,
+                interaction = when { speaking -> "chat"; pttActive -> "ptt"; else -> "ambient" },
+                explorationProgress = (moteStateJson.optJSONObject("exploration")?.optJSONObject("fragments")?.let { fragments ->
+                    listOf("location", "object", "light").count { fragments.optBoolean(it) }
+                } ?: 0),
+                emotion = pet.emotion
+            )
+        )
+        companionView.setBehaviorHint(behavior)
+        realityLensView.setBehaviorHint(behavior)
         companionView.update(pet)
         renderFocusTools()
         linkMetric.text = if (online) "链路 在线" else "链路 离线"

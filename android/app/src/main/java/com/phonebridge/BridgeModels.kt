@@ -13,7 +13,27 @@ enum class PetAppearance(val label: String) {
     GHOST("雾猫"),
     CIRCUIT("机甲兽"),
     CLOUD_WHALE("云鲸"),
-    RIMURU("利姆鲁")
+    RIMURU("利姆鲁"),
+    EMBER_SPRIG("焰芽"),
+    PRISM_MOTH("棱光蝶"),
+    MOSS_TORTOISE("苔龟"),
+    ORBIT_RAVEN("星鸦");
+
+    companion object {
+        fun fromWire(value: String?): PetAppearance = when (value.orEmpty().trim().lowercase()) {
+            "mote", "star_core", "星核" -> MOTE
+            "sprite", "leaf_fox", "叶狐" -> SPRITE
+            "ghost", "mist_cat", "雾猫" -> GHOST
+            "circuit", "mecha_beast", "机甲兽" -> CIRCUIT
+            "cloud_whale", "云鲸" -> CLOUD_WHALE
+            "rimuru", "利姆鲁" -> RIMURU
+            "ember_sprig", "ember-sprig", "焰芽" -> EMBER_SPRIG
+            "prism_moth", "prism-moth", "棱光蝶" -> PRISM_MOTH
+            "moss_tortoise", "moss-tortoise", "苔龟" -> MOSS_TORTOISE
+            "orbit_raven", "orbit-raven", "星鸦" -> ORBIT_RAVEN
+            else -> MOTE
+        }
+    }
 }
 
 data class PetEmotion(

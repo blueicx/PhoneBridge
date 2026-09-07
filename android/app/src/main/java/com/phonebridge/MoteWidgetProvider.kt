@@ -38,6 +38,8 @@ class MoteWidgetProvider : AppWidgetProvider() {
         val energy = prefs.getInt("energy", 82)
         val affection = prefs.getInt("affection", 40)
         val streak = prefs.getInt("careStreak", 0)
+        val appearance = PetAppearance.fromWire(prefs.getString("appearance", "MOTE"))
+        val profile = MoteProfiles.profile(appearance)
         val mood = runCatching {
             PetMood.valueOf(prefs.getString("mood", "CURIOUS") ?: "CURIOUS")
         }.getOrDefault(PetMood.CURIOUS)
@@ -55,7 +57,7 @@ class MoteWidgetProvider : AppWidgetProvider() {
         val battery = widgetPrefs.getInt("battery", 0)
         val activeTasks = widgetPrefs.getInt("activeTasks", 0)
         val views = RemoteViews(context.packageName, R.layout.widget_mote).apply {
-            setTextViewText(R.id.widgetTitle, "Mote · Lv.$level")
+            setTextViewText(R.id.widgetTitle, "${profile.name} · Lv.$level")
             setTextViewText(
                 R.id.widgetStatus,
                 "$moodName · 能量 $energy% · 好感 $affection · 连续陪伴 $streak 天"

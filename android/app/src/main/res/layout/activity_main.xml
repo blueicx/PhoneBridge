@@ -444,6 +444,7 @@
             android:orientation="horizontal">
 
             <Button android:id="@+id/aiSpaceButton" style="@style/PetAction" android:text="AI 空间" android:contentDescription="打开 AI 空间"/>
+            <Button android:id="@+id/moteDexButton" style="@style/PetAction" android:text="Mote 图鉴" android:contentDescription="打开 Mote 图鉴"/>
             <Button android:id="@+id/feedButton" style="@style/PetAction" android:text="@string/action_feed"/>
             <Button android:id="@+id/playButton" style="@style/PetAction" android:text="@string/action_play"/>
             <Button android:id="@+id/strokeButton" style="@style/PetAction" android:text="@string/action_stroke"/>

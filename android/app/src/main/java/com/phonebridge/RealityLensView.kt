@@ -99,6 +99,7 @@ class RealityLensView @JvmOverloads constructor(
 
     // Interactive Pet Animations
     private var petJumpProgress = 0f // 0f..1f bounce curve when tapped
+    private var behaviorHint: MoteBehaviorOutput? = null
     private var petJoyTimer = 0f     // 0f..1f spawns hearts & sparkles
     private var petSpeechBubble: String? = null
     private var petSpeechTimer = 0f
@@ -162,6 +163,11 @@ class RealityLensView @JvmOverloads constructor(
 
     fun setPetState(state: PetState) {
         petState = state
+        invalidate()
+    }
+
+    fun setBehaviorHint(hint: MoteBehaviorOutput) {
+        behaviorHint = hint
         invalidate()
     }
 
@@ -368,7 +374,8 @@ class RealityLensView @JvmOverloads constructor(
         canvas: Canvas, cx: Float, cy: Float, radius: Float,
         breath: Float, jumpOffset: Float, seconds: Float
     ) {
-        val r = radius * (1f + breath)
+        val motion = behaviorHint?.motionIntensity ?: .5f
+        val r = radius * (1f + breath * (.82f + motion * .36f))
 
         // 1. Perspective Ground Shadow on Real Floor
         val shadowY = cy + r * 1.15f + jumpOffset

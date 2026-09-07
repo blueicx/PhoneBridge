@@ -2,15 +2,16 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const TASK_STATES = new Set(['pending', 'running', 'paused', 'succeeded', 'failed', 'cancelled']);
+const TASK_STATES = new Set(['pending', 'running', 'paused', 'needs_confirmation', 'succeeded', 'failed', 'cancelled', 'archived']);
 const ATTENTION_STATUSES = new Set(['open', 'read', 'snoozed', 'resolved', 'dismissed']);
 const ATTENTION_SEVERITIES = new Set(['low', 'medium', 'high', 'critical']);
-const AUTONOMY_LEVELS = new Set(['observe', 'reversible']);
+const AUTONOMY_LEVELS = new Set(['observe', 'reversible', 'whitelist']);
 const ACTION_RUN_STATES = new Set(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'blocked']);
 const ACTION_RUN_APPROVALS = new Set(['pending', 'granted', 'denied']);
 const TERMINAL_ACTION_RUN_STATES = new Set(['succeeded', 'failed', 'cancelled', 'blocked']);
 const SENSITIVE_KEY_PATTERN = /(token|secret|password|authorization|cookie|audio|image|frame|pcm|base64)/i;
 const SENSITIVE_VALUE_PATTERN = /(bearer\s+[a-z0-9._-]+|password\s*=|secret|token|sk-[a-z0-9_-]+)/i;
+const HARD_DENIED_TOOL_PATTERN = /(^|[._-])(shell|exec|delete|destroy|credential|secret|token|publish|release|reset|wipe)([._-]|$)/i;
 
 function id(prefix) {
   return `${prefix}_${crypto.randomUUID()}`;
@@ -104,6 +105,10 @@ function normalizeIsoOrNull(value) {
   return parsed == null ? null : iso(parsed);
 }
 
+function isHardDeniedToolId(toolId) {
+  return HARD_DENIED_TOOL_PATTERN.test(String(toolId || ''));
+}
+
 class WorkspaceStore {
   constructor({ now = () => Date.now(), journalPath = null, snapshotPath = null } = {}) {
     this.now = now;
@@ -190,8 +195,8 @@ class WorkspaceStore {
       id: `policy:${scopeType}:${targetId}`,
       scopeType,
       targetId,
-      level: 'reversible',
-      allowedTools: this.listTools().map(tool => tool.id),
+      level: scopeType === 'global' ? 'whitelist' : 'reversible',
+      allowedTools: scopeType === 'global' ? this.listTools().filter(tool => tool.readOnly).map(tool => tool.id) : this.listTools().map(tool => tool.id),
       expiresAt: null,
       continuousMic: true,
       confirmationRules: [],
@@ -211,15 +216,23 @@ class WorkspaceStore {
     const existing = this.policies.get(policyKey(scopeType, targetId)) || this._defaultPolicy(scopeType, targetId);
     const timestamp = iso(this.now());
     if (patch.level !== undefined && !AUTONOMY_LEVELS.has(String(patch.level))) throw new Error(`invalid autonomy level: ${patch.level}`);
+    if (scopeType === 'global' && patch.level !== undefined && String(patch.level) !== 'whitelist') throw new Error('global autonomy must use whitelist level');
+    const requestedTools = patch.allowedTools !== undefined
+      ? [...new Set((Array.isArray(patch.allowedTools) ? patch.allowedTools : []).map(item => String(item)).filter(Boolean))]
+      : existing.allowedTools;
+    if (scopeType === 'global') {
+      for (const toolId of requestedTools) {
+        if (isHardDeniedToolId(toolId)) throw new Error(`hard-denied tool is forbidden: ${toolId}`);
+        if (!this.tools.has(toolId)) throw new Error(`unregistered tool is forbidden: ${toolId}`);
+      }
+    }
     const policy = {
       ...existing,
       id: existing.id || `policy:${scopeType}:${targetId}`,
       scopeType,
       targetId,
       level: patch.level !== undefined ? String(patch.level) : existing.level,
-      allowedTools: patch.allowedTools !== undefined
-        ? [...new Set((Array.isArray(patch.allowedTools) ? patch.allowedTools : []).map(item => String(item)).filter(Boolean))]
-        : existing.allowedTools,
+      allowedTools: requestedTools,
       expiresAt: patch.expiresAt !== undefined ? normalizeIsoOrNull(patch.expiresAt) : normalizeIsoOrNull(existing.expiresAt),
       continuousMic: patch.continuousMic !== undefined ? Boolean(patch.continuousMic) : Boolean(existing.continuousMic),
       confirmationRules: patch.confirmationRules !== undefined
@@ -322,15 +335,24 @@ class WorkspaceStore {
       if (!automation.enabled) return this._authorizationFailure('blocked', 'automation is disabled');
       policy = this._getPolicy('automation', automationId);
     } else {
-      policy = this._defaultPolicy('direct', origin || 'direct');
+      policy = this._getPolicy('global', 'personal');
     }
 
     if (policy.expiresAt && parseTimestamp(policy.expiresAt) <= this.now()) return this._authorizationFailure('blocked', 'autonomy policy expired');
-    if (Array.isArray(policy.allowedTools) && policy.allowedTools.length > 0 && !policy.allowedTools.includes(toolId)) {
+    if (policy.level === 'whitelist' && (!Array.isArray(policy.allowedTools) || !policy.allowedTools.includes(toolId))) {
       return this._authorizationFailure('blocked', 'tool is not allowed by autonomy policy');
     }
+    if (policy.level !== 'whitelist' && Array.isArray(policy.allowedTools) && policy.allowedTools.length > 0 && !policy.allowedTools.includes(toolId)) {
+      return this._authorizationFailure('blocked', 'tool is not allowed by autonomy policy');
+    }
+    if (isHardDeniedToolId(toolId)) return this._authorizationFailure('blocked', 'hard-denied tool is forbidden');
     if (policy.level === 'observe' && this._toolCapability(tool) !== 'observe') {
       return this._authorizationFailure('blocked', 'observe policy only allows observe tools');
+    }
+    if (origin === 'automation') {
+      const globalPolicy = this._getPolicy('global', 'personal');
+      if (globalPolicy.expiresAt && parseTimestamp(globalPolicy.expiresAt) <= this.now()) return this._authorizationFailure('blocked', 'global autonomy policy expired');
+      if (globalPolicy.level === 'whitelist' && !globalPolicy.allowedTools.includes(toolId)) return this._authorizationFailure('blocked', 'tool is not allowed by global autonomy whitelist');
     }
     if (toolId === 'device.listen' && args && args.enabled !== false && policy.continuousMic === false) {
       return this._authorizationFailure('blocked', 'continuous microphone is disabled by autonomy policy');
@@ -481,6 +503,7 @@ class WorkspaceStore {
 
   registerTool({ id: toolId, title, description = '', readOnly = false, autonomyLevel = null, invoke }) {
     if (!toolId || typeof invoke !== 'function') throw new Error('tool id and invoke function are required');
+    if (isHardDeniedToolId(toolId)) throw new Error(`hard-denied tool is forbidden: ${toolId}`);
     const level = autonomyLevel || (readOnly ? 'observe' : 'reversible');
     if (!AUTONOMY_LEVELS.has(level)) throw new Error(`invalid autonomy level: ${level}`);
     this.tools.set(toolId, { id: toolId, title: title || toolId, description, readOnly, autonomyLevel: level, invoke });
@@ -535,6 +558,14 @@ class WorkspaceStore {
   getSessionPolicy(sessionId) {
     if (!this.sessions.has(sessionId)) throw new Error('session not found');
     return this._getPolicy('session', sessionId);
+  }
+
+  getAutonomyPolicy() {
+    return this._getPolicy('global', 'personal');
+  }
+
+  updateAutonomyPolicy(patch = {}) {
+    return this._updatePolicy('global', 'personal', patch);
   }
 
   updateSessionPolicy(sessionId, patch = {}) {
@@ -727,9 +758,9 @@ class WorkspaceStore {
   }
 
   _attentionForTask(task) {
-    if (!['succeeded', 'failed', 'cancelled'].includes(task.state)) return null;
-    const severity = task.state === 'failed' ? 'high' : (task.state === 'cancelled' ? 'medium' : 'low');
-    const titlePrefix = task.state === 'failed' ? '任务失败' : (task.state === 'cancelled' ? '任务取消' : '任务完成');
+    if (!['needs_confirmation', 'succeeded', 'failed', 'cancelled'].includes(task.state)) return null;
+    const severity = task.state === 'failed' ? 'high' : (task.state === 'needs_confirmation' || task.state === 'cancelled' ? 'medium' : 'low');
+    const titlePrefix = task.state === 'failed' ? '任务失败' : (task.state === 'cancelled' ? '任务取消' : (task.state === 'needs_confirmation' ? '任务待确认' : '任务完成'));
     const summary = task.error || task.logs.at(-1)?.text || task.detail || '';
     return this.upsertAttentionItem({
       source: 'task',

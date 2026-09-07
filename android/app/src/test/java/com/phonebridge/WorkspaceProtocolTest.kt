@@ -91,6 +91,21 @@ class WorkspaceProtocolTest {
     }
 
     @Test
+    fun moteExplorationEventUsesOutboxEventIdDeduplication() {
+        val event = WorkspaceEvent(
+            origin = "phone",
+            sequence = 44,
+            type = WorkspaceEventTypes.MOTE_EXPLORATION,
+            payload = "{\"eventId\":\"clue-44\",\"clueType\":\"location\"}",
+            createdAt = 10L
+        )
+        val queue = OutboxQueue()
+        assertTrue(queue.enqueue(event))
+        assertFalse(queue.enqueue(event.copy(eventId = "another", sequence = 44)))
+        assertEquals(WorkspaceEventTypes.MOTE_EXPLORATION, queue.ready(10).single().event.type)
+    }
+
+    @Test
     fun stateMergeKeepsExistingModelWhenSnapshotOmitsIt() {
         val current = WorkspaceUiState(online = true, model = "small-cn", authorized = true)
         val merged = mergeWorkspaceUiState(current, WorkspaceUiState(online = false, activeTasks = 2))
@@ -186,6 +201,12 @@ class WorkspaceProtocolTest {
 
         assertEquals(policy, decoded)
         assertEquals(emptyList<AutonomyPolicy>(), AutonomyPolicy.listFromJson("[]"))
+    }
+
+    @Test
+    fun whitelistAutonomyLevelRemainsWireCompatible() {
+        val policy = AutonomyPolicy("global", "personal", AutonomyLevel.WHITELIST, listOf("device.telemetry"), null, false, emptyList())
+        assertEquals(policy, AutonomyPolicy.fromJson(policy.toJson().toString()))
     }
 
     @Test

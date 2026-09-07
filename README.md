@@ -27,6 +27,10 @@
 - 对话记忆：Mote 对话携带人设和最近 16 轮上下文，能围绕当前感官状态继续交流。
 - 长期记忆：聊天面板可添加/查看/清空事实与偏好；每次对话会注入最多 20 条记忆。输入“记住：……”即可保存。
 - 记忆召回：每条记忆有重要性、使用次数和召回时间；对话会按话题相关性、重要性和新鲜度挑选最相关的记忆。
+- 一体化任务中枢：任务支持待处理、运行中、暂停、需关注、完成、失败、取消和归档；保留结果、Attention、ActionRun 与脱敏审计记录。
+- 个人自治策略：`/api/autonomy` 默认只允许注册表中的只读工具；可编辑白名单，未注册工具、Shell、删除、凭据、发布和不可逆工具始终拒绝；支持过期和 Emergency Stop。
+- Mote 图鉴：6 个初始形态 + 焰芽、棱光蝶、苔龟、星鸦 4 个探索形态；服务端持久化当前形态、解锁状态和地点/物体/光线碎片，`eventId` 幂等。
+- 统一行为提示：Android 的离线交互、通知/小组件入口和 Canvas 主视图/现实镜头共享 `MoteProfile` 与确定性 `MoteBehaviorEngine`。
 
 ## 启动
 
@@ -64,6 +68,8 @@ F:\CodexApps\PhoneBridge\cloudflared.exe tunnel --url http://127.0.0.1:9503 --no
 - 手机控制：`POST /api/device {"action":"camera_front"}`
 - 模型切换：`POST /api/codex/select_model {"providerId":"...","model":"..."}`
 - Codex 选任务：`POST /api/codex/select_task {"id":"..."}`
+- 个人自治：`GET/PATCH /api/autonomy`
+- Mote 图鉴：`GET /api/motes`、`PATCH /api/motes/active {"id":"mote"}`、`PATCH /api/motes/exploration {"targetId":"ember_sprig"}`、`POST /api/motes/exploration/clues {"eventId":"...","clueType":"location|object|light"}`
 - 模型对话：`POST /api/chat {"text":"你好"}`
 - 空闲断流：`POST /api/idle-timeout {"minutes":5}`，范围 1–120 分钟；空闲后会自动关闭摄像头和持续监听。
 - Web 指挥中心提供 1/3/5/10/30 分钟空闲断流选择器；手机离线时设备指令会被拒绝并记录日志。

@@ -195,6 +195,7 @@ test('blocks automation actions only for hard-stop conditions, not ordinary offl
   const store = new WorkspaceStore({ now: () => now });
   const automation = store.createAutomation({ name: '自动巡检', actions: [] });
   store.registerTool({ id: 'device.camera', title: '相机', invoke: ({ action = 'camera_on' }) => ({ action, online: false }) });
+  store.updateAutonomyPolicy({ allowedTools: ['device.camera'] });
   store.updateAutomationPolicy(automation.id, { level: 'reversible', allowedTools: ['device.camera'] });
 
   const first = store.invokeAutomationTool(automation.id, 'device.camera', { action: 'camera_on' });
@@ -221,4 +222,39 @@ test('blocks automation actions only for hard-stop conditions, not ordinary offl
     /emergency|expired/i,
   );
   assert.ok(store.listActionRuns().some(run => run.origin === 'automation' && (run.state === 'blocked' || run.state === 'cancelled')));
+});
+
+test('global autonomy defaults to read-only tools and never allows hard-denied tools', () => {
+  const store = new WorkspaceStore();
+  store.registerTool({ id: 'safe.read', title: 'Safe read', readOnly: true, invoke: () => ({ ok: true }) });
+  store.registerTool({ id: 'workspace.reversible', title: 'Reversible', invoke: () => ({ ok: true }) });
+  const initial = store.getAutonomyPolicy();
+  assert.equal(initial.level, 'whitelist');
+  assert.deepEqual(initial.allowedTools, ['safe.read']);
+  assert.throws(() => store.updateAutonomyPolicy({ allowedTools: ['workspace.reversible', 'shell.exec', 'delete.all'] }), /hard-denied|forbidden/i);
+  const updated = store.updateAutonomyPolicy({ allowedTools: ['safe.read', 'workspace.reversible'], expiresAt: '2099-01-01T00:00:00.000Z' });
+  assert.deepEqual(updated.allowedTools, ['safe.read', 'workspace.reversible']);
+});
+
+test('global autonomy expires and emergency stop blocks invocation', () => {
+  let now = Date.parse('2026-01-01T00:00:00.000Z');
+  const store = new WorkspaceStore({ now: () => now });
+  store.registerTool({ id: 'safe.read', title: 'Safe read', readOnly: true, invoke: () => ({ ok: true }) });
+  store.updateAutonomyPolicy({ allowedTools: ['safe.read'], expiresAt: '2026-01-01T00:00:01.000Z' });
+  assert.equal(store.invokeRegisteredTool('safe.read').result.ok, true);
+  now += 2_000;
+  assert.throws(() => store.invokeRegisteredTool('safe.read'), /expired/i);
+  store.updateAutonomyPolicy({ expiresAt: null });
+  assert.equal(store.invokeRegisteredTool('safe.read').result.ok, true);
+  store.emergencyStop('test');
+  assert.throws(() => store.invokeRegisteredTool('safe.read'), /emergency/i);
+});
+
+test('task workbench creates attention for confirmation state and archives later', () => {
+  const store = new WorkspaceStore();
+  const task = store.createTask({ title: '需要确认的任务' });
+  const waiting = store.updateTask(task.id, { state: 'needs_confirmation', detail: '等待用户选择' });
+  assert.equal(waiting.state, 'needs_confirmation');
+  assert.ok(store.getLatestAttentionForTask(task.id)?.title.includes('待确认'));
+  assert.equal(store.updateTask(task.id, { state: 'archived' }).state, 'archived');
 });

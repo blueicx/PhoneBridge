@@ -103,6 +103,39 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
 
     const tools = await request('/api/tools');
     assert.ok(tools.body.tools.some(tool => tool.id === 'device.telemetry'));
+    const autonomy = await request('/api/autonomy');
+    assert.equal(autonomy.response.status, 200);
+    assert.equal(autonomy.body.policy.level, 'whitelist');
+    assert.ok(autonomy.body.policy.allowedTools.includes('device.telemetry'));
+    assert.ok(autonomy.body.policy.allowedTools.includes('session.memory'));
+    const unsafeAutonomy = await request('/api/autonomy', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ allowedTools: ['shell.exec'] }),
+    });
+    assert.equal(unsafeAutonomy.response.status, 400);
+
+    const motes = await request('/api/motes');
+    assert.equal(motes.response.status, 200);
+    assert.equal(motes.body.roster.length, 10);
+    const activeMote = await request('/api/motes/active', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'sprite' }),
+    });
+    assert.equal(activeMote.body.profile.id, 'sprite');
+    const target = await request('/api/motes/exploration', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ targetId: 'ember_sprig' }),
+    });
+    assert.equal(target.body.state.exploration.targetId, 'ember_sprig');
+    for (const clueType of ['location', 'object', 'light']) {
+      const clue = await request('/api/motes/exploration/clues', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: `api-${clueType}`, clueType }),
+      });
+      assert.equal(clue.response.status, clueType === 'light' ? 201 : 201);
+    }
+    const duplicateClue = await request('/api/motes/exploration/clues', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: 'api-light', clueType: 'light' }),
+    });
+    assert.equal(duplicateClue.body.duplicate, true);
     const opened = await openSocket();
     const socket = opened.socket;
     try {

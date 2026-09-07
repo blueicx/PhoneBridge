@@ -22,6 +22,9 @@ object WorkspaceEventTypes {
     const val POLICY = "workspace.policy"
     const val ACTION_RUN = "workspace.action_run"
     const val DEVICE_STATE = "device.state"
+    const val MOTE_ROSTER = "mote.roster"
+    const val MOTE_PROFILE = "mote.profile"
+    const val MOTE_EXPLORATION = "mote.exploration"
 }
 
 object AttentionSeverity {
@@ -56,10 +59,12 @@ object AttentionStatus {
 }
 
 object AutonomyScope {
+    const val GLOBAL = "global"
     const val SESSION = "session"
     const val AUTOMATION = "automation"
 
     fun fromWire(value: String?): String = when (value.normalized()) {
+        GLOBAL -> GLOBAL
         AUTOMATION -> AUTOMATION
         else -> SESSION
     }
@@ -68,9 +73,11 @@ object AutonomyScope {
 object AutonomyLevel {
     const val OBSERVE = "observe"
     const val REVERSIBLE = "reversible"
+    const val WHITELIST = "whitelist"
 
     fun fromWire(value: String?): String = when (value.normalized()) {
         REVERSIBLE -> REVERSIBLE
+        WHITELIST -> WHITELIST
         else -> OBSERVE
     }
 }
