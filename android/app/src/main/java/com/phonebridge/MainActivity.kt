@@ -52,6 +52,11 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButtonToggleGroup
@@ -236,6 +241,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private val actionRunMirror = linkedMapOf<String, JSONObject>()
     private var moteRosterJson = JSONArray()
     private var moteStateJson = JSONObject()
+    private var workspaceRevision: Long = 0L
     private var cockpitUsesOfflineMirror = false
     private var cockpitSummaryExpanded = false
     private var workspaceEmergencyState: JSONObject? = null
@@ -2046,6 +2052,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         sendJson(JSONObject().put("type", "hello").put("pet", petJson()))
         requestSnapshot()
         flushWorkspaceOutbox()
+        scheduleOutboxSync()
         drainChatOutbox()
         pendingAutoCommand?.let { command ->
             sendJson(JSONObject().put("type", "command").put("text", command))
@@ -2129,7 +2136,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun requestSnapshot() {
-        sendJson(JSONObject().put("type", "snapshot"))
+        val since = getSharedPreferences("workspace_meta", Context.MODE_PRIVATE).getLong("revision", 0L)
+        sendJson(JSONObject().put("type", "snapshot").put("since", since))
         refreshCockpitSnapshot()
     }
 
@@ -2653,8 +2661,17 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
     }
 
+    private fun scheduleOutboxSync() {
+        val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+        val request = OneTimeWorkRequestBuilder<OutboxSyncWorker>().setConstraints(constraints).build()
+        WorkManager.getInstance(this).enqueueUniqueWork("phonebridge-outbox-sync", ExistingWorkPolicy.REPLACE, request)
+    }
+
     private fun handleMoteSnapshot(snapshot: JSONObject?) {
         if (snapshot == null) return
+        MoteBehaviorOutput.fromWire(snapshot.optJSONObject("behavior"))?.let { behavior ->
+            runOnUiThread { companionView.setBehaviorHint(behavior); realityLensView.setBehaviorHint(behavior) }
+        }
         moteRosterJson = JSONArray((snapshot.optJSONArray("roster") ?: JSONArray()).toString())
         moteStateJson = JSONObject((snapshot.optJSONObject("state") ?: JSONObject()).toString())
         getSharedPreferences("mote_roster", Context.MODE_PRIVATE).edit()
@@ -3053,6 +3070,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     }
                 }
                 "snapshot" -> {
+                    val revision = json.optLong("eventRevision", 0L)
+                    if (revision > workspaceRevision) {
+                        workspaceRevision = revision
+                        getSharedPreferences("workspace_meta", Context.MODE_PRIVATE).edit().putLong("revision", revision).apply()
+                    }
                     json.optJSONObject("motes")?.let { handleMoteSnapshot(it) }
                     json.optJSONObject("workspace")?.let { workspace ->
                         runOnUiThread { applyWorkspaceSnapshot(workspace) }
@@ -3209,6 +3231,14 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                         renderPet()
                     }
                 }
+                "workspace.events" -> {
+                    val revision = json.optLong("revision", 0L)
+                    if (revision > workspaceRevision) {
+                        workspaceRevision = revision
+                        getSharedPreferences("workspace_meta", Context.MODE_PRIVATE).edit().putLong("revision", revision).apply()
+                    }
+                    sendJson(JSONObject().put("type", "snapshot"))
+                }
                 "chat" -> {
                     val role = json.optString("role")
                     val message = json.optString("text")
@@ -3235,6 +3265,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     handleMoteRosterEvent(null, JSONObject().put("activeId", profile.optString("id")))
                 }
                 "mote.exploration" -> handleMoteRosterEvent(null, json.optJSONObject("state"))
+                "mote.behavior" -> MoteBehaviorOutput.fromWire(json.optJSONObject("behavior"))?.let { behavior ->
+                    runOnUiThread {
+                        companionView.setBehaviorHint(behavior)
+                        realityLensView.setBehaviorHint(behavior)
+                    }
+                }
                 "device.state" -> json.optJSONObject("state")?.let { state ->
                     runOnUiThread {
                         deviceHealthState = parseDeviceHealthJson(state)

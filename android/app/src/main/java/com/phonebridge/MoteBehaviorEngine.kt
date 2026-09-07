@@ -1,5 +1,7 @@
 package com.phonebridge
 
+import org.json.JSONObject
+
 data class MoteBehaviorInput(
     val taskState: String? = null,
     val deviceHealth: String? = null,
@@ -14,8 +16,25 @@ data class MoteBehaviorOutput(
     val auraColor: String,
     val particleType: String,
     val proactive: Boolean,
-    val voiceMode: String
-)
+    val voiceMode: String,
+    val version: Int = 1,
+    val profileId: String = "mote"
+) {
+    companion object {
+        fun fromWire(json: JSONObject?): MoteBehaviorOutput? = json?.let {
+            MoteBehaviorOutput(
+                motionIntensity = it.optDouble("motionIntensity", .22).toFloat().coerceIn(.12f, 1f),
+                gaze = it.optString("gaze", "ambient"),
+                auraColor = it.optString("haloColor", it.optString("auraColor", "#8EA7FF")),
+                particleType = it.optString("particleType", "stardust"),
+                proactive = it.optString("proactive").equals("high", true) || it.optBoolean("proactive", false),
+                voiceMode = it.optString("speechMode", it.optString("voiceMode", "理性稳重")),
+                version = it.optInt("version", 1),
+                profileId = it.optString("profileId", "mote")
+            )
+        }
+    }
+}
 
 object MoteBehaviorEngine {
     fun resolve(profile: MoteProfile, input: MoteBehaviorInput): MoteBehaviorOutput {

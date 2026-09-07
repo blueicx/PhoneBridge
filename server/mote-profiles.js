@@ -22,6 +22,24 @@ const PROFILE_BY_ID = new Map(MOTE_PROFILES.map(profile => [profile.id, profile]
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 
+function deriveMoteBehavior({ profileId = 'mote', taskState = 'idle', deviceHealth = 'unknown', interaction = 'none', explorationActive = false, mood = 0 } = {}) {
+  const profile = PROFILE_BY_ID.get(String(profileId)) || PROFILE_BY_ID.get('mote');
+  const state = String(taskState).toLowerCase();
+  const health = String(deviceHealth).toLowerCase();
+  const intensity = Math.max(0, Math.min(1, .28 + (state === 'running' ? .28 : 0) + (state === 'failed' ? .18 : 0) + (health === 'degraded' || health === 'error' ? .16 : 0) + (interaction === 'tap' ? .12 : 0) + (explorationActive ? .08 : 0) + Number(mood || 0) * .08));
+  const proactive = health === 'error' || state === 'failed' ? 'high' : profile.proactive;
+  return {
+    version: 1,
+    profileId: profile.id,
+    motionIntensity: Number(intensity.toFixed(3)),
+    gaze: health === 'error' ? 'attentive' : (explorationActive ? 'scanning' : 'settled'),
+    haloColor: health === 'error' ? '#ff6b6b' : profile.colors.primary,
+    particleType: profile.particles,
+    proactive,
+    speechMode: profile.voice,
+  };
+}
+
 function createMoteState() {
   return {
     version: 1,
@@ -107,4 +125,4 @@ class MoteStore {
   }
 }
 
-module.exports = { MOTE_PROFILES, INITIAL_MOTE_IDS, EXPLORABLE_MOTE_IDS, CLUE_TYPES, createMoteState, normalizeMoteState, MoteStore };
+module.exports = { MOTE_PROFILES, INITIAL_MOTE_IDS, EXPLORABLE_MOTE_IDS, CLUE_TYPES, createMoteState, normalizeMoteState, MoteStore, deriveMoteBehavior };

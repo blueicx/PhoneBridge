@@ -210,6 +210,16 @@ class WorkspaceProtocolTest {
     }
 
     @Test
+    fun syncCursorOnlyAdvancesAndKeepsLastErrorUntilRecovery() {
+        val start = WorkspaceSyncCursor(5L)
+        assertEquals(5L, WorkspaceSyncReducer.advance(start, 3L).revision)
+        val failed = WorkspaceSyncReducer.fail(start, "temporary disconnect")
+        assertEquals("temporary disconnect", failed.lastError)
+        assertEquals(9L, WorkspaceSyncReducer.advance(failed, 9L).revision)
+        assertNull(WorkspaceSyncReducer.advance(failed, 9L).lastError)
+    }
+
+    @Test
     fun actionRunRoundTripKeepsApprovalAndErrorFields() {
         val run = ActionRun(
             id = "run-9",
@@ -260,8 +270,8 @@ class WorkspaceProtocolTest {
     }
 
     @Test
-    fun workspaceDatabaseDeclaresV2Migration() {
-        assertEquals(2, WORKSPACE_DB_VERSION)
+    fun workspaceDatabaseDeclaresV3Migration() {
+        assertEquals(3, WORKSPACE_DB_VERSION)
         val migrations = WorkspaceRepository.MIGRATIONS.toList()
         assertTrue(migrations.any { it.startVersion == 1 && it.endVersion == 2 })
         assertTrue(migrations.all { it is Migration })

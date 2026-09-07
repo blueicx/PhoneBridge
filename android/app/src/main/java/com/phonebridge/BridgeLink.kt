@@ -99,6 +99,7 @@ object BridgeLink {
                 .put("ack", event.ack)
                 .put("localActionId", event.localActionId)
                 .put("localActionState", event.localActionState)
+                .put("revision", event.revision)
         )
     }
 

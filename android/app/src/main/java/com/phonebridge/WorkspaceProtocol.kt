@@ -13,7 +13,8 @@ data class WorkspaceEvent(
     val createdAt: Long = System.currentTimeMillis(),
     val ack: Boolean = false,
     val localActionId: String? = null,
-    val localActionState: String? = null
+    val localActionState: String? = null,
+    val revision: Long = 0L
 )
 
 object WorkspaceEventTypes {
@@ -203,7 +204,9 @@ data class AutonomyPolicy(
     val allowedTools: List<String>,
     val expiresAt: Long?,
     val continuousMic: Boolean,
-    val confirmationRules: List<AutonomyConfirmationRule>
+    val confirmationRules: List<AutonomyConfirmationRule>,
+    val revision: Int = 0,
+    val usesRemaining: Int? = null
 ) {
     fun toJson(): String = jsonObject(
         "scopeType" to AutonomyScope.fromWire(scopeType),
@@ -212,7 +215,9 @@ data class AutonomyPolicy(
         "allowedTools" to allowedTools,
         "expiresAt" to expiresAt,
         "continuousMic" to continuousMic,
-        "confirmationRules" to RawJson(AutonomyConfirmationRule.listToJson(confirmationRules))
+        "confirmationRules" to RawJson(AutonomyConfirmationRule.listToJson(confirmationRules)),
+        "revision" to revision,
+        "usesRemaining" to usesRemaining
     )
 
     companion object {
@@ -229,7 +234,9 @@ data class AutonomyPolicy(
             allowedTools = values.stringList("allowedTools"),
             expiresAt = values.nullableLong("expiresAt"),
             continuousMic = values.boolean("continuousMic"),
-            confirmationRules = values.confirmationRules()
+            confirmationRules = values.confirmationRules(),
+            revision = values.int("revision"),
+            usesRemaining = values.nullableInt("usesRemaining")
         )
     }
 }
@@ -357,6 +364,15 @@ class OutboxQueue {
     fun size(): Int = items.size
 }
 
+data class WorkspaceSyncCursor(val revision: Long = 0L, val lastError: String? = null)
+
+object WorkspaceSyncReducer {
+    fun advance(cursor: WorkspaceSyncCursor, revision: Long): WorkspaceSyncCursor =
+        if (revision > cursor.revision) cursor.copy(revision = revision, lastError = null) else cursor
+
+    fun fail(cursor: WorkspaceSyncCursor, error: String): WorkspaceSyncCursor = cursor.copy(lastError = error.take(240))
+}
+
 data class WorkspaceUiState(
     val online: Boolean = false,
     val camera: Boolean = false,
@@ -450,6 +466,19 @@ private fun Map<String, Any?>.long(key: String): Long = when (val value = this[k
     is Number -> value.toLong()
     is String -> value.toLongOrNull() ?: value.toInstantMillis()
     else -> 0L
+}
+
+private fun Map<String, Any?>.int(key: String): Int = when (val value = this[key]) {
+    is Number -> value.toInt()
+    is String -> value.toIntOrNull() ?: 0
+    else -> 0
+}
+
+private fun Map<String, Any?>.nullableInt(key: String): Int? = when (val value = this[key]) {
+    null -> null
+    is Number -> value.toInt()
+    is String -> value.toIntOrNull()
+    else -> null
 }
 
 private fun Map<String, Any?>.nullableLong(key: String): Long? = when (val value = this[key]) {

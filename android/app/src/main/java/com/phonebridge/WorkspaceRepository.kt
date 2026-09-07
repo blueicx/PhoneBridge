@@ -177,7 +177,9 @@ class WorkspaceRepository private constructor(context: Context) {
         allowedTools = parseStableStringList(allowedToolsJson),
         expiresAt = expiresAt,
         continuousMic = continuousMic,
-        confirmationRules = parseConfirmationRules(confirmationRulesJson)
+        confirmationRules = parseConfirmationRules(confirmationRulesJson),
+        revision = revision,
+        usesRemaining = usesRemaining
     )
 
     private fun AutonomyPolicy.toEntity() = WorkspaceAutonomyPolicyEntity(
@@ -187,7 +189,9 @@ class WorkspaceRepository private constructor(context: Context) {
         allowedToolsJson = allowedTools.toStableJson(),
         expiresAt = expiresAt,
         continuousMic = continuousMic,
-        confirmationRulesJson = AutonomyConfirmationRule.listToJson(confirmationRules)
+        confirmationRulesJson = AutonomyConfirmationRule.listToJson(confirmationRules),
+        revision = revision,
+        usesRemaining = usesRemaining
     )
 
     private fun WorkspaceActionRunEntity.toModel() = ActionRun(
@@ -301,6 +305,12 @@ class WorkspaceRepository private constructor(context: Context) {
                     database.execSQL("CREATE INDEX IF NOT EXISTS `index_workspace_action_runs_state` ON `workspace_action_runs` (`state`)")
                     database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `localActionId` TEXT")
                     database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `localActionState` TEXT")
+                }
+            },
+            object : Migration(2, 3) {
+                override fun migrate(database: SupportSQLiteDatabase) {
+                    database.execSQL("ALTER TABLE `workspace_policies` ADD COLUMN `revision` INTEGER NOT NULL DEFAULT 0")
+                    database.execSQL("ALTER TABLE `workspace_policies` ADD COLUMN `usesRemaining` INTEGER")
                 }
             }
         )

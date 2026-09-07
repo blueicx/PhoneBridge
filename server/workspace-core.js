@@ -3,6 +3,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const TASK_STATES = new Set(['pending', 'running', 'paused', 'needs_confirmation', 'succeeded', 'failed', 'cancelled', 'archived']);
+const TASK_TRANSITIONS = new Map([
+  ['pending', new Set(['pending', 'running', 'paused', 'needs_confirmation', 'failed', 'cancelled'])],
+  ['running', new Set(['running', 'paused', 'needs_confirmation', 'succeeded', 'failed', 'cancelled'])],
+  ['paused', new Set(['paused', 'running', 'cancelled'])],
+  ['needs_confirmation', new Set(['needs_confirmation', 'running', 'cancelled', 'archived'])],
+  ['succeeded', new Set(['succeeded', 'archived'])],
+  ['failed', new Set(['failed', 'pending', 'archived'])],
+  ['cancelled', new Set(['cancelled', 'pending', 'archived'])],
+  ['archived', new Set(['archived'])],
+]);
 const ATTENTION_STATUSES = new Set(['open', 'read', 'snoozed', 'resolved', 'dismissed']);
 const ATTENTION_SEVERITIES = new Set(['low', 'medium', 'high', 'critical']);
 const AUTONOMY_LEVELS = new Set(['observe', 'reversible', 'whitelist']);
@@ -40,10 +50,11 @@ function createEventEnvelope({
   type,
   payload = {},
   createdAt = iso(Date.now()),
+  revision = 0,
   ack = false,
 } = {}) {
   if (!type) throw new Error('event type is required');
-  return { eventId, origin, sequence, type, payload, createdAt, ack };
+  return { eventId, origin, sequence, type, payload, createdAt, revision, ack };
 }
 
 function clone(value) {
@@ -109,6 +120,20 @@ function isHardDeniedToolId(toolId) {
   return HARD_DENIED_TOOL_PATTERN.test(String(toolId || ''));
 }
 
+function validateArgumentSchema(args, schema = {}) {
+  const value = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  const allowedKeys = Array.isArray(schema.allowedKeys) ? new Set(schema.allowedKeys.map(String)) : null;
+  if (allowedKeys) for (const key of Object.keys(value)) if (!allowedKeys.has(key)) throw new Error(`argument is not allowed: ${key}`);
+  for (const key of schema.required || []) if (value[key] === undefined || value[key] === null || value[key] === '') throw new Error(`argument is required: ${key}`);
+  for (const [key, type] of Object.entries(schema.types || {})) {
+    if (value[key] === undefined) continue;
+    if (type === 'array' ? !Array.isArray(value[key]) : typeof value[key] !== type) throw new Error(`argument type is invalid: ${key}`);
+  }
+  const maxStringLength = Number(schema.maxStringLength || 0);
+  if (maxStringLength > 0) for (const [key, item] of Object.entries(value)) if (typeof item === 'string' && item.length > maxStringLength) throw new Error(`argument is too long: ${key}`);
+  return true;
+}
+
 class WorkspaceStore {
   constructor({ now = () => Date.now(), journalPath = null, snapshotPath = null } = {}) {
     this.now = now;
@@ -125,6 +150,9 @@ class WorkspaceStore {
     this.eventLog = [];
     this.eventKeys = new Set();
     this.audit = [];
+    this.taskAudit = [];
+    this.taskActionKeys = new Map();
+    this.eventRevision = 0;
     this.sequence = 0;
     this.emergency = { active: false, reason: null, updatedAt: iso(this.now()) };
     this._loadSnapshot();
@@ -142,6 +170,8 @@ class WorkspaceStore {
       for (const policy of data.policies || []) this.policies.set(policyKey(policy.scopeType, policy.targetId), policy);
       for (const run of data.actionRuns || []) this.actionRuns.set(run.id, run);
       this.audit = data.audit || [];
+      this.taskAudit = data.taskAudit || [];
+      this.taskActionKeys = new Map(data.taskActionKeys || []);
       this.eventLog = data.eventLog || [];
       this.eventKeys = new Set(data.eventKeys || []);
       for (const event of this.eventLog) {
@@ -149,6 +179,7 @@ class WorkspaceStore {
         if (event.eventId) this.eventKeys.add(`event:${event.eventId}`);
       }
       this.sequence = Number(data.sequence) || 0;
+      this.eventRevision = Number(data.eventRevision) || this.eventLog.reduce((max, event) => Math.max(max, Number(event.revision) || 0), 0);
       if (data.emergency && typeof data.emergency === 'object') {
         this.emergency = {
           active: Boolean(data.emergency.active),
@@ -175,9 +206,12 @@ class WorkspaceStore {
       policies: [...this.policies.values()],
       actionRuns: [...this.actionRuns.values()],
       audit: this.audit,
+      taskAudit: this.taskAudit,
+      taskActionKeys: [...this.taskActionKeys.entries()],
       eventLog: this.eventLog,
       eventKeys: [...this.eventKeys],
       sequence: this.sequence,
+      eventRevision: this.eventRevision,
       emergency: this.emergency,
     }, null, 2));
     fs.renameSync(temporary, this.snapshotPath);
@@ -200,6 +234,8 @@ class WorkspaceStore {
       expiresAt: null,
       continuousMic: true,
       confirmationRules: [],
+      revision: 0,
+      usesRemaining: null,
       createdAt: timestamp,
       updatedAt: timestamp,
       persisted: false,
@@ -215,6 +251,7 @@ class WorkspaceStore {
   _updatePolicy(scopeType, targetId, patch = {}) {
     const existing = this.policies.get(policyKey(scopeType, targetId)) || this._defaultPolicy(scopeType, targetId);
     const timestamp = iso(this.now());
+    if (patch.revision !== undefined && Number(patch.revision) !== Number(existing.revision || 0)) throw new Error('policy revision conflict');
     if (patch.level !== undefined && !AUTONOMY_LEVELS.has(String(patch.level))) throw new Error(`invalid autonomy level: ${patch.level}`);
     if (scopeType === 'global' && patch.level !== undefined && String(patch.level) !== 'whitelist') throw new Error('global autonomy must use whitelist level');
     const requestedTools = patch.allowedTools !== undefined
@@ -238,6 +275,10 @@ class WorkspaceStore {
       confirmationRules: patch.confirmationRules !== undefined
         ? clone(Array.isArray(patch.confirmationRules) ? patch.confirmationRules : [])
         : clone(existing.confirmationRules || []),
+      revision: Number(existing.revision || 0) + 1,
+      usesRemaining: patch.usesRemaining !== undefined
+        ? (patch.usesRemaining == null ? null : Math.max(0, Math.floor(Number(patch.usesRemaining))))
+        : (existing.usesRemaining == null ? null : Math.max(0, Number(existing.usesRemaining))),
       createdAt: existing.createdAt || timestamp,
       updatedAt: timestamp,
     };
@@ -322,6 +363,7 @@ class WorkspaceStore {
     if (this.emergency.active) return this._authorizationFailure('blocked', 'emergency stop is active');
     const actionExpiresAt = normalizeIsoOrNull(expiresAt);
     if (actionExpiresAt && parseTimestamp(actionExpiresAt) <= this.now()) return this._authorizationFailure('cancelled', 'action expired');
+    try { validateArgumentSchema(args, tool.argumentSchema); } catch (error) { return this._authorizationFailure('blocked', error.message); }
 
     let policy;
     if (origin === 'session') {
@@ -360,6 +402,7 @@ class WorkspaceStore {
     if (this._confirmationRequired(policy, toolId, { confirmed })) {
       return this._authorizationFailure('blocked', 'confirmation is required by autonomy policy');
     }
+    if (policy.usesRemaining !== null && Number(policy.usesRemaining) <= 0) return this._authorizationFailure('blocked', 'autonomy lease uses exhausted');
     return { allowed: true, policy, actionExpiresAt };
   }
 
@@ -405,6 +448,16 @@ class WorkspaceStore {
       });
       emitUpdate();
       throw Object.assign(new Error(authorization.reason), { actionRunId: run.id, actionRun: clone(run) });
+    }
+
+    if (authorization.policy.usesRemaining !== null) {
+      const current = this.policies.get(policyKey(authorization.policy.scopeType, authorization.policy.targetId));
+      if (current && current.usesRemaining !== null) {
+        current.usesRemaining = Math.max(0, Number(current.usesRemaining) - 1);
+        current.updatedAt = iso(this.now());
+        this.policies.set(policyKey(current.scopeType, current.targetId), current);
+        this._persist();
+      }
     }
 
     this._touchActionRun(run, {
@@ -488,25 +541,30 @@ class WorkspaceStore {
   acceptEvent(event) {
     const normalized = createEventEnvelope(event);
     const key = `${normalized.origin}:${normalized.sequence}`;
-    if (this.eventKeys.has(key) || this.eventKeys.has(`event:${normalized.eventId}`)) return { accepted: false, event: clone(normalized) };
+    if (this.eventKeys.has(key) || this.eventKeys.has(`event:${normalized.eventId}`)) return { accepted: false, status: 'duplicate', event: clone(normalized) };
+    normalized.revision = ++this.eventRevision;
     this.eventKeys.add(key);
     this.eventKeys.add(`event:${normalized.eventId}`);
     this.eventLog.push(normalized);
     this._appendJournal(normalized);
     this._persist();
-    return { accepted: true, event: clone(normalized) };
+    return { accepted: true, status: 'accepted', event: clone(normalized) };
   }
 
   events() {
     return clone(this.eventLog);
   }
 
-  registerTool({ id: toolId, title, description = '', readOnly = false, autonomyLevel = null, invoke }) {
+  eventsAfter(revision = 0, limit = 200) {
+    return clone(this.eventLog.filter(event => Number(event.revision || 0) > Number(revision || 0)).slice(0, Math.max(1, Math.min(500, Number(limit) || 200))));
+  }
+
+  registerTool({ id: toolId, title, description = '', readOnly = false, autonomyLevel = null, argumentSchema = {}, invoke }) {
     if (!toolId || typeof invoke !== 'function') throw new Error('tool id and invoke function are required');
     if (isHardDeniedToolId(toolId)) throw new Error(`hard-denied tool is forbidden: ${toolId}`);
     const level = autonomyLevel || (readOnly ? 'observe' : 'reversible');
     if (!AUTONOMY_LEVELS.has(level)) throw new Error(`invalid autonomy level: ${level}`);
-    this.tools.set(toolId, { id: toolId, title: title || toolId, description, readOnly, autonomyLevel: level, invoke });
+    this.tools.set(toolId, { id: toolId, title: title || toolId, description, readOnly, autonomyLevel: level, argumentSchema: clone(argumentSchema || {}), invoke });
     return this.listTools().find(tool => tool.id === toolId);
   }
 
@@ -782,21 +840,74 @@ class WorkspaceStore {
 
   getTask(taskId) { return clone(this.tasks.get(taskId) || null); }
 
-  listTasks() { return [...this.tasks.values()].map(clone).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
+  listTasks(filters = {}) {
+    return [...this.tasks.values()]
+      .filter((task) => !filters.state || task.state === String(filters.state))
+      .filter((task) => !filters.source || task.source === String(filters.source))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, Math.max(1, Math.min(200, Number(filters.limit) || 200)))
+      .map(clone);
+  }
+
+  _recordTaskAudit(task, { action = 'update', actor = 'system', idempotencyKey = null, fromState, toState }) {
+    const entry = { id: id('task_audit'), taskId: task.id, action, actor, idempotencyKey, fromState, toState, createdAt: iso(this.now()) };
+    this.taskAudit.push(entry);
+    if (idempotencyKey) this.taskActionKeys.set(`${task.id}:${idempotencyKey}`, entry.id);
+    return entry;
+  }
+
+  listTaskAudit(taskId) { return clone(this.taskAudit.filter(item => item.taskId === taskId)); }
+
+  applyTaskAction(taskId, action, { actor = 'user', idempotencyKey = null, detail = '' } = {}) {
+    const task = this.tasks.get(taskId);
+    if (!task) throw new Error('task not found');
+    const key = idempotencyKey ? `${taskId}:${idempotencyKey}` : null;
+    if (key && this.taskActionKeys.has(key)) {
+      const result = clone(task);
+      result.auditId = this.taskActionKeys.get(key);
+      return result;
+    }
+    const actionName = String(action || '').toLowerCase();
+    const target = { start: 'running', continue: 'running', resume: 'running', pause: 'paused', retry: 'pending', cancel: 'cancelled', archive: 'archived' }[actionName];
+    if (!target) throw new Error(`invalid task action: ${action}`);
+    if (!TASK_TRANSITIONS.get(task.state)?.has(target)) throw new Error(`cannot ${actionName} task from ${task.state}`);
+    return this.updateTask(taskId, {
+      state: target,
+      retry: actionName === 'retry',
+      log: detail || `task action: ${actionName}`,
+      action: actionName,
+      actor,
+      idempotencyKey,
+    });
+  }
+
+  invokeGlobalTool(toolId, args = {}, options = {}) {
+    return this._invokeRegisteredToolInvocation({
+      origin: 'direct', sessionId: null, automationId: null, toolId, args,
+      taskId: options.taskId || null, expiresAt: options.expiresAt || null,
+      confirmed: options.confirmed === true, onUpdate: options.onUpdate,
+    });
+  }
 
   updateTask(taskId, patch = {}) {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error('task not found');
     if (patch.state !== undefined && !TASK_STATES.has(patch.state)) throw new Error(`invalid task state: ${patch.state}`);
+    const fromState = task.state;
+    const requestedState = patch.retry === true ? 'pending' : patch.state;
+    if (requestedState !== undefined && !TASK_TRANSITIONS.get(task.state)?.has(requestedState)) throw new Error(`cannot transition task from ${task.state} to ${requestedState}`);
     if (patch.state !== undefined) task.state = patch.state;
     if (patch.progress !== undefined) task.progress = Math.max(0, Math.min(100, Number(patch.progress) || 0));
     for (const key of ['detail', 'error', 'metadata', 'artifactRefs']) if (patch[key] !== undefined) task[key] = clone(patch[key]);
     if (patch.log) task.logs.push({ id: id('log'), text: String(patch.log), createdAt: iso(this.now()) });
     if (patch.retry === true) { task.retryCount += 1; task.state = 'pending'; task.error = null; }
     task.updatedAt = iso(this.now());
+    const audit = this._recordTaskAudit(task, { action: patch.action || (patch.retry ? 'retry' : 'update'), actor: patch.actor || 'system', idempotencyKey: patch.idempotencyKey || null, fromState, toState: task.state });
     this._persist();
     this._attentionForTask(task);
-    return clone(task);
+    const result = clone(task);
+    result.auditId = audit.id;
+    return result;
   }
 
   createAutomation({ id: automationId = id('automation'), name = '未命名场景', enabled = true, trigger = { type: 'manual' }, conditions = [], actions = [], cooldownMs = 0 } = {}) {

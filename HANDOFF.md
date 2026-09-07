@@ -112,13 +112,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 
 ---
 
-## 5. Round 59：一体化增强实现状态
+## 5. Round 60：完整增强实现状态
 
 - 已实现个人任务中枢增强：任务状态新增 `archived`，工作台支持暂停、继续、重试、取消、归档；任务完成/失败/取消继续生成 Attention，ActionRun 保留过期、急停和脱敏审计。
 - 已实现全局自治白名单：`GET/PATCH /api/autonomy`，默认只读工具；未注册、Shell、删除、凭据、发布及不可逆工具硬禁止，自动化动作额外检查全局白名单。
 - 已实现 10 个 Mote 配置和持久化探索状态：6 个初始形态、4 个探索形态；三类碎片解锁、`eventId` 去重、旧状态迁移和 WS `mote.roster` / `mote.profile` / `mote.exploration`。
 - 已实现 Android `MoteProfile`、`MoteBehaviorEngine`、新旧 `PetAppearance` 兼容、WS 协议常量、离线 JSON 镜像与 outbox 去重；新增 Mote 图鉴入口，Canvas 读取统一行为提示。
-- 服务端测试：29/29 通过。Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 已通过；本轮未连接实体机，未宣称手机验收。
+- 本轮新增严格任务状态转换、幂等任务动作、任务审计查询、事件 revision/增量同步、明确重复 ACK、自治策略 revision/usesRemaining/参数约束、Mote 行为 wire payload，以及 Android WorkManager outbox 恢复和 Room 策略迁移。
+- 新增接口：`POST /api/tasks/:id/actions`、`GET /api/tasks/:id/audit`、`GET /api/workspace/events?since=N`、`GET /api/motes/behavior`。
+- 服务端测试：35/35 通过。Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 已通过；本轮未连接实体机，未宣称手机验收。
 
 ## 6. 当前阻塞点与下一步行动 (Next Steps)
 

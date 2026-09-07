@@ -202,6 +202,25 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     const tasks = await request('/api/tasks');
     assert.ok(tasks.body.tasks.some(task => task.id === message.body.task.id));
 
+    const controlTask = await request('/api/tasks', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '可恢复任务', detail: '验证任务动作' }),
+    });
+    const startedTask = await request(`/api/tasks/${controlTask.body.task.id}/actions`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'api-start-1' },
+      body: JSON.stringify({ action: 'start' }),
+    });
+    assert.equal(startedTask.body.task.state, 'running');
+    const repeatedStart = await request(`/api/tasks/${controlTask.body.task.id}/actions`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'api-start-1' },
+      body: JSON.stringify({ action: 'start' }),
+    });
+    assert.equal(repeatedStart.body.task.state, 'running');
+    const taskAudit = await request(`/api/tasks/${controlTask.body.task.id}/audit`);
+    assert.equal(taskAudit.body.audit.length, 1);
+    const behavior = await request('/api/motes/behavior?taskState=running&deviceHealth=degraded');
+    assert.equal(behavior.body.behavior.version, 1);
+
     const failedTask = await request(`/api/tasks/${message.body.task.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -246,6 +265,7 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.ok(Array.isArray(workspace.body.attention));
     assert.ok(Array.isArray(workspace.body.policies));
     assert.ok(Array.isArray(workspace.body.actionRuns));
+    assert.equal(typeof workspace.body.eventRevision, 'number');
   } finally {
     child.kill();
     fs.rmSync(runtimeDir, { recursive: true, force: true });

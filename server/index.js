@@ -4,7 +4,7 @@ const { execFile, spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { WorkspaceStore, createEventEnvelope } = require('./workspace-core');
 const { DeviceHealthStore } = require('./device-health');
-const { MoteStore } = require('./mote-profiles');
+const { MoteStore, deriveMoteBehavior } = require('./mote-profiles');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -956,7 +956,7 @@ function snapshotPayload() {
     chat: chatHistory.slice(-50),
     deviceHealth: deviceHealthStore.snapshot(),
     workspace: workspaceSnapshot(),
-    motes: { state: moteStore.getState(), roster: moteStore.roster() },
+    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId }) },
     autonomy: workspaceStore.getAutonomyPolicy(),
   });
 }
@@ -1007,9 +1007,11 @@ function workspaceSnapshot() {
     policies: workspaceStore.listPolicies(),
     actionRuns: workspaceStore.listActionRuns().slice(0, 100),
     audit: workspaceStore.auditLog().slice(-100),
+    taskAudit: workspaceStore.listTasks().slice(0, 100).flatMap(task => workspaceStore.listTaskAudit(task.id)),
+    eventRevision: workspaceStore.eventRevision,
     emergencyStop: workspaceStore.emergencyStopState(),
     autonomy: workspaceStore.getAutonomyPolicy(),
-    motes: { state: moteStore.getState(), roster: moteStore.roster() },
+    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId }) },
   };
 }
 
@@ -1158,12 +1160,12 @@ async function setScreenOffTimeout(){
   await api('/api/screen-off-timeout',{method:'POST',headers:{'content-type':'application/json'},body:'{"minutes":'+screenOffTimeout.value+'}'});
   refresh();
 }
-async function taskAction(id,patch){await api('/api/tasks/'+encodeURIComponent(id),{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(patch)});refreshWorkspace()}
+async function taskAction(id,action){await api('/api/tasks/'+encodeURIComponent(id)+'/actions',{method:'POST',headers:{'content-type':'application/json','idempotency-key':'web-'+action+'-'+Date.now()},body:JSON.stringify({action})});refreshWorkspace()}
 async function activateMote(id){await api('/api/motes/active',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({id})});refreshWorkspace()}
 async function chooseMote(id){await api('/api/motes/exploration',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({targetId:id})});refreshWorkspace()}
 async function stopAutonomy(){await api('/api/tools/emergency-stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reason:'web'})});refreshWorkspace()}
-async function refreshWorkspace(){try{let s=await api('/api/state'),w=s.workspace||{},p=s.autonomy||w.autonomy||{};workspaceSummary.textContent='自治：'+(p.level||'-')+' · 白名单 '+(p.allowedTools||[]).length+' 项 · 急停 '+(w.emergencyStop?.active?'已启用':'未启用')+' · 任务 '+(w.tasks||[]).length+' 个';
-  const tasksHtml=(w.tasks||[]).slice(0,10).map(t=>'<div class=item><b>'+esc(t.title)+'</b> · '+esc(t.state)+' · '+t.progress+'% <button onclick="taskAction(\''+esc(t.id)+'\',{state:\'paused\'})">暂停</button> <button onclick="taskAction(\''+esc(t.id)+'\',{state:\'running\'})">继续</button> <button onclick="taskAction(\''+esc(t.id)+'\',{retry:true})">重试</button> <button onclick="taskAction(\''+esc(t.id)+'\',{state:\'cancelled\'})">取消</button> <button onclick="taskAction(\''+esc(t.id)+'\',{state:\'archived\'})">归档</button></div>').join('');
+async function refreshWorkspace(){try{let s=await api('/api/state'),w=s.workspace||{},p=s.autonomy||w.autonomy||{},b=w.motes?.behavior||{};workspaceSummary.textContent='自治：'+(p.level||'-')+' · 白名单 '+(p.allowedTools||[]).length+' 项 · 急停 '+(w.emergencyStop?.active?'已启用':'未启用')+' · 任务 '+(w.tasks||[]).length+' 个 · Mote '+(b.gaze||'ambient');
+  const tasksHtml=(w.tasks||[]).slice(0,10).map(t=>'<div class=item><b>'+esc(t.title)+'</b> · '+esc(t.state)+' · '+t.progress+'% <button onclick="taskAction(\''+esc(t.id)+'\',\'pause\')">暂停</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'continue\')">继续</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'retry\')">重试</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'cancel\')">取消</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'archive\')">归档</button></div>').join('');
   const roster=(s.motes?.roster||w.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote(\''+m.id+'\')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
   moteRoster.innerHTML=tasksHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div>'; }catch(e){workspaceSummary.textContent='工作台暂不可用'}}
 refreshWorkspace();
@@ -1272,7 +1274,8 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (parsedUrl.pathname === '/api/workspace/events' && req.method === 'GET') {
-      return sendJson(res, 200, { ok: true, events: workspaceStore.events() });
+      const since = Number(parsedUrl.searchParams.get('since') || 0);
+      return sendJson(res, 200, { ok: true, revision: workspaceStore.eventRevision, events: workspaceStore.eventsAfter(since) });
     }
     if (parsedUrl.pathname === '/api/workspace/events' && req.method === 'POST') {
       const payload = await readJson(req);
@@ -1374,22 +1377,46 @@ const server = http.createServer(async (req, res) => {
       broadcast({ type: 'workspace.emergency_stop', state });
       return sendJson(res, 200, { ok: true, state });
     }
-    if (parsedUrl.pathname === '/api/tasks' && req.method === 'GET') return sendJson(res, 200, { ok: true, tasks: workspaceStore.listTasks() });
+    if (parsedUrl.pathname === '/api/tasks' && req.method === 'GET') return sendJson(res, 200, { ok: true, tasks: workspaceStore.listTasks({ state: parsedUrl.searchParams.get('state'), source: parsedUrl.searchParams.get('source'), limit: parsedUrl.searchParams.get('limit') }) });
     if (parsedUrl.pathname === '/api/tasks' && req.method === 'POST') {
       const task = workspaceStore.createTask(await readJson(req));
       broadcast({ type: 'workspace.task', task });
       return sendJson(res, 201, { ok: true, task });
     }
     const taskMatch = parsedUrl.pathname.match(/^\/api\/tasks\/([^/]+)$/);
+    const taskAuditMatch = parsedUrl.pathname.match(/^\/api\/tasks\/([^/]+)\/audit$/);
+    const taskActionMatch = parsedUrl.pathname.match(/^\/api\/tasks\/([^/]+)\/actions$/);
+    if (taskAuditMatch && req.method === 'GET') {
+      const task = workspaceStore.getTask(decodeURIComponent(taskAuditMatch[1]));
+      return sendJson(res, task ? 200 : 404, { ok: Boolean(task), taskId: task?.id || null, audit: task ? workspaceStore.listTaskAudit(task.id) : [] });
+    }
+    if (taskActionMatch && req.method === 'POST') {
+      try {
+        const taskId = decodeURIComponent(taskActionMatch[1]);
+        const payload = await readJson(req);
+        const task = workspaceStore.applyTaskAction(taskId, payload.action, { actor: payload.actor || 'web', idempotencyKey: payload.idempotencyKey || req.headers['idempotency-key'] || null, detail: payload.detail || '' });
+        broadcast({ type: 'workspace.task', task });
+        broadcast({ type: 'task.audit', taskId, audit: workspaceStore.listTaskAudit(taskId).at(-1) || null });
+        broadcastTaskAttention(task);
+        return sendJson(res, 200, { ok: true, task, audit: workspaceStore.listTaskAudit(taskId).at(-1) || null });
+      } catch (error) { return sendJson(res, /not found/i.test(error.message) ? 404 : 409, { ok: false, error: error.message }); }
+    }
     if (taskMatch) {
       const taskId = decodeURIComponent(taskMatch[1]);
-      if (req.method === 'GET') return sendJson(res, workspaceStore.getTask(taskId) ? 200 : 404, { ok: Boolean(workspaceStore.getTask(taskId)), task: workspaceStore.getTask(taskId) });
+      if (req.method === 'GET') {
+        const task = workspaceStore.getTask(taskId);
+        return sendJson(res, task ? 200 : 404, { ok: Boolean(task), task, audit: task ? workspaceStore.listTaskAudit(taskId) : [] });
+      }
       if (req.method === 'PATCH') {
         const task = workspaceStore.updateTask(taskId, await readJson(req));
         broadcast({ type: 'workspace.task', task });
         broadcastTaskAttention(task);
         return sendJson(res, 200, { ok: true, task });
       }
+    }
+    if (parsedUrl.pathname === '/api/motes/behavior' && req.method === 'GET') {
+      const active = moteStore.roster().find(item => item.active) || moteStore.roster()[0];
+      return sendJson(res, 200, { ok: true, behavior: deriveMoteBehavior({ profileId: active?.id, taskState: parsedUrl.searchParams.get('taskState') || 'idle', deviceHealth: parsedUrl.searchParams.get('deviceHealth') || 'unknown', interaction: parsedUrl.searchParams.get('interaction') || 'none', explorationActive: parsedUrl.searchParams.get('explorationActive') === 'true', mood: Number(parsedUrl.searchParams.get('mood') || 0) }) });
     }
     if (parsedUrl.pathname === '/api/attention' && req.method === 'GET') {
       const status = parsedUrl.searchParams.get('status') || '';
@@ -1458,7 +1485,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/state') {
       res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
-      return res.end(JSON.stringify({stats:statsSnapshot(),deviceHealth:deviceHealthStore.snapshot(),tasks:publicTasks(),logs:publicLogs(),telemetry:phoneTelemetry,pet:petState,codex:{...codexInfo,selectedTaskId:selectedCodexTaskId},chat:chatHistory.slice(-50),workspace:workspaceSnapshot(),motes:{state:moteStore.getState(),roster:moteStore.roster()},autonomy:workspaceStore.getAutonomyPolicy()}));
+      return res.end(JSON.stringify({stats:statsSnapshot(),deviceHealth:deviceHealthStore.snapshot(),tasks:publicTasks(),logs:publicLogs(),telemetry:phoneTelemetry,pet:petState,codex:{...codexInfo,selectedTaskId:selectedCodexTaskId},chat:chatHistory.slice(-50),workspace:workspaceSnapshot(),motes:{state:moteStore.getState(),roster:moteStore.roster(),behavior:deriveMoteBehavior({ profileId: moteStore.getState().activeId })},autonomy:workspaceStore.getAutonomyPolicy()}));
     }
     if (parsedUrl.pathname === '/api/command') {
       const body = await readBody(req);
@@ -1618,7 +1645,12 @@ wss.on('connection', (ws, req) => {
       if (!isBinary) {
         const json = JSON.parse(data.toString());
         switch(json.type) {
-          case 'snapshot': ws.send(snapshotPayload()); break;
+          case 'snapshot': {
+            const since = Number(json.since || 0);
+            if (since > 0) ws.send(JSON.stringify({ type: 'workspace.events', revision: workspaceStore.eventRevision, events: workspaceStore.eventsAfter(since) }));
+            else ws.send(snapshotPayload());
+            break;
+          }
           case 'workspace.event': {
             const event = createEventEnvelope({
               eventId: String(json.eventId || crypto.randomUUID()),
@@ -1631,7 +1663,7 @@ wss.on('connection', (ws, req) => {
             });
             const accepted = workspaceStore.acceptEvent(event);
             if (accepted.accepted) applyWorkspaceEvent(accepted.event);
-            ws.send(JSON.stringify({ type: 'workspace.ack', eventId: event.eventId, accepted: accepted.accepted, origin: event.origin }));
+            ws.send(JSON.stringify({ type: 'workspace.ack', eventId: event.eventId, accepted: accepted.accepted, status: accepted.status, revision: accepted.event.revision || workspaceStore.eventRevision, origin: event.origin }));
             if (accepted.accepted) broadcast({ type: 'workspace.event', event });
             break;
           }

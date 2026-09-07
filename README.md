@@ -31,6 +31,10 @@
 - 个人自治策略：`/api/autonomy` 默认只允许注册表中的只读工具；可编辑白名单，未注册工具、Shell、删除、凭据、发布和不可逆工具始终拒绝；支持过期和 Emergency Stop。
 - Mote 图鉴：6 个初始形态 + 焰芽、棱光蝶、苔龟、星鸦 4 个探索形态；服务端持久化当前形态、解锁状态和地点/物体/光线碎片，`eventId` 幂等。
 - 统一行为提示：Android 的离线交互、通知/小组件入口和 Canvas 主视图/现实镜头共享 `MoteProfile` 与确定性 `MoteBehaviorEngine`。
+- 可靠任务动作：`POST /api/tasks/:id/actions` 支持幂等启动、暂停、继续、重试、取消、归档；`GET /api/tasks/:id/audit` 返回任务审计时间线，列表支持 `state/source/limit` 筛选。
+- 可恢复工作区同步：事件带服务端 `revision`，`GET /api/workspace/events?since=N` 获取增量；WebSocket ACK 明确 `accepted/duplicate`，Android 记录游标并在网络恢复时通过 WorkManager 冲刷 outbox。
+- 自治租约与参数约束：策略支持 `revision`、`usesRemaining`；注册工具可声明 required/allowedKeys/types/maxStringLength 参数约束。
+- Mote 行为接口：`GET /api/motes/behavior` 返回版本化动作、注视、光环、粒子和语音模式提示。
 
 ## 启动
 
@@ -70,6 +74,9 @@ F:\CodexApps\PhoneBridge\cloudflared.exe tunnel --url http://127.0.0.1:9503 --no
 - Codex 选任务：`POST /api/codex/select_task {"id":"..."}`
 - 个人自治：`GET/PATCH /api/autonomy`
 - Mote 图鉴：`GET /api/motes`、`PATCH /api/motes/active {"id":"mote"}`、`PATCH /api/motes/exploration {"targetId":"ember_sprig"}`、`POST /api/motes/exploration/clues {"eventId":"...","clueType":"location|object|light"}`
+- 任务动作：`POST /api/tasks/:id/actions {"action":"start|pause|continue|retry|cancel|archive","idempotencyKey":"..."}`、`GET /api/tasks/:id/audit`、`GET /api/tasks?state=running`
+- 工作区增量事件：`GET /api/workspace/events?since=REVISION`
+- Mote 行为：`GET /api/motes/behavior?taskState=running&deviceHealth=degraded`
 - 模型对话：`POST /api/chat {"text":"你好"}`
 - 空闲断流：`POST /api/idle-timeout {"minutes":5}`，范围 1–120 分钟；空闲后会自动关闭摄像头和持续监听。
 - Web 指挥中心提供 1/3/5/10/30 分钟空闲断流选择器；手机离线时设备指令会被拒绝并记录日志。

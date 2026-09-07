@@ -11,7 +11,7 @@ import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 
-const val WORKSPACE_DB_VERSION = 2
+const val WORKSPACE_DB_VERSION = 3
 
 @Entity(tableName = "workspace_sessions")
 data class WorkspaceSessionEntity(
@@ -87,7 +87,9 @@ data class WorkspaceAutonomyPolicyEntity(
     val allowedToolsJson: String = "[]",
     val expiresAt: Long? = null,
     val continuousMic: Boolean = false,
-    val confirmationRulesJson: String = "[]"
+    val confirmationRulesJson: String = "[]",
+    val revision: Int = 0,
+    val usesRemaining: Int? = null
 )
 
 @Entity(
