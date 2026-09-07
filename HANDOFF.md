@@ -1,6 +1,14 @@
-# PhoneBridge 交接文档 (Round 57 综合基线)
+# PhoneBridge 交接文档（Round 57 综合基线 / Round 58 收口）
 
-更新时间：2026-09-03（以证据文件与测试验证时间为准）
+更新时间：2026-09-08（以证据文件与测试验证时间为准）
+
+## 0. Round 58 当前状态覆盖（2026-09-08）
+
+- GitHub 公有仓库：<https://github.com/blueicx/PhoneBridge>，默认分支为 `main`。
+- 最新提交：`6e510cd`。已清除脚本中的硬编码设备 PIN；设备 PIN 仍需在手机端自行更换，严禁重新写入代码或文档。
+- 本地验证：`node --check server/index.js`、`node --test server/*.test.js` 通过；Android `:app:testDebugUnitTest :app:assembleDebug` 返回 `BUILD SUCCESSFUL`。
+- 当前实机状态：Windows 能识别 Xperia XZ2，但 ADB 5038、5039、5037 均未列出已授权设备。因此现实线索点击、文本聊天和 PTT 回归仍未完成，不能用历史截图代替本轮验证。
+- 恢复条件：解锁手机、确认 USB 调试授权后，再运行 `scripts/adb_recovery.ps1 -ResetServer`，随后按第 5 节顺序继续。
 
 ## 1. 项目位置与结构
 
@@ -8,7 +16,7 @@
 - Android 工程：`F:\CodexApps\PhoneBridge\android`
 - 本地服务节点：`F:\CodexApps\PhoneBridge\server`
 - 自动化与运维脚本：`F:\CodexApps\PhoneBridge\scripts`
-- 注：本项目为本地目录（非 Git 托管），版本历史与演进基线以本交接文档、`.dispatch-progress.md` 及 `.superpowers/sdd/progress.md` 为准；重要节点备份存储在 `.superpowers/dispatch-backup/`。
+- 注：本项目当前由 Git 管理并同步到 GitHub；版本历史与演进基线以 Git、本文档、`.dispatch-progress.md` 及 `.superpowers/sdd/progress.md` 为准；重要节点备份存储在 `.superpowers/dispatch-backup/`。
 
 ---
 
