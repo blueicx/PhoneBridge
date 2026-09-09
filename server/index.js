@@ -1341,6 +1341,7 @@ const server = http.createServer(async (req, res) => {
     if (questMatch && req.method === 'POST') {
       try {
         const result = moteQuestStore.claim(decodeURIComponent(questMatch[1]), (await readJson(req)).eventId);
+        if (!result.duplicate && result.quest.reward) moteRelationshipStore.recordInteraction({ eventId: `quest:${result.state.claimed.at(-1).eventId}`, kind: 'quest', amount: result.quest.reward });
         broadcast({ type: 'mote.quest', quests: moteQuestStore.list(), result });
         return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
       } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }

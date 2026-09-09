@@ -150,6 +150,14 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: 'api-quest-1' }),
     });
     assert.equal(questClaim.response.status, 201);
+    const relationshipAfterQuest = await request('/api/motes/relationship');
+    assert.equal(relationshipAfterQuest.body.relationship.xp, 15);
+    const questDuplicate = await request('/api/motes/quests/daily-observer/claim', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: 'api-quest-1' }),
+    });
+    assert.equal(questDuplicate.body.duplicate, true);
+    const relationshipAfterDuplicate = await request('/api/motes/relationship');
+    assert.equal(relationshipAfterDuplicate.body.relationship.xp, 15);
     const approvalRequest = await request('/api/autonomy/approvals', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ toolId: 'device.telemetry', args: {} }),
     });
