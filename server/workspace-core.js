@@ -5,7 +5,7 @@ const path = require('node:path');
 const TASK_STATES = new Set(['pending', 'running', 'paused', 'needs_confirmation', 'succeeded', 'failed', 'cancelled', 'archived']);
 const TASK_TRANSITIONS = new Map([
   ['pending', new Set(['pending', 'running', 'paused', 'needs_confirmation', 'failed', 'cancelled'])],
-  ['running', new Set(['running', 'paused', 'needs_confirmation', 'succeeded', 'failed', 'cancelled'])],
+  ['running', new Set(['running', 'pending', 'paused', 'needs_confirmation', 'succeeded', 'failed', 'cancelled'])],
   ['paused', new Set(['paused', 'running', 'cancelled'])],
   ['needs_confirmation', new Set(['needs_confirmation', 'running', 'cancelled', 'archived'])],
   ['succeeded', new Set(['succeeded', 'archived'])],
@@ -135,7 +135,7 @@ function validateArgumentSchema(args, schema = {}) {
 }
 
 class WorkspaceStore {
-  constructor({ now = () => Date.now(), journalPath = null, snapshotPath = null } = {}) {
+  constructor({ now = () => Date.now(), journalPath = null, snapshotPath = null, eventRetention = 500 } = {}) {
     this.now = now;
     this.journalPath = journalPath;
     this.snapshotPath = snapshotPath;
@@ -152,6 +152,8 @@ class WorkspaceStore {
     this.audit = [];
     this.taskAudit = [];
     this.taskActionKeys = new Map();
+    this.approvals = new Map();
+    this.eventRetention = Math.max(2, Number(eventRetention) || 500);
     this.eventRevision = 0;
     this.sequence = 0;
     this.emergency = { active: false, reason: null, updatedAt: iso(this.now()) };
@@ -172,6 +174,7 @@ class WorkspaceStore {
       this.audit = data.audit || [];
       this.taskAudit = data.taskAudit || [];
       this.taskActionKeys = new Map(data.taskActionKeys || []);
+      for (const approval of data.approvals || []) this.approvals.set(approval.id, approval);
       this.eventLog = data.eventLog || [];
       this.eventKeys = new Set(data.eventKeys || []);
       for (const event of this.eventLog) {
@@ -212,6 +215,7 @@ class WorkspaceStore {
       eventKeys: [...this.eventKeys],
       sequence: this.sequence,
       eventRevision: this.eventRevision,
+      approvals: [...this.approvals.values()],
       emergency: this.emergency,
     }, null, 2));
     fs.renameSync(temporary, this.snapshotPath);
@@ -546,6 +550,7 @@ class WorkspaceStore {
     this.eventKeys.add(key);
     this.eventKeys.add(`event:${normalized.eventId}`);
     this.eventLog.push(normalized);
+    if (this.eventLog.length > this.eventRetention) this.eventLog.splice(0, this.eventLog.length - this.eventRetention);
     this._appendJournal(normalized);
     this._persist();
     return { accepted: true, status: 'accepted', event: clone(normalized) };
@@ -555,8 +560,66 @@ class WorkspaceStore {
     return clone(this.eventLog);
   }
 
+  syncState(since = 0) {
+    const cursor = Math.max(0, Number(since) || 0);
+    const oldest = this.eventLog[0]?.revision || this.eventRevision;
+    const resetRequired = cursor > this.eventRevision || (this.eventLog.length > 0 && cursor < oldest - 1);
+    return {
+      mode: resetRequired ? 'snapshot' : 'delta',
+      resetRequired,
+      fromRevision: cursor,
+      toRevision: this.eventRevision,
+      events: resetRequired ? [] : this.eventsAfter(cursor),
+    };
+  }
+
   eventsAfter(revision = 0, limit = 200) {
     return clone(this.eventLog.filter(event => Number(event.revision || 0) > Number(revision || 0)).slice(0, Math.max(1, Math.min(500, Number(limit) || 200))));
+  }
+
+  requestToolApproval({ sessionId = null, toolId, args = {}, taskId = null, expiresAt = null } = {}) {
+    const tool = this.tools.get(String(toolId || ''));
+    if (!tool) throw new Error(`unknown registered tool: ${toolId}`);
+    validateArgumentSchema(args, tool.argumentSchema);
+    if (isHardDeniedToolId(tool.id)) throw new Error('hard-denied tool is forbidden');
+    const safeArgs = sanitizeValue(args);
+    if (JSON.stringify(safeArgs) !== JSON.stringify(args)) throw new Error('sensitive arguments cannot be approved');
+    const expiry = normalizeIsoOrNull(expiresAt) || iso(this.now() + 5 * 60 * 1000);
+    if (parseTimestamp(expiry) <= this.now()) throw new Error('approval expired');
+    const approval = { id: id('approval'), sessionId, taskId, toolId: tool.id, args: clone(safeArgs), state: 'needs_confirmation', expiresAt: expiry, createdAt: iso(this.now()), approvedAt: null, consumedAt: null };
+    this.approvals.set(approval.id, approval);
+    if (taskId && this.tasks.has(taskId)) this.updateTask(taskId, { state: 'needs_confirmation', detail: `等待确认工具：${tool.id}`, action: 'approval_request', actor: 'system' });
+    this._persist();
+    return clone(approval);
+  }
+
+  getToolApproval(approvalId) { return clone(this.approvals.get(String(approvalId)) || null); }
+
+  listToolApprovals() { return clone([...this.approvals.values()].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))); }
+
+  approveToolApproval(approvalId) {
+    const approval = this.approvals.get(String(approvalId));
+    if (!approval) throw new Error('approval not found');
+    if (approval.state === 'consumed') throw new Error('approval already consumed');
+    if (parseTimestamp(approval.expiresAt) <= this.now()) { approval.state = 'expired'; this._persist(); throw new Error('approval expired'); }
+    approval.state = 'approved';
+    approval.approvedAt = iso(this.now());
+    this._persist();
+    return clone(approval);
+  }
+
+  invokeApprovedTool(approvalId, options = {}) {
+    const approval = this.approvals.get(String(approvalId));
+    if (!approval) throw new Error('approval not found');
+    if (approval.state === 'consumed') throw new Error('approval already consumed');
+    if (approval.state !== 'approved') throw new Error('approval confirmation is required');
+    if (parseTimestamp(approval.expiresAt) <= this.now()) { approval.state = 'expired'; this._persist(); throw new Error('approval expired'); }
+    const result = this.invokeGlobalTool(approval.toolId, approval.args, { taskId: approval.taskId, expiresAt: approval.expiresAt, confirmed: true, onUpdate: options.onUpdate });
+    if (approval.taskId && this.tasks.has(approval.taskId)) this.updateTask(approval.taskId, { state: 'running', detail: `已批准工具：${approval.toolId}`, action: 'approval_granted', actor: 'user' });
+    approval.state = 'consumed';
+    approval.consumedAt = iso(this.now());
+    this._persist();
+    return { ...result, approval: clone(approval) };
   }
 
   registerTool({ id: toolId, title, description = '', readOnly = false, autonomyLevel = null, argumentSchema = {}, invoke }) {

@@ -20,7 +20,7 @@ object BridgeLink {
         fun onBridgeAudio(data: okio.ByteString)
         fun onBridgeLost(reason: String)
         fun onBridgeState(state: DeviceHealthState) {}
-        fun onWorkspaceAck(eventId: String, accepted: Boolean) {}
+        fun onWorkspaceAck(eventId: String, accepted: Boolean, status: String? = null) {}
     }
 
     interface DeviceListener {
@@ -201,7 +201,7 @@ object BridgeLink {
                     val message = json.optString("message").trim()
                     if (message.isNotBlank()) deviceListener?.onProactive(message, json.optString("key"))
                 }
-                "workspace.ack" -> listener()?.onWorkspaceAck(json.optString("eventId"), json.optBoolean("accepted"))
+                "workspace.ack" -> listener()?.onWorkspaceAck(json.optString("eventId"), json.optBoolean("accepted"), json.optString("status").ifBlank { null })
                 else -> Unit
             }
             Unit

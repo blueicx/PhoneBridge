@@ -26,6 +26,12 @@ object WorkspaceEventTypes {
     const val MOTE_ROSTER = "mote.roster"
     const val MOTE_PROFILE = "mote.profile"
     const val MOTE_EXPLORATION = "mote.exploration"
+    const val SYNC_STATE = "workspace.sync_state"
+    const val TASK_PROGRESS = "workspace.task.progress"
+    const val TASK_FINISHED = "workspace.task.finished"
+    const val AUTONOMY_APPROVAL = "autonomy.approval"
+    const val MOTE_RELATIONSHIP = "mote.relationship"
+    const val MOTE_QUEST = "mote.quest"
 }
 
 object AttentionSeverity {
@@ -362,6 +368,40 @@ class OutboxQueue {
     fun acknowledge(eventId: String): Boolean = items.remove(eventId) != null
 
     fun size(): Int = items.size
+}
+
+data class AutonomyApproval(
+    val id: String,
+    val toolId: String,
+    val taskId: String? = null,
+    val state: String = "needs_confirmation",
+    val expiresAt: Long? = null
+) {
+    companion object {
+        fun fromJson(text: String): AutonomyApproval {
+            val values = parseJsonObject(text)
+            return AutonomyApproval(
+                id = values.string("id"),
+                toolId = values.string("toolId"),
+                taskId = values.nullableString("taskId"),
+                state = values.string("state").ifBlank { "needs_confirmation" },
+                expiresAt = values.nullableLong("expiresAt")
+            )
+        }
+    }
+}
+
+data class MoteRelationshipSummary(
+    val level: Int = 1,
+    val xp: Int = 0,
+    val interactions: Int = 0
+) {
+    companion object {
+        fun fromJson(text: String): MoteRelationshipSummary {
+            val values = parseJsonObject(text)
+            return MoteRelationshipSummary(values.int("level").coerceAtLeast(1), values.int("xp").coerceAtLeast(0), values.int("interactions").coerceAtLeast(0))
+        }
+    }
 }
 
 data class WorkspaceSyncCursor(val revision: Long = 0L, val lastError: String? = null)

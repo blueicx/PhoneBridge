@@ -35,6 +35,11 @@
 - 可恢复工作区同步：事件带服务端 `revision`，`GET /api/workspace/events?since=N` 获取增量；WebSocket ACK 明确 `accepted/duplicate`，Android 记录游标并在网络恢复时通过 WorkManager 冲刷 outbox。
 - 自治租约与参数约束：策略支持 `revision`、`usesRemaining`；注册工具可声明 required/allowedKeys/types/maxStringLength 参数约束。
 - Mote 行为接口：`GET /api/motes/behavior` 返回版本化动作、注视、光环、粒子和语音模式提示。
+- 任务执行队列：会话任务使用单并发 `TaskRunner`，支持排队、暂停、继续、取消、瞬时失败重试和运行进度审计；急停会取消活动任务。
+- 自治审批闭环：`/api/autonomy/approvals` 为受限工具生成一次性确认，批准后只能消费一次，过期、重放和硬禁止调用继续拒绝。
+- 同步恢复：`/api/workspace/events?since=N` 返回 delta/snapshot 模式、起止 revision 和 `resetRequired`，事件保留窗口不足时安全回退全量同步。
+- Mote 关系任务：`/api/motes/relationship`、`/api/motes/quests` 提供幂等互动经验、等级和陪伴任务；Android 识别审批、关系和任务事件。
+- GitHub Actions：`.github/workflows/ci.yml` 自动执行 Node 服务端测试、Android 单元测试和差异空白检查，不运行 ADB 或上传运行时数据。
 
 ## 启动
 
@@ -77,6 +82,8 @@ F:\CodexApps\PhoneBridge\cloudflared.exe tunnel --url http://127.0.0.1:9503 --no
 - 任务动作：`POST /api/tasks/:id/actions {"action":"start|pause|continue|retry|cancel|archive","idempotencyKey":"..."}`、`GET /api/tasks/:id/audit`、`GET /api/tasks?state=running`
 - 工作区增量事件：`GET /api/workspace/events?since=REVISION`
 - Mote 行为：`GET /api/motes/behavior?taskState=running&deviceHealth=degraded`
+- 自治审批：`GET/POST /api/autonomy/approvals`、`POST /api/autonomy/approvals/:id/approve`、`POST /api/autonomy/approvals/:id/invoke`
+- Mote 关系/任务：`GET/POST /api/motes/relationship`、`GET /api/motes/quests`、`POST /api/motes/quests/:id/claim`
 - 模型对话：`POST /api/chat {"text":"你好"}`
 - 空闲断流：`POST /api/idle-timeout {"minutes":5}`，范围 1–120 分钟；空闲后会自动关闭摄像头和持续监听。
 - Web 指挥中心提供 1/3/5/10/30 分钟空闲断流选择器；手机离线时设备指令会被拒绝并记录日志。

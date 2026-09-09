@@ -136,6 +136,34 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: 'api-light', clueType: 'light' }),
     });
     assert.equal(duplicateClue.body.duplicate, true);
+    const relationship = await request('/api/motes/relationship', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: 'api-tap-1', kind: 'tap', amount: 10 }),
+    });
+    assert.equal(relationship.response.status, 201);
+    const relationshipDuplicate = await request('/api/motes/relationship', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: 'api-tap-1', kind: 'tap', amount: 10 }),
+    });
+    assert.equal(relationshipDuplicate.body.duplicate, true);
+    const quests = await request('/api/motes/quests');
+    assert.equal(quests.response.status, 200);
+    const questClaim = await request('/api/motes/quests/daily-observer/claim', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: 'api-quest-1' }),
+    });
+    assert.equal(questClaim.response.status, 201);
+    const approvalRequest = await request('/api/autonomy/approvals', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ toolId: 'device.telemetry', args: {} }),
+    });
+    assert.equal(approvalRequest.response.status, 202);
+    const approvalId = approvalRequest.body.approval.id;
+    const approved = await request(`/api/autonomy/approvals/${approvalId}/approve`, { method: 'POST' });
+    assert.equal(approved.response.status, 200);
+    const invoked = await request(`/api/autonomy/approvals/${approvalId}/invoke`, { method: 'POST' });
+    assert.equal(invoked.response.status, 200);
+    const replay = await request(`/api/autonomy/approvals/${approvalId}/invoke`, { method: 'POST' });
+    assert.equal(replay.response.status, 403);
+    const sync = await request('/api/workspace/events?since=0');
+    assert.equal(sync.response.status, 200);
+    assert.equal(typeof sync.body.resetRequired, 'boolean');
     const opened = await openSocket();
     const socket = opened.socket;
     try {

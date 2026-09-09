@@ -122,7 +122,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 新增接口：`POST /api/tasks/:id/actions`、`GET /api/tasks/:id/audit`、`GET /api/workspace/events?since=N`、`GET /api/motes/behavior`。
 - 服务端测试：35/35 通过。Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 已通过；本轮未连接实体机，未宣称手机验收。
 
-## 6. 当前阻塞点与下一步行动 (Next Steps)
+## 6. Round 61：五批次扩充收口（2026-09-10）
+
+- 设计规格与实现计划：`docs/superpowers/specs/2026-09-10-phonebridge-expansion-design.md`、`docs/superpowers/plans/2026-09-10-phonebridge-expansion.md`。
+- 新增服务端 `TaskRunner`：单并发排队、暂停/继续、取消、瞬时失败重试、进度和运行状态；会话消息任务通过队列执行。
+- 新增自治审批：受限工具生成一次性 approval，批准后消费一次；过期、重放、参数越权和硬禁止仍拒绝，急停会取消活动任务。
+- 新增同步恢复窗口：事件保留上限、delta/snapshot `resetRequired` 响应和明确 revision 范围；Android 新增审批、关系、任务和同步事件协议常量。
+- 新增 Mote 关系与陪伴任务：互动 eventId 幂等、等级经验持久化、quest claim 幂等；Web/Android 快照带关系与任务摘要。
+- 新增 `.github/workflows/ci.yml`：Node 测试、Android `testDebugUnitTest`、`git diff --check`；CI 不连接实体机。
+- 本轮本地验证：服务端测试 41/41；Android `:app:testDebugUnitTest` 通过；Debug 完整构建、敏感扫描和 GitHub 推送待收尾验证。
+- 重要边界：本轮未运行 ADB、现实线索点击、文本/语音实机回归；旧 Round 58 提交记录属于历史硬件基线，当前开发基线以功能分支最新提交为准。
+
+## 7. 当前阻塞点与下一步行动 (Next Steps)
 
 1. **当前阻塞点**：
    - 实体机在 Windows 设备管理器中显示为 `USB\VID_0FCE&PID_0DDE\QV7017NH1F`，但 ADB 端口（5038）列表暂时为空（设备因电量保护或 USB 调试鉴权掉线）。

@@ -5,6 +5,8 @@ const { WebSocketServer } = require('ws');
 const { WorkspaceStore, createEventEnvelope } = require('./workspace-core');
 const { DeviceHealthStore } = require('./device-health');
 const { MoteStore, deriveMoteBehavior } = require('./mote-profiles');
+const { TaskRunner } = require('./task-runner');
+const { MoteRelationshipStore, MoteQuestStore } = require('./mote-expansion');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -234,6 +236,14 @@ const workspaceStore = new WorkspaceStore({
   snapshotPath: path.join(RUNTIME_DIR, 'workspace-state.json'),
 });
 const moteStore = new MoteStore({ snapshotPath: path.join(RUNTIME_DIR, 'mote-state.json') });
+const moteRelationshipStore = new MoteRelationshipStore({ snapshotPath: path.join(RUNTIME_DIR, 'mote-relationship.json') });
+const moteQuestStore = new MoteQuestStore({
+  quests: [
+    { id: 'daily-observer', title: '完成一次观察', reward: 5 },
+    { id: 'task-companion', title: '完成一次任务', reward: 10 },
+  ],
+  snapshotPath: path.join(RUNTIME_DIR, 'mote-quests.json'),
+});
 const deviceHealthStore = new DeviceHealthStore({
   bridge: 'disconnected',
   node: 'inactive',
@@ -649,6 +659,44 @@ function applyWorkspaceEvent(event) {
   }
 }
 
+const taskRunner = new TaskRunner({ maxConcurrency: 1, maxRetries: 1, retryDelayMs: 250 });
+
+function publishRunnerState(update) {
+  const current = workspaceStore.getTask(update.id);
+  if (!current) return;
+  const patch = { state: update.state, progress: update.progress, log: `任务运行第 ${update.attempt} 次：${update.state}` };
+  if (['pending', 'running', 'succeeded'].includes(update.state)) patch.error = null;
+  else if (update.error) patch.error = update.error;
+  if (update.result?.assistantId) patch.artifactRefs = [update.result.assistantId];
+  try {
+    const task = workspaceStore.updateTask(update.id, patch);
+    broadcast({ type: 'workspace.task', task });
+    if (['succeeded', 'failed', 'cancelled'].includes(task.state)) broadcastTaskAttention(task);
+  } catch (error) {
+    addLog('warn', `任务状态同步失败：${error.message}`);
+  }
+}
+
+taskRunner.on('state', publishRunnerState);
+taskRunner.setExecutor(async ({ task, signal, report, waitIfPaused }) => {
+  const sessionId = task.metadata?.sessionId;
+  const session = workspaceStore.getSession(sessionId);
+  if (!session) throw new Error('session not found');
+  await waitIfPaused();
+  if (signal.aborted) throw new Error('cancelled');
+  report(10);
+  const result = await chatWithModel(String(task.metadata?.text || task.detail || ''), task.metadata?.memories || [], {
+    model: session.model,
+    sessionId,
+    history: session.messages,
+  });
+  if (signal.aborted) throw new Error('cancelled');
+  const assistant = workspaceStore.appendMessage(sessionId, { role: 'assistant', text: result.reply, streamId: result.id });
+  broadcast({ type: 'workspace.message', sessionId, message: assistant });
+  report(100);
+  return { assistantId: assistant.id };
+});
+
 function applyMoteClue(payload) {
   const result = moteStore.collectClue({ eventId: payload.eventId, clueType: payload.clueType });
   if (!result.duplicate) broadcastMoteState();
@@ -956,8 +1004,9 @@ function snapshotPayload() {
     chat: chatHistory.slice(-50),
     deviceHealth: deviceHealthStore.snapshot(),
     workspace: workspaceSnapshot(),
-    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId }) },
+    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId }), relationship: moteRelationshipStore.snapshot(), quests: moteQuestStore.list() },
     autonomy: workspaceStore.getAutonomyPolicy(),
+    approvals: workspaceStore.listToolApprovals().slice(0, 100),
   });
 }
 
@@ -1011,32 +1060,17 @@ function workspaceSnapshot() {
     eventRevision: workspaceStore.eventRevision,
     emergencyStop: workspaceStore.emergencyStopState(),
     autonomy: workspaceStore.getAutonomyPolicy(),
-    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId }) },
+    moteRelationship: moteRelationshipStore.snapshot(),
+    moteQuests: moteQuestStore.list(),
+    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId }), relationship: moteRelationshipStore.snapshot(), quests: moteQuestStore.list() },
   };
 }
 
 async function runWorkspaceMessage(sessionId, message, taskId, memories) {
-  const session = workspaceStore.getSession(sessionId);
-  try {
-    workspaceStore.updateTask(taskId, { state: 'running', progress: 10, log: '已提交模型调用' });
-    const result = await chatWithModel(message.text, memories, {
-      model: session.model,
-      sessionId,
-      history: session.messages,
-    });
-    const assistant = workspaceStore.appendMessage(sessionId, { role: 'assistant', text: result.reply, streamId: result.id });
-    const task = workspaceStore.updateTask(taskId, { state: 'succeeded', progress: 100, log: '模型结果已归档', artifactRefs: [assistant.id] });
-    broadcast({ type: 'workspace.message', sessionId, message: assistant });
-    broadcast({ type: 'workspace.task', task });
-    broadcastTaskAttention(task);
-    emitProactive(`会话任务已完成：${message.text.slice(0, 48)}`, `task:${taskId}:success`);
-  } catch (error) {
-    const task = workspaceStore.updateTask(taskId, { state: 'failed', error: error.message, log: '模型调用失败' });
-    broadcast({ type: 'workspace.task', task });
-    broadcastTaskAttention(task);
-    emitProactive(`会话任务失败：${error.message}`, `task:${taskId}:failure`);
-    addLog('error', `AI 空间会话失败：${error.message}`);
-  }
+  const task = workspaceStore.getTask(taskId);
+  if (!task) throw new Error('task not found');
+  taskRunner.enqueue({ ...task, metadata: { ...task.metadata, sessionId, text: message.text, memories } });
+  return taskRunner.get(taskId);
 }
 
 function getLoginHtml() {
@@ -1164,10 +1198,12 @@ async function taskAction(id,action){await api('/api/tasks/'+encodeURIComponent(
 async function activateMote(id){await api('/api/motes/active',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({id})});refreshWorkspace()}
 async function chooseMote(id){await api('/api/motes/exploration',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({targetId:id})});refreshWorkspace()}
 async function stopAutonomy(){await api('/api/tools/emergency-stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reason:'web'})});refreshWorkspace()}
-async function refreshWorkspace(){try{let s=await api('/api/state'),w=s.workspace||{},p=s.autonomy||w.autonomy||{},b=w.motes?.behavior||{};workspaceSummary.textContent='自治：'+(p.level||'-')+' · 白名单 '+(p.allowedTools||[]).length+' 项 · 急停 '+(w.emergencyStop?.active?'已启用':'未启用')+' · 任务 '+(w.tasks||[]).length+' 个 · Mote '+(b.gaze||'ambient');
+async function approveApproval(id){await api('/api/autonomy/approvals/'+encodeURIComponent(id)+'/approve',{method:'POST'});await api('/api/autonomy/approvals/'+encodeURIComponent(id)+'/invoke',{method:'POST'});refreshWorkspace()}
+async function refreshWorkspace(){try{let s=await api('/api/state'),w=s.workspace||{},p=s.autonomy||w.autonomy||{},b=w.motes?.behavior||{},r=w.motes?.relationship||{};workspaceSummary.textContent='自治：'+(p.level||'-')+' · 白名单 '+(p.allowedTools||[]).length+' 项 · 急停 '+(w.emergencyStop?.active?'已启用':'未启用')+' · 任务 '+(w.tasks||[]).length+' 个 · Mote Lv.'+(r.level||1)+' · '+(b.gaze||'ambient');
   const tasksHtml=(w.tasks||[]).slice(0,10).map(t=>'<div class=item><b>'+esc(t.title)+'</b> · '+esc(t.state)+' · '+t.progress+'% <button onclick="taskAction(\''+esc(t.id)+'\',\'pause\')">暂停</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'continue\')">继续</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'retry\')">重试</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'cancel\')">取消</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'archive\')">归档</button></div>').join('');
+  const approvalsHtml=(w.approvals||[]).filter(a=>a.state==='needs_confirmation'||a.state==='approved').slice(0,6).map(a=>'<div class=item>待确认：<b>'+esc(a.toolId)+'</b> · '+esc(a.state)+' <button class=primary onclick="approveApproval(\''+esc(a.id)+'\')">批准并执行</button></div>').join('');
   const roster=(s.motes?.roster||w.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote(\''+m.id+'\')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
-  moteRoster.innerHTML=tasksHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div>'; }catch(e){workspaceSummary.textContent='工作台暂不可用'}}
+  moteRoster.innerHTML=tasksHtml+approvalsHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div>'; }catch(e){workspaceSummary.textContent='工作台暂不可用'}}
 refreshWorkspace();
 </script>`;
 
@@ -1241,6 +1277,30 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { ok: false, error: error.message });
       }
     }
+    if (parsedUrl.pathname === '/api/autonomy/approvals' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, approvals: workspaceStore.listToolApprovals() });
+    }
+    if (parsedUrl.pathname === '/api/autonomy/approvals' && req.method === 'POST') {
+      try {
+        const approval = workspaceStore.requestToolApproval(await readJson(req));
+        broadcast({ type: 'autonomy.approval', approval });
+        return sendJson(res, 202, { ok: true, approval });
+      } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    const approvalMatch = parsedUrl.pathname.match(/^\/api\/autonomy\/approvals\/([^/]+)\/(approve|invoke)$/);
+    if (approvalMatch && req.method === 'POST') {
+      try {
+        const approvalId = decodeURIComponent(approvalMatch[1]);
+        if (approvalMatch[2] === 'approve') {
+          const approval = workspaceStore.approveToolApproval(approvalId);
+          broadcast({ type: 'autonomy.approval', approval });
+          return sendJson(res, 200, { ok: true, approval });
+        }
+        const result = workspaceStore.invokeApprovedTool(approvalId, { onUpdate: broadcastActionUpdate });
+        broadcast({ type: 'autonomy.approval', approval: result.approval });
+        return sendJson(res, 200, { ok: true, ...result });
+      } catch (error) { return sendJson(res, /expired|confirmation|consumed|blocked|policy/i.test(error.message) ? 403 : 400, { ok: false, error: error.message }); }
+    }
     if (parsedUrl.pathname === '/api/motes' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, state: moteStore.getState(), roster: moteStore.roster() });
     }
@@ -1264,6 +1324,27 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
       } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
+    if (parsedUrl.pathname === '/api/motes/relationship' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, relationship: moteRelationshipStore.snapshot() });
+    }
+    if (parsedUrl.pathname === '/api/motes/relationship' && req.method === 'POST') {
+      try {
+        const result = moteRelationshipStore.recordInteraction(await readJson(req));
+        broadcast({ type: 'mote.relationship', relationship: result });
+        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
+      } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    if (parsedUrl.pathname === '/api/motes/quests' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, quests: moteQuestStore.list() });
+    }
+    const questMatch = parsedUrl.pathname.match(/^\/api\/motes\/quests\/([^/]+)\/claim$/);
+    if (questMatch && req.method === 'POST') {
+      try {
+        const result = moteQuestStore.claim(decodeURIComponent(questMatch[1]), (await readJson(req)).eventId);
+        broadcast({ type: 'mote.quest', quests: moteQuestStore.list(), result });
+        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
+      } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
     if (parsedUrl.pathname === '/api/auth/rotate' && req.method === 'POST') {
       try {
         const token = rotateAccessToken();
@@ -1275,7 +1356,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/workspace/events' && req.method === 'GET') {
       const since = Number(parsedUrl.searchParams.get('since') || 0);
-      return sendJson(res, 200, { ok: true, revision: workspaceStore.eventRevision, events: workspaceStore.eventsAfter(since) });
+      return sendJson(res, 200, { ok: true, revision: workspaceStore.eventRevision, ...workspaceStore.syncState(since) });
     }
     if (parsedUrl.pathname === '/api/workspace/events' && req.method === 'POST') {
       const payload = await readJson(req);
@@ -1368,6 +1449,7 @@ const server = http.createServer(async (req, res) => {
     if (parsedUrl.pathname === '/api/tools/emergency-stop' && req.method === 'POST') {
       const payload = await readJson(req);
       const state = workspaceStore.emergencyStop(String(payload.reason || 'manual'));
+      for (const run of taskRunner.list()) if (run.state === 'running' || run.state === 'paused') taskRunner.cancel(run.id);
       addLog('warn', 'AI 工具急停已启用');
       broadcast({ type: 'workspace.emergency_stop', state });
       return sendJson(res, 200, { ok: true, state });
@@ -1395,6 +1477,13 @@ const server = http.createServer(async (req, res) => {
         const taskId = decodeURIComponent(taskActionMatch[1]);
         const payload = await readJson(req);
         const task = workspaceStore.applyTaskAction(taskId, payload.action, { actor: payload.actor || 'web', idempotencyKey: payload.idempotencyKey || req.headers['idempotency-key'] || null, detail: payload.detail || '' });
+        if (taskRunner.has(taskId)) {
+          const action = String(payload.action || '').toLowerCase();
+          if (action === 'pause') taskRunner.pause(taskId);
+          else if (action === 'continue' || action === 'resume') taskRunner.resume(taskId);
+          else if (action === 'cancel') taskRunner.cancel(taskId);
+          else if (action === 'retry') taskRunner.retry(taskId);
+        }
         broadcast({ type: 'workspace.task', task });
         broadcast({ type: 'task.audit', taskId, audit: workspaceStore.listTaskAudit(taskId).at(-1) || null });
         broadcastTaskAttention(task);
@@ -1485,7 +1574,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/state') {
       res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
-      return res.end(JSON.stringify({stats:statsSnapshot(),deviceHealth:deviceHealthStore.snapshot(),tasks:publicTasks(),logs:publicLogs(),telemetry:phoneTelemetry,pet:petState,codex:{...codexInfo,selectedTaskId:selectedCodexTaskId},chat:chatHistory.slice(-50),workspace:workspaceSnapshot(),motes:{state:moteStore.getState(),roster:moteStore.roster(),behavior:deriveMoteBehavior({ profileId: moteStore.getState().activeId })},autonomy:workspaceStore.getAutonomyPolicy()}));
+      return res.end(JSON.stringify({stats:statsSnapshot(),deviceHealth:deviceHealthStore.snapshot(),tasks:publicTasks(),logs:publicLogs(),telemetry:phoneTelemetry,pet:petState,codex:{...codexInfo,selectedTaskId:selectedCodexTaskId},chat:chatHistory.slice(-50),workspace:workspaceSnapshot(),motes:{state:moteStore.getState(),roster:moteStore.roster(),behavior:deriveMoteBehavior({ profileId: moteStore.getState().activeId }),relationship:moteRelationshipStore.snapshot(),quests:moteQuestStore.list()},autonomy:workspaceStore.getAutonomyPolicy()}));
     }
     if (parsedUrl.pathname === '/api/command') {
       const body = await readBody(req);

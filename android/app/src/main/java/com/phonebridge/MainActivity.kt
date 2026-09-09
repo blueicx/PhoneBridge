@@ -240,6 +240,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private val automationRunMirror = linkedMapOf<String, JSONObject>()
     private val actionRunMirror = linkedMapOf<String, JSONObject>()
     private var moteRosterJson = JSONArray()
+    private var moteRelationship = MoteRelationshipSummary()
     private var moteStateJson = JSONObject()
     private var workspaceRevision: Long = 0L
     private var cockpitUsesOfflineMirror = false
@@ -875,6 +876,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             add(if (cockpitUsesOfflineMirror) "离线镜像" else "链路 ${deviceHealthLabel(deviceHealthState.overall.name)}")
             add("${activeCount} 条提醒")
             add(if (activeWorkspaceTask == null) "无进行中任务" else "有进行中任务")
+            add("Mote Lv.${moteRelationship.level}")
         }.joinToString(" · ")
         currentTaskSummary.text = if (activeWorkspaceTask == null) {
             getString(R.string.current_task_empty)
@@ -2285,8 +2287,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
     }
 
-    override fun onWorkspaceAck(eventId: String, accepted: Boolean) {
-        if (!accepted || eventId.isBlank()) return
+    override fun onWorkspaceAck(eventId: String, accepted: Boolean, status: String?) {
+        if ((!accepted && status != "duplicate") || eventId.isBlank()) return
         appScope.launch(Dispatchers.IO) { workspaceRepository.acknowledge(eventId) }
     }
 
@@ -2669,6 +2671,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun handleMoteSnapshot(snapshot: JSONObject?) {
         if (snapshot == null) return
+        snapshot.optJSONObject("relationship")?.let { relationship ->
+            runCatching { MoteRelationshipSummary.fromJson(relationship.toString()) }.onSuccess { moteRelationship = it }
+        }
         MoteBehaviorOutput.fromWire(snapshot.optJSONObject("behavior"))?.let { behavior ->
             runOnUiThread { companionView.setBehaviorHint(behavior); realityLensView.setBehaviorHint(behavior) }
         }
@@ -3259,12 +3264,15 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 "attention.upsert" -> handleAttentionEvent(json.optJSONObject("attention"))
                 "action.run", "action.result" -> handleActionRunEvent(json.optJSONObject("actionRun"))
                 "workspace.policy" -> handlePolicyEvent(json.optJSONObject("policy"))
+                "autonomy.approval" -> handleAutonomyApprovalEvent(json.optJSONObject("approval"))
                 "workspace.emergency_stop" -> handleEmergencyStopEvent(json.optJSONObject("state"))
                 "mote.roster" -> handleMoteRosterEvent(json.optJSONArray("roster"), json.optJSONObject("state"))
                 "mote.profile" -> json.optJSONObject("profile")?.let { profile ->
                     handleMoteRosterEvent(null, JSONObject().put("activeId", profile.optString("id")))
                 }
                 "mote.exploration" -> handleMoteRosterEvent(null, json.optJSONObject("state"))
+                "mote.relationship" -> json.optJSONObject("relationship")?.let { handleMoteRelationshipEvent(it) }
+                "mote.quest" -> runOnUiThread { speechText.text = "Mote：有新的陪伴任务" }
                 "mote.behavior" -> MoteBehaviorOutput.fromWire(json.optJSONObject("behavior"))?.let { behavior ->
                     runOnUiThread {
                         companionView.setBehaviorHint(behavior)
@@ -3569,6 +3577,21 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             .setMessage("Lv.${pet.level} · 经验 ${pet.experience}/$required\n\n$skills")
             .setPositiveButton("好的", null)
             .show()
+    }
+
+    private fun handleMoteRelationshipEvent(value: JSONObject) {
+        runCatching { MoteRelationshipSummary.fromJson(value.toString()) }.onSuccess {
+            runOnUiThread { moteRelationship = it; renderCockpitSummary() }
+        }
+    }
+
+    private fun handleAutonomyApprovalEvent(approval: JSONObject?) {
+        if (approval == null) return
+        val tool = approval.optString("toolId", "受限工具")
+        if (approval.optString("state") == "needs_confirmation") runOnUiThread {
+            speechText.text = "Mote：需要确认 $tool".takeLast(220)
+            companionView.speakPulse()
+        }
     }
 
     private fun showMoteDexDialog() {
