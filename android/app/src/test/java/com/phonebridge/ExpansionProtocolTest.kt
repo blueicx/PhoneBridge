@@ -1,6 +1,7 @@
 package com.phonebridge
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExpansionProtocolTest {
@@ -22,5 +23,13 @@ class ExpansionProtocolTest {
         assertEquals("workspace.sync_state", WorkspaceEventTypes.SYNC_STATE)
         assertEquals("autonomy.approval", WorkspaceEventTypes.AUTONOMY_APPROVAL)
         assertEquals("mote.quest", WorkspaceEventTypes.MOTE_QUEST)
+    }
+
+    @Test
+    fun relationshipLevelChangesMoteBehaviorDeterministically() {
+        val profile = MoteProfiles.profile(PetAppearance.MOTE)
+        val quiet = MoteBehaviorEngine.resolve(profile, MoteBehaviorInput(relationshipLevel = 1))
+        val bonded = MoteBehaviorEngine.resolve(profile, MoteBehaviorInput(relationshipLevel = 5))
+        assertTrue(bonded.motionIntensity > quiet.motionIntensity)
     }
 }

@@ -40,6 +40,8 @@
 - 同步恢复：`/api/workspace/events?since=N` 返回 delta/snapshot 模式、起止 revision 和 `resetRequired`，事件保留窗口不足时安全回退全量同步。
 - Mote 关系任务：`/api/motes/relationship`、`/api/motes/quests` 提供幂等互动经验、等级和陪伴任务；Android 识别审批、关系和任务事件。
 - GitHub Actions：`.github/workflows/ci.yml` 自动执行 Node 服务端测试、Android 单元测试和差异空白检查，不运行 ADB 或上传运行时数据。
+- 加载性能：`GET /api/state?view=summary` 返回首屏所需的轻量投影并支持 ETag；完整快照按 revision 缓存，Web 工作台采用帧合并更新，Android 同步按 revision/eventId 去重。
+- 任务运行指标：任务公开摘要包含 runner attempt、retryCount、queuePosition、lastError 和 lastTransitionAt，便于 Web/Android 共用审计信息。
 
 ## 启动
 
@@ -73,6 +75,7 @@ F:\CodexApps\PhoneBridge\cloudflared.exe tunnel --url http://127.0.0.1:9503 --no
 ## 接口
 
 - 状态快照：`GET /api/state`
+  - 首屏摘要：`GET /api/state?view=summary`；支持 `ETag`/`If-None-Match`，未变化时返回 `304`。
 - 执行命令：`POST /api/command {"text":"ps"}`
 - 手机控制：`POST /api/device {"action":"camera_front"}`
 - 模型切换：`POST /api/codex/select_model {"providerId":"...","model":"..."}`

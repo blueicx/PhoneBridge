@@ -7,6 +7,7 @@ const { DeviceHealthStore } = require('./device-health');
 const { MoteStore, deriveMoteBehavior } = require('./mote-profiles');
 const { TaskRunner } = require('./task-runner');
 const { MoteRelationshipStore, MoteQuestStore } = require('./mote-expansion');
+const { RevisionSnapshotCache, BroadcastCoalescer } = require('./workspace-performance');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -234,7 +235,9 @@ let ACCESS_TOKEN = loadAccessToken();
 const workspaceStore = new WorkspaceStore({
   journalPath: path.join(RUNTIME_DIR, 'workspace-events.jsonl'),
   snapshotPath: path.join(RUNTIME_DIR, 'workspace-state.json'),
+  persistDebounceMs: 250,
 });
+process.on('exit', () => workspaceStore.persistenceScheduler?.flushNow());
 const moteStore = new MoteStore({ snapshotPath: path.join(RUNTIME_DIR, 'mote-state.json') });
 const moteRelationshipStore = new MoteRelationshipStore({ snapshotPath: path.join(RUNTIME_DIR, 'mote-relationship.json') });
 const moteQuestStore = new MoteQuestStore({
@@ -262,6 +265,35 @@ const proactiveState = {
   byKey: new Map(),
 };
 
+let snapshotRevision = 0;
+const snapshotCache = new RevisionSnapshotCache({
+  getRevision: () => `${workspaceStore.eventRevision}:${snapshotRevision}`,
+  build: () => {
+    const payload = buildSnapshotPayload();
+    return {
+      full: JSON.stringify(payload),
+      summary: JSON.stringify({
+        ok: true,
+        view: 'summary',
+        revision: workspaceStore.eventRevision,
+        stats: payload.stats,
+        tasks: payload.tasks.slice(0, 12),
+        deviceHealth: payload.deviceHealth,
+        workspace: {
+          eventRevision: payload.workspace.eventRevision,
+          emergencyStop: payload.workspace.emergencyStop,
+          taskCount: payload.workspace.tasks.length,
+          attentionCount: payload.workspace.attention.length,
+          tasks: payload.workspace.tasks.slice(0, 12),
+          approvals: payload.approvals.slice(0, 6),
+        },
+        motes: { state: payload.motes.state, roster: payload.motes.roster, behavior: payload.motes.behavior, relationship: payload.motes.relationship },
+        autonomy: payload.autonomy,
+      }),
+    };
+  },
+});
+
 function nowTime() {
   return new Date().toLocaleTimeString('zh-CN', { hour12: false });
 }
@@ -276,10 +308,15 @@ function publicLogs(count = 100) {
 
 function broadcast(payload) {
   const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  const isSnapshot = typeof payload === 'string' ? text.includes('"type":"snapshot"') : payload?.type === 'snapshot';
+  if (!isSnapshot) snapshotRevision += 1;
   wss.clients.forEach((socket) => {
     if (socket.readyState === socket.OPEN) socket.send(text);
   });
 }
+
+const snapshotBroadcaster = new BroadcastCoalescer({ send: payload => broadcast(payload), delayMs: 16 });
+function queueSnapshotBroadcast() { snapshotBroadcaster.enqueue(snapshotPayload()); }
 
 function updateDeviceHealth(patch = {}, broadcastChange = true) {
   const result = deviceHealthStore.update(patch);
@@ -664,7 +701,18 @@ const taskRunner = new TaskRunner({ maxConcurrency: 1, maxRetries: 1, retryDelay
 function publishRunnerState(update) {
   const current = workspaceStore.getTask(update.id);
   if (!current) return;
-  const patch = { state: update.state, progress: update.progress, log: `任务运行第 ${update.attempt} 次：${update.state}` };
+  const patch = {
+    state: update.state,
+    progress: update.progress,
+    runner: {
+      attempt: update.attempt,
+      retryCount: update.retryCount || 0,
+      queuePosition: update.queuePosition || 0,
+      lastError: update.lastError || null,
+      lastTransitionAt: update.lastTransitionAt || null,
+    },
+    log: `任务运行第 ${update.attempt} 次：${update.state}`,
+  };
   if (['pending', 'running', 'succeeded'].includes(update.state)) patch.error = null;
   else if (update.error) patch.error = update.error;
   if (update.result?.assistantId) patch.artifactRefs = [update.result.assistantId];
@@ -987,8 +1035,8 @@ async function handleChat(text, memories = []) {
   return { ok: true, reply };
 }
 
-function snapshotPayload() {
-  return JSON.stringify({
+function buildSnapshotPayload() {
+  return {
     type: 'snapshot',
     stats: statsSnapshot(),
     tasks: publicTasks(),
@@ -1004,10 +1052,18 @@ function snapshotPayload() {
     chat: chatHistory.slice(-50),
     deviceHealth: deviceHealthStore.snapshot(),
     workspace: workspaceSnapshot(),
-    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId }), relationship: moteRelationshipStore.snapshot(), quests: moteQuestStore.list() },
+    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId, relationshipLevel: moteRelationshipStore.snapshot().level }), relationship: moteRelationshipStore.snapshot(), quests: moteQuestStore.list() },
     autonomy: workspaceStore.getAutonomyPolicy(),
     approvals: workspaceStore.listToolApprovals().slice(0, 100),
-  });
+  };
+}
+
+function snapshotPayload() {
+  return snapshotCache.get('full');
+}
+
+function summaryPayload() {
+  return snapshotCache.get('summary');
 }
 
 function readBody(req) {
@@ -1062,7 +1118,7 @@ function workspaceSnapshot() {
     autonomy: workspaceStore.getAutonomyPolicy(),
     moteRelationship: moteRelationshipStore.snapshot(),
     moteQuests: moteQuestStore.list(),
-    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId }), relationship: moteRelationshipStore.snapshot(), quests: moteQuestStore.list() },
+    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId, relationshipLevel: moteRelationshipStore.snapshot().level }), relationship: moteRelationshipStore.snapshot(), quests: moteQuestStore.list() },
   };
 }
 
@@ -1164,11 +1220,12 @@ async function sendCmd(){let c=cmd.value.trim();if(!c)return;await api('/api/com
 async function device(a){await api('/api/device',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:a})})}
 async function say(){let t=speech.value.trim();if(t)await api('/say?text='+encodeURIComponent(t))}
 setInterval(()=>{frame.src='/frame?'+Date.now();frame2.src='/frame?'+Date.now()},140);
-setInterval(refresh,1000);setInterval(poll,220);
+setInterval(refresh,3000);setInterval(poll,3000);
 async function refresh(){
   try{
     let s=await api('/api/state');
     const sensor=s.stats.sensors||{};
+    window.TASKS={};s.tasks.forEach(x=>{TASKS[x.id]=x});
     status.textContent='手机 ' + s.stats.clients + ' · 帧 ' + s.stats.frames + ' · 音频 ' + s.stats.audioChunks + ' · 空闲 ' + s.stats.idleSeconds + 's';
     tasks.innerHTML=s.tasks.map(t=>'<div class=item onclick=\\"sel(\\''+t.id+'\\')\\"><b>'+esc(t.title)+'</b> '+t.status+' '+t.progress+'%<div class=taskbar><i style=width:'+t.progress+'%></i><pre>'+esc(t.detail.slice(-500))+'</pre></div>').join('')||'<div class=item>暂无任务</div>';
     log.innerHTML=s.logs.map(x=>'<div class=item><small>'+x.time+'</small> '+esc(x.message)).join('');
@@ -1179,13 +1236,7 @@ async function refresh(){
     if(!selected&&s.tasks[0])sel(s.tasks[0].id);
   }catch(e){if(String(e.message).includes('HTTP 401'))status.textContent='令牌无效'}
 }
-async function poll(){
-  try{
-    let s=await api('/api/state');
-    window.TASKS={};s.tasks.forEach(x=>TASKS[x.id]=x);
-    if(selected&&TASKS[selected]){detail.value=TASKS[selected].detail||''}
-  }catch(e){}
-}
+async function poll(){if(selected&&TASKS[selected])detail.value=TASKS[selected].detail||''}
 async function setIdleTimeout(){
   await api('/api/idle-timeout',{method:'POST',headers:{'content-type':'application/json'},body:'{"minutes":'+idleTimeout.value+'}'});
   refresh();
@@ -1199,11 +1250,15 @@ async function activateMote(id){await api('/api/motes/active',{method:'PATCH',he
 async function chooseMote(id){await api('/api/motes/exploration',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({targetId:id})});refreshWorkspace()}
 async function stopAutonomy(){await api('/api/tools/emergency-stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reason:'web'})});refreshWorkspace()}
 async function approveApproval(id){await api('/api/autonomy/approvals/'+encodeURIComponent(id)+'/approve',{method:'POST'});await api('/api/autonomy/approvals/'+encodeURIComponent(id)+'/invoke',{method:'POST'});refreshWorkspace()}
-async function refreshWorkspace(){try{let s=await api('/api/state'),w=s.workspace||{},p=s.autonomy||w.autonomy||{},b=w.motes?.behavior||{},r=w.motes?.relationship||{};workspaceSummary.textContent='自治：'+(p.level||'-')+' · 白名单 '+(p.allowedTools||[]).length+' 项 · 急停 '+(w.emergencyStop?.active?'已启用':'未启用')+' · 任务 '+(w.tasks||[]).length+' 个 · Mote Lv.'+(r.level||1)+' · '+(b.gaze||'ambient');
-  const tasksHtml=(w.tasks||[]).slice(0,10).map(t=>'<div class=item><b>'+esc(t.title)+'</b> · '+esc(t.state)+' · '+t.progress+'% <button onclick="taskAction(\''+esc(t.id)+'\',\'pause\')">暂停</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'continue\')">继续</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'retry\')">重试</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'cancel\')">取消</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'archive\')">归档</button></div>').join('');
-  const approvalsHtml=(w.approvals||[]).filter(a=>a.state==='needs_confirmation'||a.state==='approved').slice(0,6).map(a=>'<div class=item>待确认：<b>'+esc(a.toolId)+'</b> · '+esc(a.state)+' <button class=primary onclick="approveApproval(\''+esc(a.id)+'\')">批准并执行</button></div>').join('');
-  const roster=(s.motes?.roster||w.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote(\''+m.id+'\')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
-  moteRoster.innerHTML=tasksHtml+approvalsHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div>'; }catch(e){workspaceSummary.textContent='工作台暂不可用'}}
+let workspaceRefreshFrame=0;
+function refreshWorkspace(){if(workspaceRefreshFrame)return;workspaceRefreshFrame=requestAnimationFrame(()=>{workspaceRefreshFrame=0;refreshWorkspaceNow()})}
+async function refreshWorkspaceNow(){try{let s=await api('/api/state?view=summary'),w=s.workspace||{},p=s.autonomy||{},b=s.motes?.behavior||{},r=s.motes?.relationship||{};workspaceSummary.textContent='自治：'+(p.level||'-')+' · 白名单 '+(p.allowedTools||[]).length+' 项 · 急停 '+(w.emergencyStop?.active?'已启用':'未启用')+' · 任务 '+(w.taskCount||0)+' 个 · Mote Lv.'+(r.level||1)+' · '+(b.gaze||'ambient');
+  const tasksHtml=(w.tasks||[]).slice(0,10).map(t=>'<div class=item><b>'+esc(t.title)+'</b> · '+esc(t.state||t.status)+' · '+(t.progress||0)+'% <button onclick="taskAction(\''+esc(t.id)+'\',\'pause\')">暂停</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'continue\')">继续</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'retry\')">重试</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'cancel\')">取消</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'archive\')">归档</button></div>').join('');
+  const approvalsHtml=(w.approvals||[]).filter(a=>a.state==='needs_confirmation'||a.state==='approved').map(a=>'<div class=item>待确认：<b>'+esc(a.toolId)+'</b> · '+esc(a.state)+' <button class=primary onclick="approveApproval(\''+esc(a.id)+'\')">批准并执行</button></div>').join('');
+  const roster=(s.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote(\''+m.id+'\')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
+  const revision=String(w.eventRevision||s.revision||'');
+  if(moteRoster.dataset.revision!==revision){moteRoster.innerHTML=tasksHtml+approvalsHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div>';moteRoster.dataset.revision=revision}
+}catch(e){workspaceSummary.textContent='工作台暂不可用'}}
 refreshWorkspace();
 </script>`;
 
@@ -1506,7 +1561,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/motes/behavior' && req.method === 'GET') {
       const active = moteStore.roster().find(item => item.active) || moteStore.roster()[0];
-      return sendJson(res, 200, { ok: true, behavior: deriveMoteBehavior({ profileId: active?.id, taskState: parsedUrl.searchParams.get('taskState') || 'idle', deviceHealth: parsedUrl.searchParams.get('deviceHealth') || 'unknown', interaction: parsedUrl.searchParams.get('interaction') || 'none', explorationActive: parsedUrl.searchParams.get('explorationActive') === 'true', mood: Number(parsedUrl.searchParams.get('mood') || 0) }) });
+      return sendJson(res, 200, { ok: true, behavior: deriveMoteBehavior({ profileId: active?.id, taskState: parsedUrl.searchParams.get('taskState') || 'idle', deviceHealth: parsedUrl.searchParams.get('deviceHealth') || 'unknown', interaction: parsedUrl.searchParams.get('interaction') || 'none', explorationActive: parsedUrl.searchParams.get('explorationActive') === 'true', mood: Number(parsedUrl.searchParams.get('mood') || 0), relationshipLevel: moteRelationshipStore.snapshot().level }) });
     }
     if (parsedUrl.pathname === '/api/attention' && req.method === 'GET') {
       const status = parsedUrl.searchParams.get('status') || '';
@@ -1574,8 +1629,15 @@ const server = http.createServer(async (req, res) => {
       if (!automationMatch[2] && req.method === 'PATCH') return sendJson(res, 200, { ok: true, automation: workspaceStore.updateAutomation(automationId, await readJson(req)) });
     }
     if (parsedUrl.pathname === '/api/state') {
-      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
-      return res.end(JSON.stringify({stats:statsSnapshot(),deviceHealth:deviceHealthStore.snapshot(),tasks:publicTasks(),logs:publicLogs(),telemetry:phoneTelemetry,pet:petState,codex:{...codexInfo,selectedTaskId:selectedCodexTaskId},chat:chatHistory.slice(-50),workspace:workspaceSnapshot(),motes:{state:moteStore.getState(),roster:moteStore.roster(),behavior:deriveMoteBehavior({ profileId: moteStore.getState().activeId }),relationship:moteRelationshipStore.snapshot(),quests:moteQuestStore.list()},autonomy:workspaceStore.getAutonomyPolicy()}));
+      const view = parsedUrl.searchParams.get('view') === 'summary' ? 'summary' : 'full';
+      const body = view === 'summary' ? summaryPayload() : snapshotPayload();
+      const etag = `"workspace-${snapshotCache.stats().revision}-${view}"`;
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ETag: etag, 'Cache-Control': 'no-store' });
+      return res.end(body);
     }
     if (parsedUrl.pathname === '/api/command') {
       const body = await readBody(req);
@@ -1603,7 +1665,7 @@ const server = http.createServer(async (req, res) => {
       idleTimeoutMinutes = minutes;
       markInteraction();
       addLog('success', `空闲断流时间已设为 ${minutes} 分钟`);
-      broadcast(snapshotPayload());
+      queueSnapshotBroadcast();
       res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
       return res.end(JSON.stringify({ok:true, minutes}));
     }
@@ -1616,7 +1678,7 @@ const server = http.createServer(async (req, res) => {
       }
       screenOffExitMinutes = minutes;
       addLog('success', `息屏自动退出时间已设为 ${minutes === 0 ? '禁用' : minutes + ' 分钟'}`);
-      broadcast(snapshotPayload());
+      queueSnapshotBroadcast();
       res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
       return res.end(JSON.stringify({ok:true, minutes}));
     }
@@ -1659,7 +1721,7 @@ const server = http.createServer(async (req, res) => {
       selectedCodexTaskDetail = null;
       addLog('info',`已选定 Codex 任务：${selectedCodexTaskId}`);
       refreshSelectedCodexTask(true).then(()=>{
-        broadcast(snapshotPayload());
+        queueSnapshotBroadcast();
         res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true,task:selectedCodexTaskDetail}));
       }).catch(err=>{res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:err.message}))});
       return;
@@ -1674,7 +1736,7 @@ const server = http.createServer(async (req, res) => {
       selectCodexModel(payload.providerId,payload.model).then(result=>{
         addLog('success',`模型已切换：${result.model}`);
         return refreshCodexInfo().then(()=>{
-          broadcast(snapshotPayload());
+          queueSnapshotBroadcast();
           res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,...result}));
         });
       }).catch(err=>{res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:err.message}))});
@@ -1812,7 +1874,7 @@ wss.on('connection', (ws, req) => {
           case 'select_model':
             selectCodexModel(json.providerId,json.model)
               .then(()=>refreshCodexInfo())
-              .then(()=>{broadcast(snapshotPayload());addLog('success',`模型已切换：${json.model||''}`)})
+              .then(()=>{queueSnapshotBroadcast();addLog('success',`模型已切换：${json.model||''}`)})
               .catch(err=>addLog('error',err.message));
             break;
           case 'hello':
@@ -1851,7 +1913,7 @@ wss.on('connection', (ws, req) => {
 });
 
 setInterval(()=>{wss.clients.forEach(ws=>{if(!ws.isAlive)return ws.terminate();ws.isAlive=false;try{ws.ping()}catch(_){}})},15000);
-setInterval(()=>{refreshCodexInfo().finally(()=>broadcast({type:'snapshot',stats:statsSnapshot(),tasks:publicTasks(),logs:publicLogs(50),telemetry:phoneTelemetry,pet:petState,codex:{...codexInfo,selectedTaskId:selectedCodexTaskId},chat:chatHistory.slice(-30)}))},1000);
+setInterval(()=>{refreshCodexInfo().finally(()=>queueSnapshotBroadcast())},5000);
 let stateSaveFailures = 0;
 setInterval(() => {
   try {
@@ -1867,7 +1929,7 @@ setInterval(() => {
     }
   }
 },2000);
-setInterval(()=>{if(selectedCodexTaskId)refreshSelectedCodexTask().finally(()=>broadcast(snapshotPayload()))},15000);
+setInterval(()=>{if(selectedCodexTaskId)refreshSelectedCodexTask().finally(()=>queueSnapshotBroadcast())},15000);
 setInterval(checkIdleTimeout, 15000);
 setInterval(() => evaluateWorkspaceAutomations({
   battery: phoneTelemetry.battery,

@@ -7,7 +7,8 @@ data class MoteBehaviorInput(
     val deviceHealth: String? = null,
     val interaction: String? = null,
     val explorationProgress: Int = 0,
-    val emotion: PetEmotion = PetEmotion()
+    val emotion: PetEmotion = PetEmotion(),
+    val relationshipLevel: Int = 1
 )
 
 data class MoteBehaviorOutput(
@@ -41,7 +42,7 @@ object MoteBehaviorEngine {
         val task = input.taskState.orEmpty().lowercase()
         val health = input.deviceHealth.orEmpty().lowercase()
         val interaction = input.interaction.orEmpty().lowercase()
-        val intensity = (.22f + input.explorationProgress.coerceIn(0, 3) * .08f +
+        val intensity = (.22f + (input.relationshipLevel.coerceAtLeast(1) - 1).coerceAtMost(12) * .02f + input.explorationProgress.coerceIn(0, 3) * .08f +
             if (task == "running") .18f else 0f +
             if (interaction == "tap" || interaction == "chat") .12f else 0f +
             if (health == "warning" || health == "critical") .14f else 0f +

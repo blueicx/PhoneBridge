@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { PersistenceScheduler } = require('./workspace-performance');
 
 const TASK_STATES = new Set(['pending', 'running', 'paused', 'needs_confirmation', 'succeeded', 'failed', 'cancelled', 'archived']);
 const TASK_TRANSITIONS = new Map([
@@ -135,7 +136,7 @@ function validateArgumentSchema(args, schema = {}) {
 }
 
 class WorkspaceStore {
-  constructor({ now = () => Date.now(), journalPath = null, snapshotPath = null, eventRetention = 500 } = {}) {
+  constructor({ now = () => Date.now(), journalPath = null, snapshotPath = null, eventRetention = 500, persistDebounceMs = 0 } = {}) {
     this.now = now;
     this.journalPath = journalPath;
     this.snapshotPath = snapshotPath;
@@ -157,6 +158,9 @@ class WorkspaceStore {
     this.eventRevision = 0;
     this.sequence = 0;
     this.emergency = { active: false, reason: null, updatedAt: iso(this.now()) };
+    this.persistenceScheduler = this.snapshotPath && Number(persistDebounceMs) > 0
+      ? new PersistenceScheduler({ write: () => this._persistNow(), delayMs: persistDebounceMs })
+      : null;
     this._loadSnapshot();
   }
 
@@ -195,7 +199,7 @@ class WorkspaceStore {
     }
   }
 
-  _persist() {
+  _persistNow() {
     if (!this.snapshotPath) return;
     const directory = path.dirname(this.snapshotPath);
     fs.mkdirSync(directory, { recursive: true });
@@ -219,6 +223,19 @@ class WorkspaceStore {
       emergency: this.emergency,
     }, null, 2));
     fs.renameSync(temporary, this.snapshotPath);
+  }
+
+  _persist() {
+    if (this.persistenceScheduler) {
+      this.persistenceScheduler.schedule();
+      return;
+    }
+    this._persistNow();
+  }
+
+  flushPersistence() {
+    if (!this.persistenceScheduler) return Promise.resolve();
+    return this.persistenceScheduler.flush();
   }
 
   _appendJournal(event) {
@@ -895,7 +912,7 @@ class WorkspaceStore {
 
   createTask({ id: taskId = id('task'), source = 'conversation', title = '未命名任务', detail = '', metadata = {} } = {}) {
     const timestamp = iso(this.now());
-    const task = { id: taskId, source, title, detail, metadata, state: 'pending', progress: 0, logs: [], error: null, retryCount: 0, artifactRefs: [], createdAt: timestamp, updatedAt: timestamp };
+    const task = { id: taskId, source, title, detail, metadata, state: 'pending', progress: 0, logs: [], error: null, retryCount: 0, runner: null, artifactRefs: [], createdAt: timestamp, updatedAt: timestamp };
     this.tasks.set(task.id, task);
     this._persist();
     return clone(task);
@@ -961,7 +978,7 @@ class WorkspaceStore {
     if (requestedState !== undefined && !TASK_TRANSITIONS.get(task.state)?.has(requestedState)) throw new Error(`cannot transition task from ${task.state} to ${requestedState}`);
     if (patch.state !== undefined) task.state = patch.state;
     if (patch.progress !== undefined) task.progress = Math.max(0, Math.min(100, Number(patch.progress) || 0));
-    for (const key of ['detail', 'error', 'metadata', 'artifactRefs']) if (patch[key] !== undefined) task[key] = clone(patch[key]);
+    for (const key of ['detail', 'error', 'metadata', 'runner', 'artifactRefs']) if (patch[key] !== undefined) task[key] = clone(patch[key]);
     if (patch.log) task.logs.push({ id: id('log'), text: String(patch.log), createdAt: iso(this.now()) });
     if (patch.retry === true) { task.retryCount += 1; task.state = 'pending'; task.error = null; }
     task.updatedAt = iso(this.now());

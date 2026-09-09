@@ -8,6 +8,7 @@ const {
   INITIAL_MOTE_IDS,
   EXPLORABLE_MOTE_IDS,
   MoteStore,
+  deriveMoteBehavior,
 } = require('./mote-profiles');
 
 test('keeps six initial and four explorable complete Mote profiles', () => {
@@ -51,4 +52,11 @@ test('deduplicates eventId and migrates incomplete persisted state', () => {
   const restored = new MoteStore({ snapshotPath: statePath });
   assert.ok(restored.getState().exploration.seenEventIds.includes('same'));
   fs.rmSync(runtimeDir, { recursive: true, force: true });
+});
+
+test('relationship level deterministically increases reminder strength', () => {
+  const quiet = deriveMoteBehavior({ profileId: 'mote', relationshipLevel: 1 });
+  const bonded = deriveMoteBehavior({ profileId: 'mote', relationshipLevel: 5 });
+  assert.ok(bonded.reminderStrength > quiet.reminderStrength);
+  assert.equal(deriveMoteBehavior({ profileId: 'mote', relationshipLevel: 5 }).reminderStrength, bonded.reminderStrength);
 });

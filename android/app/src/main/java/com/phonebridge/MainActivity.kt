@@ -243,6 +243,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var moteRelationship = MoteRelationshipSummary()
     private var moteStateJson = JSONObject()
     private var workspaceRevision: Long = 0L
+    private val workspaceEventGate = WorkspaceEventGate()
     private var cockpitUsesOfflineMirror = false
     private var cockpitSummaryExpanded = false
     private var workspaceEmergencyState: JSONObject? = null
@@ -2666,7 +2667,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun scheduleOutboxSync() {
         val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
         val request = OneTimeWorkRequestBuilder<OutboxSyncWorker>().setConstraints(constraints).build()
-        WorkManager.getInstance(this).enqueueUniqueWork("phonebridge-outbox-sync", ExistingWorkPolicy.REPLACE, request)
+        WorkManager.getInstance(this).enqueueUniqueWork("phonebridge-outbox-sync", ExistingWorkPolicy.KEEP, request)
     }
 
     private fun handleMoteSnapshot(snapshot: JSONObject?) {
@@ -3075,9 +3076,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     }
                 }
                 "snapshot" -> {
-                    val revision = json.optLong("eventRevision", 0L)
+                    val revision = json.optLong("eventRevision", json.optJSONObject("workspace")?.optLong("eventRevision", 0L) ?: 0L)
                     if (revision > workspaceRevision) {
                         workspaceRevision = revision
+                        workspaceEventGate.markResynchronized(revision)
                         getSharedPreferences("workspace_meta", Context.MODE_PRIVATE).edit().putLong("revision", revision).apply()
                     }
                     json.optJSONObject("motes")?.let { handleMoteSnapshot(it) }
@@ -3238,11 +3240,22 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 }
                 "workspace.events" -> {
                     val revision = json.optLong("revision", 0L)
-                    if (revision > workspaceRevision) {
-                        workspaceRevision = revision
-                        getSharedPreferences("workspace_meta", Context.MODE_PRIVATE).edit().putLong("revision", revision).apply()
+                    val events = json.optJSONArray("events") ?: JSONArray()
+                    for (index in 0 until events.length()) {
+                        val event = events.optJSONObject(index) ?: continue
+                        val eventRevision = event.optLong("revision", revision)
+                        if (workspaceEventGate.accept(eventRevision, event.optString("eventId"))) {
+                            val payload = event.optJSONObject("payload") ?: JSONObject()
+                            payload.put("type", event.optString("type"))
+                            handleServerJson(payload.toString())
+                        }
                     }
-                    sendJson(JSONObject().put("type", "snapshot"))
+                    if (workspaceEventGate.revisionGapDetected) {
+                        sendJson(JSONObject().put("type", "snapshot").put("since", workspaceRevision))
+                    } else if (workspaceEventGate.revision > workspaceRevision) {
+                        workspaceRevision = workspaceEventGate.revision
+                        getSharedPreferences("workspace_meta", Context.MODE_PRIVATE).edit().putLong("revision", workspaceRevision).apply()
+                    }
                 }
                 "chat" -> {
                     val role = json.optString("role")
@@ -3947,6 +3960,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 explorationProgress = (moteStateJson.optJSONObject("exploration")?.optJSONObject("fragments")?.let { fragments ->
                     listOf("location", "object", "light").count { fragments.optBoolean(it) }
                 } ?: 0),
+                relationshipLevel = moteRelationship.level,
                 emotion = pet.emotion
             )
         )

@@ -413,6 +413,29 @@ object WorkspaceSyncReducer {
     fun fail(cursor: WorkspaceSyncCursor, error: String): WorkspaceSyncCursor = cursor.copy(lastError = error.take(240))
 }
 
+class WorkspaceEventGate(private val maxEventIds: Int = 512) {
+    private val eventIds = LinkedHashSet<String>()
+    var revision: Long = 0L
+        private set
+    var revisionGapDetected: Boolean = false
+        private set
+
+    fun accept(nextRevision: Long, eventId: String): Boolean {
+        val id = eventId.trim()
+        if (id.isBlank() || id in eventIds || (revision > 0L && nextRevision <= revision)) return false
+        if (revision > 0L && nextRevision > revision + 1L) revisionGapDetected = true
+        revision = maxOf(revision, nextRevision)
+        eventIds += id
+        while (eventIds.size > maxEventIds) eventIds.remove(eventIds.first())
+        return true
+    }
+
+    fun markResynchronized(snapshotRevision: Long) {
+        revision = maxOf(revision, snapshotRevision)
+        revisionGapDetected = false
+    }
+}
+
 data class WorkspaceUiState(
     val online: Boolean = false,
     val camera: Boolean = false,

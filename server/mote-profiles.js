@@ -22,12 +22,14 @@ const PROFILE_BY_ID = new Map(MOTE_PROFILES.map(profile => [profile.id, profile]
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 
-function deriveMoteBehavior({ profileId = 'mote', taskState = 'idle', deviceHealth = 'unknown', interaction = 'none', explorationActive = false, mood = 0 } = {}) {
+function deriveMoteBehavior({ profileId = 'mote', taskState = 'idle', deviceHealth = 'unknown', interaction = 'none', explorationActive = false, mood = 0, relationshipLevel = 1 } = {}) {
   const profile = PROFILE_BY_ID.get(String(profileId)) || PROFILE_BY_ID.get('mote');
   const state = String(taskState).toLowerCase();
   const health = String(deviceHealth).toLowerCase();
   const intensity = Math.max(0, Math.min(1, .28 + (state === 'running' ? .28 : 0) + (state === 'failed' ? .18 : 0) + (health === 'degraded' || health === 'error' ? .16 : 0) + (interaction === 'tap' ? .12 : 0) + (explorationActive ? .08 : 0) + Number(mood || 0) * .08));
   const proactive = health === 'error' || state === 'failed' ? 'high' : profile.proactive;
+  const proactiveBase = profile.proactive === 'high' ? .72 : (profile.proactive === 'low' ? .24 : .48);
+  const reminderStrength = Math.max(0, Math.min(1, proactiveBase + (Math.max(1, Number(relationshipLevel) || 1) - 1) * .04));
   return {
     version: 1,
     profileId: profile.id,
@@ -36,6 +38,7 @@ function deriveMoteBehavior({ profileId = 'mote', taskState = 'idle', deviceHeal
     haloColor: health === 'error' ? '#ff6b6b' : profile.colors.primary,
     particleType: profile.particles,
     proactive,
+    reminderStrength: Number(reminderStrength.toFixed(3)),
     speechMode: profile.voice,
   };
 }

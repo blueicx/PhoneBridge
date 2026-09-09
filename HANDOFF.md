@@ -133,7 +133,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本轮本地验证：服务端测试 43/43；Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 通过；敏感扫描通过，GitHub 推送待收尾验证。
 - 重要边界：本轮未运行 ADB、现实线索点击、文本/语音实机回归；旧 Round 58 提交记录属于历史硬件基线，当前开发基线以功能分支最新提交为准。
 
-## 7. 当前阻塞点与下一步行动 (Next Steps)
+## 7. Round 62：性能与功能扩充当前状态（2026-09-10）
+
+- 服务端已增加按 workspace revision 的 full/summary 快照缓存、`/api/state?view=summary`、ETag 304、快照广播合并和 WorkspaceStore 250 ms 有界持久化调度。
+- Web 首屏工作台轮询从 1 秒/220 ms 降为 3 秒，详情轮询改为本地内存更新，工作台请求使用 summary projection 并以 `requestAnimationFrame` 合并更新。
+- TaskRunner 公开运行指标，Android 增加 WorkspaceEventGate，按 revision/eventId 去重并在 gap 时请求 snapshot；outbox 唯一任务使用 KEEP，避免重复排队。
+- Mote 行为提示现在根据关系等级确定性增加 reminderStrength；CI 增加工作区性能预算和 Android debug assemble。
+- 本轮验证：服务端 `node --check server/index.js` 与 `node --test server/*.test.js` 为 49/49；摘要 API 的 ETag/304 集成断言通过；性能预算输出 `summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`。
+- 本轮实体机仍未验证；没有运行 ADB、安装 APK、文本/语音实机回归或现实线索点击。
+- 验证入口：`node --test server/*.test.js`、`scripts/bench_workspace.ps1`、`android\\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain`。
+
+## 8. 当前阻塞点与下一步行动 (Next Steps)
 
 1. **当前阻塞点**：
    - 实体机在 Windows 设备管理器中显示为 `USB\VID_0FCE&PID_0DDE\QV7017NH1F`，但 ADB 端口（5038）列表暂时为空（设备因电量保护或 USB 调试鉴权掉线）。

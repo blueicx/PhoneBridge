@@ -220,6 +220,16 @@ class WorkspaceProtocolTest {
     }
 
     @Test
+    fun workspaceEventGateDeduplicatesIdsAndFlagsRevisionGaps() {
+        val gate = WorkspaceEventGate()
+        assertTrue(gate.accept(1L, "event-1"))
+        assertFalse(gate.accept(1L, "event-1"))
+        assertTrue(gate.accept(3L, "event-3"))
+        assertTrue(gate.revisionGapDetected)
+        assertFalse(gate.accept(2L, "event-2"))
+    }
+
+    @Test
     fun actionRunRoundTripKeepsApprovalAndErrorFields() {
         val run = ActionRun(
             id = "run-9",
