@@ -5,7 +5,7 @@
 ## 0. Round 58 当前状态覆盖（2026-09-08）
 
 - GitHub 公有仓库：<https://github.com/blueicx/PhoneBridge>，默认分支为 `main`。
-- 最新提交：`6e510cd`。已清除脚本中的硬编码设备 PIN；设备 PIN 仍需在手机端自行更换，严禁重新写入代码或文档。
+- 历史硬件基线提交：`6e510cd`；当前开发分支最新提交以 `feature/integrated-enhancement` 为准。已清除脚本中的硬编码设备 PIN；设备 PIN 仍需在手机端自行更换，严禁重新写入代码或文档。
 - 本地验证：`node --check server/index.js`、`node --test server/*.test.js` 通过；Android `:app:testDebugUnitTest :app:assembleDebug` 返回 `BUILD SUCCESSFUL`。
 - 当前实机状态：Windows 能识别 Xperia XZ2，但 ADB 5038、5039、5037 均未列出已授权设备。因此现实线索点击、文本聊天和 PTT 回归仍未完成，不能用历史截图代替本轮验证。
 - 恢复条件：解锁手机、确认 USB 调试授权后，再运行 `scripts/adb_recovery.ps1 -ResetServer`，随后按第 5 节顺序继续。
@@ -130,7 +130,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 新增同步恢复窗口：事件保留上限、delta/snapshot `resetRequired` 响应和明确 revision 范围；Android 新增审批、关系、任务和同步事件协议常量。
 - 新增 Mote 关系与陪伴任务：互动 eventId 幂等、等级经验持久化、quest claim 幂等；Web/Android 快照带关系与任务摘要。
 - 新增 `.github/workflows/ci.yml`：Node 测试、Android `testDebugUnitTest`、`git diff --check`；CI 不连接实体机。
-- 本轮本地验证：服务端测试 41/41；Android `:app:testDebugUnitTest` 通过；Debug 完整构建、敏感扫描和 GitHub 推送待收尾验证。
+- 本轮本地验证：服务端测试 43/43；Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 通过；敏感扫描通过，GitHub 推送待收尾验证。
 - 重要边界：本轮未运行 ADB、现实线索点击、文本/语音实机回归；旧 Round 58 提交记录属于历史硬件基线，当前开发基线以功能分支最新提交为准。
 
 ## 7. 当前阻塞点与下一步行动 (Next Steps)
