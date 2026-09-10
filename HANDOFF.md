@@ -149,7 +149,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - Web 工作台：完整快照和摘要快照均使用条件请求；客户端保存 ETag，收到 `304` 时跳过 JSON 解析和 DOM 重绘。任务面板增加状态统计、状态筛选、任务详情、结果/错误、运行指标和最近审计记录；动作按钮支持禁用反馈与错误回显，并保留归档入口。
 - Android 同步：启动时恢复持久化 workspace revision；`WorkspaceEventGate` 对 revision gap 提供一次性消费并触发 snapshot，避免断线恢复后的重复拉取。Mote 行为的 `reminderStrength` 按浮点值解析并归一化到 `0..1`，同时作用于伴侣与现实镜头的动画提示。
 - 本轮独立验收：`node --check server/index.js` 通过；`node --test server/*.test.js` 为 **49/49**；性能基准输出 `elapsedMs=0.764`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 均 `BUILD SUCCESSFUL`；`git diff --check` 通过。
-- 验收边界：本轮没有运行 ADB、安装 APK、现实线索点击、文本聊天、PTT 或断线实机回归。GitHub Actions 需要在推送后再单独确认，不能用本地结果代替远端工作流状态。
+- 远端验收：提交 `bfa52fd` 触发的 GitHub Actions run `34493572583` 已通过，Node、性能、Android 单测、Debug 构建和差异检查全部成功；GitHub 仅提示 actions 使用 Node 20 的弃用警告，不影响本次结果。
+- 验收边界：本轮没有运行 ADB、安装 APK、现实线索点击、文本聊天、PTT 或断线实机回归；手机实机验收仍留待后续。
 
 ## 9. 当前阻塞点与下一步行动 (Next Steps)
 
