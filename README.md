@@ -42,6 +42,9 @@
 - GitHub Actions：`.github/workflows/ci.yml` 自动执行 Node 服务端测试、Android 单元测试和差异空白检查，不运行 ADB 或上传运行时数据。
 - 加载性能：`GET /api/state?view=summary` 返回首屏所需的轻量投影并支持 ETag；完整快照按 revision 缓存，Web 工作台采用帧合并更新，Android 同步按 revision/eventId 去重。
 - 任务运行指标：任务公开摘要包含 runner attempt、retryCount、queuePosition、lastError 和 lastTransitionAt，便于 Web/Android 共用审计信息。
+- 工作台加载优化：摘要轮询保存 ETag，服务端返回 `304` 时浏览器跳过解析和 DOM 重绘；任务状态统计、筛选、详情、结果和最近审计按需展示。
+- Android 断线恢复：启动时恢复 workspace revision，事件 revision 出现间隙时只触发一次 snapshot，避免恢复阶段重复请求；Mote reminder strength 使用浮点值并作用于 Canvas 动画。
+- CI 依赖闭环：GitHub Actions 在 Node 测试前执行 `npm ci --prefix server` 并缓存 `server/package-lock.json`，保证干净 runner 能加载 WebSocket 依赖。
 
 ## 启动
 

@@ -375,7 +375,8 @@ class RealityLensView @JvmOverloads constructor(
         breath: Float, jumpOffset: Float, seconds: Float
     ) {
         val motion = behaviorHint?.motionIntensity ?: .5f
-        val r = radius * (1f + breath * (.82f + motion * .36f))
+        val reminder = behaviorHint?.reminderStrength ?: 0f
+        val r = radius * (1f + breath * (.82f + motion * .36f + reminder * .12f))
 
         // 1. Perspective Ground Shadow on Real Floor
         val shadowY = cy + r * 1.15f + jumpOffset

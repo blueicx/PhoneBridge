@@ -1206,10 +1206,19 @@ function sel(id){selected=id;let t=(window.TASKS||{})[id];detail.value=t?t.detai
 function tab(name,b){document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active');['tasks','log','sensors','frame'].forEach(x=>document.getElementById(x).hidden=x!==name)}
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>tab(b.dataset.tab,b));
 
-async function api(p,o){
-  let response=await fetch(p,o);
+const etags = new Map();
+async function api(p,o={}){
+  const options={...o};
+  const method=String(options.method||'GET').toUpperCase();
+  const headers=new Headers(options.headers||{});
+  if(method==='GET' && etags.has(p)) headers.set('If-None-Match', etags.get(p));
+  options.headers=headers;
+  let response=await fetch(p,options);
+  if(response.status===304) return {_status:304};
   if(response.status===401) location.reload();
   if(!response.ok) throw new Error('HTTP ' + response.status);
+  const etag=response.headers.get('etag');
+  if(method==='GET' && etag) etags.set(p,etag);
   return response.json();
 }
 async function logout(){
@@ -1224,6 +1233,7 @@ setInterval(refresh,3000);setInterval(poll,3000);
 async function refresh(){
   try{
     let s=await api('/api/state');
+    if(s._status===304) return;
     const sensor=s.stats.sensors||{};
     window.TASKS={};s.tasks.forEach(x=>{TASKS[x.id]=x});
     status.textContent='手机 ' + s.stats.clients + ' · 帧 ' + s.stats.frames + ' · 音频 ' + s.stats.audioChunks + ' · 空闲 ' + s.stats.idleSeconds + 's';
@@ -1245,20 +1255,63 @@ async function setScreenOffTimeout(){
   await api('/api/screen-off-timeout',{method:'POST',headers:{'content-type':'application/json'},body:'{"minutes":'+screenOffTimeout.value+'}'});
   refresh();
 }
-async function taskAction(id,action){await api('/api/tasks/'+encodeURIComponent(id)+'/actions',{method:'POST',headers:{'content-type':'application/json','idempotency-key':'web-'+action+'-'+Date.now()},body:JSON.stringify({action})});refreshWorkspace()}
+async function refreshWorkspaceNow(){try{
+  let s=await api('/api/state?view=summary');
+  if(s._status===304) return;
+  let w=s.workspace||{},p=s.autonomy||{},b=s.motes?.behavior||{},r=s.motes?.relationship||{};
+  workspaceSummary.textContent='策略：'+(p.level||'-')+' · 工具 '+(p.allowedTools||[]).length+' · 急停 '+(w.emergencyStop?.active?'是':'否')+' · 任务 '+(w.taskCount||0)+' · Mote Lv.'+(r.level||1)+' · '+(b.gaze||'ambient');
+  const filter = window.taskFilter ? taskFilter.value : '';
+  const filteredTasks = filter ? (w.tasks||[]).filter(t => (t.state||t.status) === filter) : (w.tasks||[]);
+  const tasksHtml = filteredTasks.slice(0,10).map(t=>'<div class=item onclick="selectTask(\''+esc(t.id)+'\')" style="cursor:pointer;border:1px solid #ccc;padding:4px;margin-bottom:4px;"><b>'+esc(t.title)+'</b> · '+esc(t.state||t.status)+' · '+(t.progress||0)+'% <br><button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'pause\')">暂停</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'continue\')">继续</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'retry\')">重试</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'cancel\')">取消</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'archive\')">归档</button></div>').join('');
+  const counts=(w.tasks||[]).reduce((all,t)=>{const key=t.state||t.status||'unknown';all[key]=(all[key]||0)+1;return all},{});
+  const statsHtml = '<div style="margin-bottom:8px">任务筛选: <select id="taskFilter" onchange="refreshWorkspace()"><option value="">全部</option><option value="pending">待处理</option><option value="running">运行中</option><option value="needs_confirmation">需确认</option><option value="succeeded">已完成</option><option value="failed">失败</option></select> 统计: 共 '+(w.taskCount||0)+' · 待处理 '+(counts.pending||0)+' · 运行中 '+(counts.running||0)+' · 需确认 '+(counts.needs_confirmation||0)+' · 完成 '+(counts.succeeded||0)+' · 失败 '+(counts.failed||0)+'</div>';
+  const approvalsHtml=(w.approvals||[]).filter(a=>a.state==='needs_confirmation'||a.state==='approved').map(a=>'<div class=item>待批准：<b>'+esc(a.toolId)+'</b> · '+esc(a.state)+' <button class=primary onclick="approveApproval(\''+esc(a.id)+'\')">批准并执行</button></div>').join('');
+  const roster=(s.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote(\''+esc(m.id)+'\')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
+  const revision=String(w.eventRevision||s.revision||'');
+  if(moteRoster.dataset.revision!==revision || moteRoster.dataset.filter!==filter){
+    moteRoster.innerHTML=statsHtml+tasksHtml+approvalsHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div><div id="taskDetail" style="margin-top:8px;padding:8px;background:#101E18;font-size:12px;white-space:pre-wrap"></div>';
+    moteRoster.dataset.revision=revision;
+    moteRoster.dataset.filter=filter;
+    if(window.taskFilter) taskFilter.value = filter;
+    if(window.selectedTaskId) selectTask(window.selectedTaskId);
+  }
+}catch(e){workspaceSummary.textContent='工作台数据不可用'}}
+
+async function selectTask(id) {
+  window.selectedTaskId = id;
+  const div = document.getElementById('taskDetail');
+  if(!div) return;
+  try {
+    const taskRes = await api('/api/tasks/'+encodeURIComponent(id));
+    const auditRes = await api('/api/tasks/'+encodeURIComponent(id)+'/audit');
+    const t = taskRes.task;
+    const runner = t.runner || {};
+    let auditText = (auditRes.audit||[]).slice(-5).map(a => a.createdAt + ' ' + a.actor + ' ' + a.action).join('\n');
+    div.textContent = '任务: ' + t.title + '\n状态: ' + t.state + '\n进度: ' + t.progress + '%\n重试: ' + (runner.retryCount||0) + '\n结果: ' + (t.result||t.error||'-') + '\n近期审计:\n' + auditText;
+  } catch(e) {
+    div.textContent = '加载失败: ' + e.message;
+  }
+}
+
+async function taskAction(btn,id,action){
+  if(btn && btn.disabled) return;
+  if(btn) btn.disabled=true;
+  try {
+    await api('/api/tasks/'+encodeURIComponent(id)+'/actions',{method:'POST',headers:{'content-type':'application/json','idempotency-key':'web-'+action+'-'+Date.now()},body:JSON.stringify({action})});
+    refreshWorkspace();
+  } catch(e) {
+    const div = document.getElementById('taskDetail');
+    if(div && window.selectedTaskId === id) div.textContent += '\n动作失败: ' + e.message;
+  } finally {
+    if(btn) btn.disabled=false;
+  }
+}
 async function activateMote(id){await api('/api/motes/active',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({id})});refreshWorkspace()}
 async function chooseMote(id){await api('/api/motes/exploration',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({targetId:id})});refreshWorkspace()}
 async function stopAutonomy(){await api('/api/tools/emergency-stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reason:'web'})});refreshWorkspace()}
 async function approveApproval(id){await api('/api/autonomy/approvals/'+encodeURIComponent(id)+'/approve',{method:'POST'});await api('/api/autonomy/approvals/'+encodeURIComponent(id)+'/invoke',{method:'POST'});refreshWorkspace()}
 let workspaceRefreshFrame=0;
 function refreshWorkspace(){if(workspaceRefreshFrame)return;workspaceRefreshFrame=requestAnimationFrame(()=>{workspaceRefreshFrame=0;refreshWorkspaceNow()})}
-async function refreshWorkspaceNow(){try{let s=await api('/api/state?view=summary'),w=s.workspace||{},p=s.autonomy||{},b=s.motes?.behavior||{},r=s.motes?.relationship||{};workspaceSummary.textContent='自治：'+(p.level||'-')+' · 白名单 '+(p.allowedTools||[]).length+' 项 · 急停 '+(w.emergencyStop?.active?'已启用':'未启用')+' · 任务 '+(w.taskCount||0)+' 个 · Mote Lv.'+(r.level||1)+' · '+(b.gaze||'ambient');
-  const tasksHtml=(w.tasks||[]).slice(0,10).map(t=>'<div class=item><b>'+esc(t.title)+'</b> · '+esc(t.state||t.status)+' · '+(t.progress||0)+'% <button onclick="taskAction(\''+esc(t.id)+'\',\'pause\')">暂停</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'continue\')">继续</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'retry\')">重试</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'cancel\')">取消</button> <button onclick="taskAction(\''+esc(t.id)+'\',\'archive\')">归档</button></div>').join('');
-  const approvalsHtml=(w.approvals||[]).filter(a=>a.state==='needs_confirmation'||a.state==='approved').map(a=>'<div class=item>待确认：<b>'+esc(a.toolId)+'</b> · '+esc(a.state)+' <button class=primary onclick="approveApproval(\''+esc(a.id)+'\')">批准并执行</button></div>').join('');
-  const roster=(s.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote(\''+m.id+'\')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
-  const revision=String(w.eventRevision||s.revision||'');
-  if(moteRoster.dataset.revision!==revision){moteRoster.innerHTML=tasksHtml+approvalsHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div>';moteRoster.dataset.revision=revision}
-}catch(e){workspaceSummary.textContent='工作台暂不可用'}}
 refreshWorkspace();
 </script>`;
 

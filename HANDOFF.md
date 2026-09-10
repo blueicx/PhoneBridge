@@ -1,4 +1,4 @@
-# PhoneBridge 交接文档（Round 57 综合基线 / Round 58 收口）
+# PhoneBridge 交接文档（Round 57 综合基线 / Round 63 收口）
 
 更新时间：2026-09-08（以证据文件与测试验证时间为准）
 
@@ -143,7 +143,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本轮实体机仍未验证；没有运行 ADB、安装 APK、文本/语音实机回归或现实线索点击。
 - 验证入口：`node --test server/*.test.js`、`scripts/bench_workspace.ps1`、`android\\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain`。
 
-## 8. 当前阻塞点与下一步行动 (Next Steps)
+## 8. Round 63：工作台与同步性能增强（2026-09-10）
+
+- CI 修复：GitHub Actions 在 Node 测试前执行 `npm ci --prefix server`，并启用 `server/package-lock.json` 的 npm 缓存，避免干净 runner 缺少 `ws` 依赖导致工作流失败。
+- Web 工作台：完整快照和摘要快照均使用条件请求；客户端保存 ETag，收到 `304` 时跳过 JSON 解析和 DOM 重绘。任务面板增加状态统计、状态筛选、任务详情、结果/错误、运行指标和最近审计记录；动作按钮支持禁用反馈与错误回显，并保留归档入口。
+- Android 同步：启动时恢复持久化 workspace revision；`WorkspaceEventGate` 对 revision gap 提供一次性消费并触发 snapshot，避免断线恢复后的重复拉取。Mote 行为的 `reminderStrength` 按浮点值解析并归一化到 `0..1`，同时作用于伴侣与现实镜头的动画提示。
+- 本轮独立验收：`node --check server/index.js` 通过；`node --test server/*.test.js` 为 **49/49**；性能基准输出 `elapsedMs=0.764`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 均 `BUILD SUCCESSFUL`；`git diff --check` 通过。
+- 验收边界：本轮没有运行 ADB、安装 APK、现实线索点击、文本聊天、PTT 或断线实机回归。GitHub Actions 需要在推送后再单独确认，不能用本地结果代替远端工作流状态。
+
+## 9. 当前阻塞点与下一步行动 (Next Steps)
 
 1. **当前阻塞点**：
    - 实体机在 Windows 设备管理器中显示为 `USB\VID_0FCE&PID_0DDE\QV7017NH1F`，但 ADB 端口（5038）列表暂时为空（设备因电量保护或 USB 调试鉴权掉线）。

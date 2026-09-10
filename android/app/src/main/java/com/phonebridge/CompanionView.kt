@@ -162,7 +162,8 @@ class CompanionView @JvmOverloads constructor(
             displayedEmotion.fatigue * .34f -
             displayedEmotion.loneliness * .16f
         val behaviorBoost = behaviorHint?.motionIntensity?.let { .88f + it * .18f } ?: 1f
-        return ((state.normalizedEnergy() * .54f + (.72f + emotionEnergy) * .46f + petJoy * .10f) * behaviorBoost)
+        val reminderBoost = behaviorHint?.reminderStrength?.let { 1f + it * .08f } ?: 1f
+        return ((state.normalizedEnergy() * .54f + (.72f + emotionEnergy) * .46f + petJoy * .10f) * behaviorBoost * reminderBoost)
             .coerceIn(.34f, 1.18f)
     }
 

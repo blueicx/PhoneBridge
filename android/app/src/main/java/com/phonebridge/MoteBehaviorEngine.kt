@@ -19,7 +19,8 @@ data class MoteBehaviorOutput(
     val proactive: Boolean,
     val voiceMode: String,
     val version: Int = 1,
-    val profileId: String = "mote"
+    val profileId: String = "mote",
+    val reminderStrength: Float = 0f
 ) {
     companion object {
         fun fromWire(json: JSONObject?): MoteBehaviorOutput? = json?.let {
@@ -31,9 +32,12 @@ data class MoteBehaviorOutput(
                 proactive = it.optString("proactive").equals("high", true) || it.optBoolean("proactive", false),
                 voiceMode = it.optString("speechMode", it.optString("voiceMode", "理性稳重")),
                 version = it.optInt("version", 1),
-                profileId = it.optString("profileId", "mote")
+                profileId = it.optString("profileId", "mote"),
+                reminderStrength = normalizeReminderStrength(it.optDouble("reminderStrength", 0.0))
             )
         }
+
+        fun normalizeReminderStrength(value: Double): Float = value.toFloat().coerceIn(0f, 1f)
     }
 }
 

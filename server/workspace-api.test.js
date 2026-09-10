@@ -73,6 +73,11 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.equal(health.body.ok, true);
     assert.equal(typeof health.body.health.overall, 'string');
 
+    const page = await fetch(`${BASE}/`, { headers: { 'x-phonebridge-token': TOKEN } });
+    const html = await page.text();
+    assert.match(html, /If-None-Match/);
+    assert.match(html, /status\s*===\s*304/);
+
     const summary = await request('/api/state?view=summary');
     assert.equal(summary.response.status, 200);
     assert.equal(summary.body.view, 'summary');
@@ -82,6 +87,35 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     });
     assert.equal(cachedSummary.status, 304);
     assert.equal(await cachedSummary.text(), '');
+
+    const initialSummary = await request('/api/state?view=summary');
+    const initialETag = initialSummary.response.headers.get('etag');
+
+    const createdFilterTask = await request('/api/tasks', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '筛选测试任务', detail: 'test' }),
+    });
+
+    const secondSummary = await fetch(BASE + '/api/state?view=summary', {
+      headers: { 'x-phonebridge-token': TOKEN, 'if-none-match': initialETag },
+    });
+    assert.equal(secondSummary.status, 200);
+    assert.notEqual(secondSummary.headers.get('etag'), initialETag);
+
+    const pendingTasks = await request('/api/tasks?state=pending');
+    assert.ok(pendingTasks.body.tasks.some(t => t.id === createdFilterTask.body.task.id));
+
+    await request('/api/tasks/' + createdFilterTask.body.task.id + '/actions', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'start' }),
+    });
+    const runningTasks = await request('/api/tasks?state=running');
+    assert.ok(runningTasks.body.tasks.some(t => t.id === createdFilterTask.body.task.id));
+
+    const filterTaskAudit = await request('/api/tasks/' + createdFilterTask.body.task.id + '/audit');
+    assert.equal(filterTaskAudit.body.audit.length >= 1, true);
+    assert.equal(filterTaskAudit.body.audit[0].action, 'start');
+    assert.equal(filterTaskAudit.body.audit[0].actor, 'web');
 
     const created = await request('/api/workspace/sessions', {
       method: 'POST',

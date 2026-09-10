@@ -286,4 +286,27 @@ class WorkspaceProtocolTest {
         assertTrue(migrations.any { it.startVersion == 1 && it.endVersion == 2 })
         assertTrue(migrations.all { it is Migration })
     }
+    @Test
+    fun workspaceEventGateBehaviors() {
+        val gate = WorkspaceEventGate()
+        gate.markResynchronized(7L)
+        assertFalse(gate.accept(6L, "event-6"))
+        assertFalse(gate.revisionGapDetected)
+
+        assertTrue(gate.accept(8L, "event-8"))
+        assertFalse(gate.revisionGapDetected)
+
+        gate.accept(11L, "event-11")
+        assertTrue(gate.revisionGapDetected)
+        assertTrue(gate.consumeGap())
+        assertFalse(gate.revisionGapDetected)
+        gate.markResynchronized(12L)
+        assertFalse(gate.revisionGapDetected)
+        assertFalse(gate.consumeGap())
+        assertEquals(12L, gate.revision)
+
+        assertTrue(gate.accept(13L, "event-13"))
+        assertFalse(gate.accept(14L, "event-13"))
+    }
+
 }

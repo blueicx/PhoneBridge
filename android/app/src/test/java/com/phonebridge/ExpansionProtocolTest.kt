@@ -32,4 +32,9 @@ class ExpansionProtocolTest {
         val bonded = MoteBehaviorEngine.resolve(profile, MoteBehaviorInput(relationshipLevel = 5))
         assertTrue(bonded.motionIntensity > quiet.motionIntensity)
     }
+
+    @Test
+    fun behaviorWirePreservesFractionalReminderStrength() {
+        assertEquals(0.72f, MoteBehaviorOutput.normalizeReminderStrength(0.72), 0.001f)
+    }
 }

@@ -336,6 +336,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         setContentView(R.layout.activity_main)
         secureTokenStore = SecureTokenStore(this)
         secureTokenStore.migrateLegacy(getSharedPreferences("phonebridge", Context.MODE_PRIVATE))
+        workspaceRevision = getSharedPreferences("workspace_meta", Context.MODE_PRIVATE).getLong("revision", 0L)
+        workspaceEventGate.markResynchronized(workspaceRevision)
         ContextCompat.registerReceiver(
             this,
             exitAppReceiver,
@@ -3250,7 +3252,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                             handleServerJson(payload.toString())
                         }
                     }
-                    if (workspaceEventGate.revisionGapDetected) {
+                    if (workspaceEventGate.consumeGap()) {
                         sendJson(JSONObject().put("type", "snapshot").put("since", workspaceRevision))
                     } else if (workspaceEventGate.revision > workspaceRevision) {
                         workspaceRevision = workspaceEventGate.revision

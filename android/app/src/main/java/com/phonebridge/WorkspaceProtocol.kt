@@ -430,6 +430,12 @@ class WorkspaceEventGate(private val maxEventIds: Int = 512) {
         return true
     }
 
+    fun consumeGap(): Boolean {
+        val gap = revisionGapDetected
+        revisionGapDetected = false
+        return gap
+    }
+
     fun markResynchronized(snapshotRevision: Long) {
         revision = maxOf(revision, snapshotRevision)
         revisionGapDetected = false
