@@ -27,6 +27,8 @@ jobs:
       - name: Workspace performance budget
         shell: pwsh
         run: ./scripts/bench_workspace.ps1
+      - name: Make Gradle wrapper executable
+        run: chmod +x android/gradlew
       - name: Android unit tests
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
