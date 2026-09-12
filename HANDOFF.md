@@ -152,7 +152,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 远端验收：提交 `bfa52fd` 触发的 GitHub Actions run `34493572583` 已通过，Node、性能、Android 单测、Debug 构建和差异检查全部成功；GitHub 仅提示 actions 使用 Node 20 的弃用警告，不影响本次结果。
 - 验收边界：本轮没有运行 ADB、安装 APK、现实线索点击、文本聊天、PTT 或断线实机回归；手机实机验收仍留待后续。
 
-## 9. 当前阻塞点与下一步行动 (Next Steps)
+## 9. Round 64：第一轮全面增强收口（2026-09-12）
+
+- **统一 workspace timeline/projection**：建立 `server/workspace-timeline.js`，统一输出 task、chat、attention、mote、health、autonomy 事件；事件同时提供新协议 `entity/createdAt` 与旧兼容字段，按 `eventId` 幂等，支持 monotonic revision、实体版本、游标分页、delta/snapshot 恢复和删除操作，提供 `GET /api/workspace/timeline` 并支持 ETag 304 缓存。现有 workspace 状态会初始化到时间线快照。
+- **可插拔 AI provider 与本地离线回退底座**：建立 `server/ai-provider.js`，支持 Codex、OpenAI-compatible、Gemini-compatible 以及本地离线规则引擎兜底；显式 provider 已接入实际聊天路径，失败只回退本地离线规则，备用联网 provider 不自动调用；配置与日志凭证严格脱敏；提供 `GET /api/ai/providers`、`GET/PATCH /api/ai/settings`、`POST /api/ai/providers/:id/probe`。
+- **诊断与性能边界**：建立 `server/diagnostics.js` 与 `GET /api/diagnostics`，统一输出启动耗时、同步延迟、事件积压、设备遥测（电量/内存/温度/网络）、provider 延迟与降级计数；保留 30fps 前台目标与后台降频策略。
+- **Web 控制台全视图与深链**：工作台增加收件箱/进行中/历史任务视图与状态筛选；实现任务与关联聊天会话上下文详情展示；Attention 项增加 `data-attention-id`、`data-task-id`、`data-deep-link` 属性并支持点击跳转对应任务；增量拉取时间线与诊断摘要，304 及无变动事件跳过 DOM 重绘。
+- **Android 双端状态对齐**：新增 `WorkspaceTimeline.kt`（StateFlow 投影更新、任务卡片协议、深链协议、断线缓存间隙检测与快照恢复、GPS 占位输入底座）与 `AiProvider.kt`（脱敏配置、离线本地回退解析器、探针解析）；`MainActivity` 已消费 timeline 快照与 `workspace.timeline` 增量事件，不改动既有 Canvas 形态渲染分支。
+- **共享协议测试与 Fixture**：新增 `protocol-fixtures/workspace-timeline.json`、Node 回归与 API 集成测试、Android 单元测试与 Debug APK 编译验证；本次独立回归目标为 Node **66/66**、Android `:app:testDebugUnitTest` 与 `:app:assembleDebug`、工作区性能基准、`git diff --check` 和敏感内容扫描。
+- **红线与安全边界**：本轮未连接实体机，未执行 ADB、安装 APK、现实线索点击或 PTT 语音实机回归；未实现第二轮 AR/GPS 玩法；密钥不进入协议/日志/Git；完成独立审查后再推送 Git 远端。
+
+## 10. 当前阻塞点与下一步行动 (Next Steps)
 
 1. **当前阻塞点**：
    - 实体机在 Windows 设备管理器中显示为 `USB\VID_0FCE&PID_0DDE\QV7017NH1F`，但 ADB 端口（5038）列表暂时为空（设备因电量保护或 USB 调试鉴权掉线）。

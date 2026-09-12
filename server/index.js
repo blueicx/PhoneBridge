@@ -8,6 +8,9 @@ const { MoteStore, deriveMoteBehavior } = require('./mote-profiles');
 const { TaskRunner } = require('./task-runner');
 const { MoteRelationshipStore, MoteQuestStore } = require('./mote-expansion');
 const { RevisionSnapshotCache, BroadcastCoalescer } = require('./workspace-performance');
+const { WorkspaceTimeline } = require('./workspace-timeline');
+const { AiProviderManager } = require('./ai-provider');
+const { DiagnosticsCollector } = require('./diagnostics');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -255,6 +258,16 @@ const deviceHealthStore = new DeviceHealthStore({
   authorization: 'unknown',
   outbox: 'online',
 });
+const workspaceTimeline = new WorkspaceTimeline({ retention: 500 });
+const aiProviderManager = new AiProviderManager({
+  adapters: {
+    codex: {
+      chat: async ({ prompt, memories, options }) => rawChatWithModel(prompt, memories, options),
+      probe: async () => ({ ok: true, latencyMs: 20, model: codexInfo.currentModel || 'codex', status: 'ready' })
+    }
+  }
+});
+const diagnosticsCollector = new DiagnosticsCollector({ startTime: startedAt });
 const proactiveState = {
   paused: false,
   quietStart: 23,
@@ -306,12 +319,101 @@ function publicLogs(count = 100) {
   return logs.slice(-count);
 }
 
+function syncTimelineFromBroadcast(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  const type = payload.type;
+  if (!type) return;
+  let timelineEvent = null;
+
+  if (type === 'workspace.task' && payload.task) {
+    timelineEvent = workspaceTimeline.recordEvent({
+      entityType: 'task',
+      entityId: payload.task.id,
+      operation: payload.task.deleted ? 'delete' : (payload.task.createdAt === payload.task.updatedAt ? 'create' : 'update'),
+      deleted: Boolean(payload.task.deleted),
+      payload: payload.task
+    });
+  } else if (type === 'workspace.message' && payload.message) {
+    timelineEvent = workspaceTimeline.recordEvent({
+      entityType: 'chat',
+      entityId: payload.message.id,
+      operation: 'create',
+      payload: { ...payload.message, sessionId: payload.sessionId }
+    });
+  } else if (type === 'attention.upsert' && payload.attention) {
+    timelineEvent = workspaceTimeline.recordEvent({
+      entityType: 'attention',
+      entityId: payload.attention.id,
+      operation: 'update',
+      payload: {
+        ...payload.attention,
+        deepLink: payload.attention.relatedTaskId ? `phonebridge://task/${payload.attention.relatedTaskId}` : `phonebridge://attention/${payload.attention.id}`
+      }
+    });
+  } else if (type === 'mote.relationship' || type === 'mote.profile' || type === 'mote.quest') {
+    const active = moteStore.roster().find(item => item.active) || moteStore.roster()[0];
+    const rel = moteRelationshipStore.snapshot();
+    timelineEvent = workspaceTimeline.recordEvent({
+      entityType: 'mote',
+      entityId: 'active',
+      operation: 'update',
+      payload: {
+        profileId: active?.id || 'rimuru',
+        name: active?.name || '利姆鲁',
+        active: true,
+        level: rel.level,
+        xp: rel.xp,
+        interactions: rel.interactions,
+        updatedAt: new Date().toISOString()
+      }
+    });
+  } else if (type === 'device.health' && payload.state) {
+    timelineEvent = workspaceTimeline.recordEvent({
+      entityType: 'health',
+      entityId: 'device',
+      operation: 'update',
+      payload: {
+        ...payload.state,
+        battery: phoneTelemetry.battery,
+        temperature: phoneTelemetry.temperature,
+        memory: phoneTelemetry.memory,
+        networkRx: phoneTelemetry.network_rx,
+        networkTx: phoneTelemetry.network_tx,
+        updatedAt: new Date().toISOString()
+      }
+    });
+  } else if (type === 'workspace.policy' || type === 'workspace.emergency_stop' || type === 'autonomy.approval') {
+    const policy = workspaceStore.getAutonomyPolicy();
+    const estop = workspaceStore.emergencyStopState();
+    timelineEvent = workspaceTimeline.recordEvent({
+      entityType: 'autonomy',
+      entityId: 'global',
+      operation: 'update',
+      payload: {
+        level: policy.level,
+        allowedTools: policy.allowedTools,
+        emergencyStop: estop.active,
+        pendingApprovals: workspaceStore.listToolApprovals().filter(a => a.state === 'needs_confirmation').length,
+        updatedAt: new Date().toISOString()
+      }
+    });
+  }
+  return timelineEvent;
+}
+
 function broadcast(payload) {
   const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
   const isSnapshot = typeof payload === 'string' ? text.includes('"type":"snapshot"') : payload?.type === 'snapshot';
   if (!isSnapshot) snapshotRevision += 1;
+  let timelineEvent = null;
+  try {
+    if (typeof payload === 'object') timelineEvent = syncTimelineFromBroadcast(payload);
+  } catch (_) {}
   wss.clients.forEach((socket) => {
-    if (socket.readyState === socket.OPEN) socket.send(text);
+    if (socket.readyState === socket.OPEN) {
+      socket.send(text);
+      if (timelineEvent) socket.send(JSON.stringify({ type: 'workspace.timeline', revision: timelineEvent.revision, event: timelineEvent }));
+    }
   });
 }
 
@@ -912,7 +1014,7 @@ function selectCodexModel(providerId, model) {
   });
 }
 
-async function chatWithModel(text, memories = [], options = {}) {
+async function rawChatWithModel(text, memories = [], options = {}) {
   const config = fs.readFileSync(path.join(os.homedir(), '.codex', 'config.toml'), 'utf8');
   let apiKey = '';
   try {
@@ -1023,6 +1125,24 @@ async function chatWithModel(text, memories = [], options = {}) {
   return { id: streamId, reply };
 }
 
+async function chatWithModel(text, memories = [], options = {}) {
+  const result = await aiProviderManager.chat({
+    prompt: String(text || ''),
+    memories,
+    providerId: options.providerId || null,
+    options
+  });
+  diagnosticsCollector.recordProviderLatency(result.fallbackProvider || result.providerId, aiProviderManager.lastLatencyMs);
+  if (result.degraded) diagnosticsCollector.recordDegradation();
+  return {
+    id: result.id || `chat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    reply: result.reply,
+    providerId: result.providerId,
+    fallbackProvider: result.fallbackProvider || null,
+    degraded: Boolean(result.degraded)
+  };
+}
+
 async function handleChat(text, memories = []) {
   const clean = String(text || '').trim().slice(0, 2000);
   if (!clean) throw new Error('empty');
@@ -1119,8 +1239,29 @@ function workspaceSnapshot() {
     moteRelationship: moteRelationshipStore.snapshot(),
     moteQuests: moteQuestStore.list(),
     motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId, relationshipLevel: moteRelationshipStore.snapshot().level }), relationship: moteRelationshipStore.snapshot(), quests: moteQuestStore.list() },
+    timeline: workspaceTimeline.getSnapshot(),
   };
 }
+
+workspaceTimeline.seedSnapshot({
+  tasks: workspaceStore.listTasks(),
+  attention: workspaceStore.listAttentionItems(),
+  mote: {
+    profileId: moteStore.getState().activeId || 'rimuru',
+    name: moteStore.roster().find(item => item.active)?.name || '利姆鲁',
+    active: true,
+    ...moteRelationshipStore.snapshot()
+  },
+  health: {
+    connected: deviceHealthStore.snapshot().bridge === 'connected',
+    ...phoneTelemetry
+  },
+  autonomy: {
+    ...workspaceStore.getAutonomyPolicy(),
+    emergencyStop: workspaceStore.emergencyStopState().active,
+    pendingApprovals: workspaceStore.listToolApprovals().filter(item => item.state === 'needs_confirmation').length
+  }
+});
 
 async function runWorkspaceMessage(sessionId, message, taskId, memories) {
   const task = workspaceStore.getTask(taskId);
@@ -1198,7 +1339,7 @@ const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name
 </style><div class="wrap"><div class="top"><div><div class="logo">Mote</div><div class="sub">PhoneBridge · sensory familiar</div></div><div style="margin-left:auto;display:flex;gap:12px;align-items:center"><div class="pill" id="status">loading</div><button onclick="logout()" style="padding:4px 12px;font-size:12px;background:#0d1b15">退出</button></div></div>
 <div class="grid"><div class="panel"><h2>实时感官</h2><img id="frame"><div class="metrics" style="margin-top:12px"><div class="metric"><b id="cpu">-</b><span>手机 CPU</span></div><div class="metric"><b id="mem">-</b><span>内存</span></div><div class="metric"><b id="bat">-</b><span>电量</span></div><div class="metric"><b id="temp">-</b><span>温度</span></div></div><div class="row"><button class="primary" onclick="device('camera_on')">开眼</button><button onclick="device('camera_front')">前眼</button><button onclick="device('camera_back')">后眼</button><button onclick="device('listen_on')">监听</button><button onclick="say()">说话</button></div><div class="row"><input id="speech" placeholder="输入要在手机上播放的话" style="flex:1"></div><div class=row><select id=idleTimeout title="空闲断流时间"><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5 selected>5 分钟</option><option value=10>10 分钟</option><option value=30>30 分钟</option></select><button onclick=setIdleTimeout()>空闲断流</button></div><div class=row><select id=screenOffTimeout title="息屏自动退出时间"><option value=0>不自动退出</option><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5>5 分钟</option><option value=10 selected>10 分钟</option><option value=30>30 分钟</option><option value=60>60 分钟</option></select><button onclick=setScreenOffTimeout()>息屏退出</button></div></div>
 <div class="panel"><h2>指挥台</h2><div class="tabs"><button class="active" data-tab="tasks">任务</button><button data-tab="log">日志</button><button data-tab="sensors">传感器</button><button data-tab="frame">画面</button></div><div id="tasks"></div><div id="log" hidden></div><div id="sensors" hidden></div><div id="framebox" hidden><img id="frame2"></div><div class="row"><input id="cmd" placeholder="help / ping 8.8.8.8 / screenshot / ps / say 你好" style="flex:1"><button class="primary" onclick="sendCmd()">执行</button></div><textarea id="detail" readonly placeholder="选中任务的输出会出现在这里"></textarea></div></div>
-<div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治</h2><div id="workspaceSummary" class="sub">加载中…</div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div></div>
+<div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div></div>
 <script>
 let selected='';
 function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
@@ -1255,27 +1396,71 @@ async function setScreenOffTimeout(){
   await api('/api/screen-off-timeout',{method:'POST',headers:{'content-type':'application/json'},body:'{"minutes":'+screenOffTimeout.value+'}'});
   refresh();
 }
+window.taskViewMode = window.taskViewMode || 'all';
+window.timelineCursor = window.timelineCursor || 0;
+
+async function refreshDiagnosticsAndTimeline() {
+  try {
+    const diag = await api('/api/diagnostics');
+    if (diag && diag.ok && document.getElementById('diagnosticsSummary')) {
+      diagnosticsSummary.textContent = '诊断摘要: 启动耗时 ' + (diag.startupDurationMs||0) + 'ms · 同步延迟 ' + (diag.syncLatencyMs||0) + 'ms · 积压 ' + (diag.eventBacklog||0) + ' · 降级计数 ' + (diag.provider?.degradationCount||0) + ' · 目标 ' + (diag.performance?.fpsTarget||30) + 'fps (' + (diag.performance?.throttlingStrategy||'-') + ')';
+    }
+    const tl = await api('/api/workspace/timeline?cursor=' + window.timelineCursor + '&limit=10');
+    if (tl && tl.ok && tl.cursor) {
+      window.timelineCursor = tl.cursor;
+    }
+  } catch (_) {}
+}
+setInterval(refreshDiagnosticsAndTimeline, 5000);
+refreshDiagnosticsAndTimeline();
+
 async function refreshWorkspaceNow(){try{
   let s=await api('/api/state?view=summary');
   if(s._status===304) return;
   let w=s.workspace||{},p=s.autonomy||{},b=s.motes?.behavior||{},r=s.motes?.relationship||{};
   workspaceSummary.textContent='策略：'+(p.level||'-')+' · 工具 '+(p.allowedTools||[]).length+' · 急停 '+(w.emergencyStop?.active?'是':'否')+' · 任务 '+(w.taskCount||0)+' · Mote Lv.'+(r.level||1)+' · '+(b.gaze||'ambient');
+  const viewMode = window.taskViewMode || 'all';
   const filter = window.taskFilter ? taskFilter.value : '';
-  const filteredTasks = filter ? (w.tasks||[]).filter(t => (t.state||t.status) === filter) : (w.tasks||[]);
+  let filteredTasks = w.tasks || [];
+  if (viewMode === 'inbox') {
+    filteredTasks = filteredTasks.filter(t => ['pending', 'needs_confirmation'].includes(t.state || t.status));
+  } else if (viewMode === 'in_progress') {
+    filteredTasks = filteredTasks.filter(t => ['running', 'paused'].includes(t.state || t.status));
+  } else if (viewMode === 'history') {
+    filteredTasks = filteredTasks.filter(t => ['succeeded', 'failed', 'cancelled', 'archived'].includes(t.state || t.status));
+  }
+  if (filter) filteredTasks = filteredTasks.filter(t => (t.state || t.status) === filter);
+
   const tasksHtml = filteredTasks.slice(0,10).map(t=>'<div class=item onclick="selectTask(\''+esc(t.id)+'\')" style="cursor:pointer;border:1px solid #ccc;padding:4px;margin-bottom:4px;"><b>'+esc(t.title)+'</b> · '+esc(t.state||t.status)+' · '+(t.progress||0)+'% <br><button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'pause\')">暂停</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'continue\')">继续</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'retry\')">重试</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'cancel\')">取消</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'archive\')">归档</button></div>').join('');
   const counts=(w.tasks||[]).reduce((all,t)=>{const key=t.state||t.status||'unknown';all[key]=(all[key]||0)+1;return all},{});
-  const statsHtml = '<div style="margin-bottom:8px">任务筛选: <select id="taskFilter" onchange="refreshWorkspace()"><option value="">全部</option><option value="pending">待处理</option><option value="running">运行中</option><option value="needs_confirmation">需确认</option><option value="succeeded">已完成</option><option value="failed">失败</option></select> 统计: 共 '+(w.taskCount||0)+' · 待处理 '+(counts.pending||0)+' · 运行中 '+(counts.running||0)+' · 需确认 '+(counts.needs_confirmation||0)+' · 完成 '+(counts.succeeded||0)+' · 失败 '+(counts.failed||0)+'</div>';
+  const statsHtml = '<div style="margin-bottom:8px">任务视图: <select id="taskViewSelect" onchange="window.taskViewMode=this.value;refreshWorkspace()"><option value="all" '+(viewMode==='all'?'selected':'')+'>全部任务</option><option value="inbox" '+(viewMode==='inbox'?'selected':'')+'>收件箱 (待处理/需确认)</option><option value="in_progress" '+(viewMode==='in_progress'?'selected':'')+'>进行中 (运行/暂停)</option><option value="history" '+(viewMode==='history'?'selected':'')+'>历史任务 (完成/失败/归档)</option></select> 状态筛选: <select id="taskFilter" onchange="refreshWorkspace()"><option value="">全部状态</option><option value="pending">待处理</option><option value="running">运行中</option><option value="needs_confirmation">需确认</option><option value="succeeded">已完成</option><option value="failed">失败</option><option value="archived">已归档</option></select> 统计: 共 '+(w.taskCount||0)+' · 待处理 '+(counts.pending||0)+' · 运行中 '+(counts.running||0)+' · 需确认 '+(counts.needs_confirmation||0)+' · 完成 '+(counts.succeeded||0)+' · 失败 '+(counts.failed||0)+'</div>';
+  const attentionItems = (w.attention || s.attention || []);
+  const attentionHtml = attentionItems.slice(0, 5).map(a => {
+    const taskId = a.relatedTaskId || '';
+    const sessId = a.relatedSessionId || '';
+    const link = taskId ? ('phonebridge://task/' + esc(taskId)) : ('phonebridge://attention/' + esc(a.id));
+    return '<div class="item attention-item" data-attention-id="' + esc(a.id) + '" data-task-id="' + esc(taskId) + '" data-session-id="' + esc(sessId) + '" data-deep-link="' + esc(link) + '" style="cursor:pointer;border-left:3px solid var(--amber);" onclick="onAttentionClick(\'' + esc(taskId) + '\')">' +
+      '<b>[Attention/' + esc(a.severity) + ']</b> ' + esc(a.title) + ' - ' + esc(a.summary) +
+      (taskId ? ' <span style="font-size:10px;color:var(--mint)">[关联任务: ' + esc(taskId) + ']</span>' : '') +
+    '</div>';
+  }).join('');
   const approvalsHtml=(w.approvals||[]).filter(a=>a.state==='needs_confirmation'||a.state==='approved').map(a=>'<div class=item>待批准：<b>'+esc(a.toolId)+'</b> · '+esc(a.state)+' <button class=primary onclick="approveApproval(\''+esc(a.id)+'\')">批准并执行</button></div>').join('');
   const roster=(s.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote(\''+esc(m.id)+'\')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
   const revision=String(w.eventRevision||s.revision||'');
-  if(moteRoster.dataset.revision!==revision || moteRoster.dataset.filter!==filter){
-    moteRoster.innerHTML=statsHtml+tasksHtml+approvalsHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div><div id="taskDetail" style="margin-top:8px;padding:8px;background:#101E18;font-size:12px;white-space:pre-wrap"></div>';
+  if(moteRoster.dataset.revision!==revision || moteRoster.dataset.filter!==filter || moteRoster.dataset.viewMode!==viewMode){
+    moteRoster.innerHTML=statsHtml+attentionHtml+tasksHtml+approvalsHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div><div id="taskDetail" style="margin-top:8px;padding:8px;background:#101E18;font-size:12px;white-space:pre-wrap"></div>';
     moteRoster.dataset.revision=revision;
     moteRoster.dataset.filter=filter;
+    moteRoster.dataset.viewMode=viewMode;
     if(window.taskFilter) taskFilter.value = filter;
+    if(window.taskViewSelect) taskViewSelect.value = viewMode;
     if(window.selectedTaskId) selectTask(window.selectedTaskId);
   }
 }catch(e){workspaceSummary.textContent='工作台数据不可用'}}
+
+function onAttentionClick(taskId) {
+  if (taskId) selectTask(taskId);
+}
 
 async function selectTask(id) {
   window.selectedTaskId = id;
@@ -1286,8 +1471,19 @@ async function selectTask(id) {
     const auditRes = await api('/api/tasks/'+encodeURIComponent(id)+'/audit');
     const t = taskRes.task;
     const runner = t.runner || {};
+    let chatSnippet = '';
+    const sessionId = t.metadata?.sessionId || t.relatedSessionId || '';
+    if (sessionId) {
+      try {
+        const msgsRes = await api('/api/workspace/sessions/' + encodeURIComponent(sessionId) + '/messages');
+        const msgs = msgsRes.messages || [];
+        if (msgs.length > 0) {
+          chatSnippet = '\n关联会话 [' + esc(sessionId) + '] 消息:\n' + msgs.slice(-2).map(m => '  [' + esc(m.role) + '] ' + esc(m.text)).join('\n');
+        }
+      } catch (_) {}
+    }
     let auditText = (auditRes.audit||[]).slice(-5).map(a => a.createdAt + ' ' + a.actor + ' ' + a.action).join('\n');
-    div.textContent = '任务: ' + t.title + '\n状态: ' + t.state + '\n进度: ' + t.progress + '%\n重试: ' + (runner.retryCount||0) + '\n结果: ' + (t.result||t.error||'-') + '\n近期审计:\n' + auditText;
+    div.textContent = '任务: ' + t.title + '\n状态: ' + t.state + '\n进度: ' + t.progress + '%\n重试: ' + (runner.retryCount||0) + '\n结果: ' + (t.result||t.error||'-') + chatSnippet + '\n近期审计:\n' + auditText;
   } catch(e) {
     div.textContent = '加载失败: ' + e.message;
   }
@@ -1357,6 +1553,59 @@ const server = http.createServer(async (req, res) => {
 
     if (parsedUrl.pathname === '/api/workspace' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, ...workspaceSnapshot() });
+    }
+    if (parsedUrl.pathname === '/api/workspace/timeline' && req.method === 'GET') {
+      const cursor = parsedUrl.searchParams.get('cursor') ?? parsedUrl.searchParams.get('since') ?? 0;
+      const limit = parsedUrl.searchParams.get('limit') || 50;
+      const entityType = parsedUrl.searchParams.get('entityType') || null;
+      const includeSnapshot = parsedUrl.searchParams.get('includeSnapshot') === 'true' || Number(cursor) === 0;
+
+      const etag = `"timeline-${workspaceTimeline.headRevision}"`;
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+
+      const queryResult = workspaceTimeline.sync({ cursor: Number(cursor), limit: Number(limit), entityType });
+      const response = {
+        ok: true,
+        ...queryResult,
+        headRevision: workspaceTimeline.headRevision
+      };
+      if (includeSnapshot && !response.snapshot) {
+        response.snapshot = workspaceTimeline.getSnapshot();
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ETag: etag, 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify(response));
+    }
+    if (parsedUrl.pathname === '/api/diagnostics' && req.method === 'GET') {
+      diagnosticsCollector.updateTelemetry(phoneTelemetry);
+      diagnosticsCollector.setEventBacklog(taskRunner.list().filter(r => r.state === 'queued' || r.state === 'running').length);
+      return sendJson(res, 200, diagnosticsCollector.snapshot());
+    }
+    if (parsedUrl.pathname === '/api/ai/providers' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, providers: aiProviderManager.getProviders() });
+    }
+    if (parsedUrl.pathname === '/api/ai/settings' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, settings: aiProviderManager.getSettings() });
+    }
+    if (parsedUrl.pathname === '/api/ai/settings' && req.method === 'PATCH') {
+      try {
+        const patch = await readJson(req);
+        const updated = aiProviderManager.updateSettings(patch);
+        return sendJson(res, 200, { ok: true, settings: updated });
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: error.message });
+      }
+    }
+    const aiProbeMatch = parsedUrl.pathname.match(/^\/api\/ai\/providers\/([^/]+)\/probe$/);
+    if (aiProbeMatch && req.method === 'POST') {
+      const providerId = decodeURIComponent(aiProbeMatch[1]);
+      const probeResult = await aiProviderManager.probeProvider(providerId);
+      if (probeResult.ok) {
+        diagnosticsCollector.recordProviderLatency(providerId, probeResult.latencyMs);
+      }
+      return sendJson(res, probeResult.ok ? 200 : 400, probeResult);
     }
     if (parsedUrl.pathname === '/api/device/health' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, health: deviceHealthStore.snapshot() });

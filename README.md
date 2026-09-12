@@ -45,6 +45,11 @@
 - 工作台加载优化：摘要轮询保存 ETag，服务端返回 `304` 时浏览器跳过解析和 DOM 重绘；任务状态统计、筛选、详情、结果和最近审计按需展示。
 - Android 断线恢复：启动时恢复 workspace revision，事件 revision 出现间隙时只触发一次 snapshot，避免恢复阶段重复请求；Mote reminder strength 使用浮点值并作用于 Canvas 动画。
 - CI 依赖闭环：GitHub Actions 在 Node 测试前执行 `npm ci --prefix server` 并缓存 `server/package-lock.json`，保证干净 runner 能加载 WebSocket 依赖。
+- 统一时间线与状态投影：`GET /api/workspace/timeline` 统一输出 task、chat、attention、mote、health、autonomy 事件，支持 canonical `entity/createdAt`（兼容 `entityType/timestamp`）、monotonic revision、eventId 幂等、实体版本、游标分页、delta/snapshot 恢复与删除操作，支持 ETag/304；WebSocket 增量使用 `workspace.timeline`。
+- 可插拔 AI 提供方与本地离线回退：`GET /api/ai/providers`、`GET/PATCH /api/ai/settings`、`POST /api/ai/providers/:id/probe`；支持 Codex、OpenAI-compatible、Gemini-compatible 与本地离线规则引擎；显式 provider 已接入聊天路径，失败只回退本地，备用联网 provider 不自动调用；凭证与日志全面脱敏。
+- 诊断与性能策略：`GET /api/diagnostics` 导出启动耗时、同步延迟、事件积压、设备遥测（电量/内存/温度）、provider 延迟与降级计数；保留 30fps 前台目标与后台降频策略。
+- Web 控制台多视图与深链：增加收件箱/进行中/历史任务视图、任务与聊天上下文关联、Attention/通知深链数据属性、增量时间线与诊断摘要更新；304/无关事件跳过重绘。
+- Android 统一投影底座：新增 `WorkspaceTimeline.kt`（StateFlow 投影更新、任务卡片协议、深链协议、断线缓存间隙恢复、GPS 占位输入底座）与 `AiProvider.kt`（脱敏配置、离线本地回退解析器），保持既有 Canvas 渲染形态分支不变。
 
 ## 启动
 
@@ -89,10 +94,13 @@ F:\CodexApps\PhoneBridge\cloudflared.exe tunnel --url http://127.0.0.1:9503 --no
 - 工作区增量事件：`GET /api/workspace/events?since=REVISION`
 - Mote 行为：`GET /api/motes/behavior?taskState=running&deviceHealth=degraded`
 - 自治审批：`GET/POST /api/autonomy/approvals`、`POST /api/autonomy/approvals/:id/approve`、`POST /api/autonomy/approvals/:id/invoke`
-- Mote 关系/任务：`GET/POST /api/motes/relationship`、`GET /api/motes/quests`、`POST /api/motes/quests/:id/claim`
+- Mote 关系/任务：`GET/POST /api/motes/relationship`、`GET/POST /api/motes/quests`、`POST /api/motes/quests/:id/claim`
 - 模型对话：`POST /api/chat {"text":"你好"}`
 - 空闲断流：`POST /api/idle-timeout {"minutes":5}`，范围 1–120 分钟；空闲后会自动关闭摄像头和持续监听。
 - Web 指挥中心提供 1/3/5/10/30 分钟空闲断流选择器；手机离线时设备指令会被拒绝并记录日志。
+- 统一工作区时间线：`GET /api/workspace/timeline?cursor=REVISION&limit=50&includeSnapshot=true`；支持 ETag/304。
+- 诊断与运行指标：`GET /api/diagnostics`；提供启动耗时、同步延迟、积压计数、设备遥测、provider 延迟和降级计数。
+- 可插拔 AI 适配器与设置：`GET /api/ai/providers`、`GET /api/ai/settings`、`PATCH /api/ai/settings`、`POST /api/ai/providers/:id/probe`。
 
 App 的“节点”按钮可同时填写节点地址和访问令牌。令牌文件位于 `server/access.token`，请勿把公网地址和令牌一起公开。
 - 浏览器令牌失效时会重新提示输入；取消提示不会造成无限弹窗。WebSocket、API、画面和音频都校验同一个令牌。

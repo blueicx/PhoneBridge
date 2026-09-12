@@ -1,0 +1,248 @@
+{
+  "revision": 7,
+  "cursor": 7,
+  "headRevision": 7,
+  "hasMore": false,
+  "events": [
+    {
+      "eventId": "tl_evt_001",
+      "revision": 1,
+      "timestamp": "2026-09-12T10:00:00.000Z",
+      "entityType": "task",
+      "entityId": "task_fixture_1",
+      "entityVersion": 1,
+      "operation": "create",
+      "deleted": false,
+      "payload": {
+        "id": "task_fixture_1",
+        "title": "分析电量趋势",
+        "state": "pending",
+        "progress": 0,
+        "detail": "准备提取最近 24 小时电池与温度遥测数据",
+        "source": "conversation",
+        "relatedSessionId": "session_fixture_1",
+        "createdAt": "2026-09-12T10:00:00.000Z",
+        "updatedAt": "2026-09-12T10:00:00.000Z"
+      }
+    },
+    {
+      "eventId": "tl_evt_002",
+      "revision": 2,
+      "timestamp": "2026-09-12T10:01:00.000Z",
+      "entityType": "chat",
+      "entityId": "msg_fixture_1",
+      "entityVersion": 1,
+      "operation": "create",
+      "deleted": false,
+      "payload": {
+        "id": "msg_fixture_1",
+        "sessionId": "session_fixture_1",
+        "role": "user",
+        "text": "请帮我看看今天的电池耗电情况并生成报告",
+        "relatedTaskId": "task_fixture_1",
+        "createdAt": "2026-09-12T10:01:00.000Z"
+      }
+    },
+    {
+      "eventId": "tl_evt_003",
+      "revision": 3,
+      "timestamp": "2026-09-12T10:02:00.000Z",
+      "entityType": "task",
+      "entityId": "task_fixture_1",
+      "entityVersion": 2,
+      "operation": "update",
+      "deleted": false,
+      "payload": {
+        "id": "task_fixture_1",
+        "title": "分析电量趋势",
+        "state": "needs_confirmation",
+        "progress": 50,
+        "detail": "等待确认导出系统日志诊断文件",
+        "source": "conversation",
+        "relatedSessionId": "session_fixture_1",
+        "isPendingConfirmation": true,
+        "recentResult": "已初筛 120 条电池状态记录",
+        "updatedAt": "2026-09-12T10:02:00.000Z"
+      }
+    },
+    {
+      "eventId": "tl_evt_004",
+      "revision": 4,
+      "timestamp": "2026-09-12T10:02:30.000Z",
+      "entityType": "attention",
+      "entityId": "attn_fixture_1",
+      "entityVersion": 1,
+      "operation": "create",
+      "deleted": false,
+      "payload": {
+        "id": "attn_fixture_1",
+        "source": "task",
+        "severity": "high",
+        "status": "open",
+        "title": "任务待确认：导出诊断文件",
+        "summary": "任务「分析电量趋势」需要操作权限导出系统日志",
+        "relatedSessionId": "session_fixture_1",
+        "relatedTaskId": "task_fixture_1",
+        "dedupeKey": "task:task_fixture_1:confirm",
+        "deepLink": "phonebridge://task/task_fixture_1",
+        "createdAt": "2026-09-12T10:02:30.000Z",
+        "updatedAt": "2026-09-12T10:02:30.000Z"
+      }
+    },
+    {
+      "eventId": "tl_evt_005",
+      "revision": 5,
+      "timestamp": "2026-09-12T10:03:00.000Z",
+      "entityType": "mote",
+      "entityId": "mote_active",
+      "entityVersion": 1,
+      "operation": "update",
+      "deleted": false,
+      "payload": {
+        "profileId": "rimuru",
+        "name": "利姆鲁",
+        "active": true,
+        "level": 3,
+        "xp": 15,
+        "interactions": 8,
+        "mood": 85,
+        "gaze": "camera_track",
+        "reminderStrength": 0.8,
+        "updatedAt": "2026-09-12T10:03:00.000Z"
+      }
+    },
+    {
+      "eventId": "tl_evt_006",
+      "revision": 6,
+      "timestamp": "2026-09-12T10:03:30.000Z",
+      "entityType": "health",
+      "entityId": "device_health",
+      "entityVersion": 1,
+      "operation": "update",
+      "deleted": false,
+      "payload": {
+        "connected": true,
+        "battery": 78,
+        "memory": 52,
+        "temperature": 33.5,
+        "networkRx": 1048576,
+        "networkTx": 524288,
+        "sensors": {
+          "camera": false,
+          "audio": true
+        },
+        "updatedAt": "2026-09-12T10:03:30.000Z"
+      }
+    },
+    {
+      "eventId": "tl_evt_007",
+      "revision": 7,
+      "timestamp": "2026-09-12T10:04:00.000Z",
+      "entityType": "task",
+      "entityId": "task_temp_obsolete",
+      "entityVersion": 2,
+      "operation": "delete",
+      "deleted": true,
+      "payload": {
+        "id": "task_temp_obsolete",
+        "deleted": true,
+        "updatedAt": "2026-09-12T10:04:00.000Z"
+      }
+    }
+  ],
+  "snapshot": {
+    "revision": 7,
+    "tasks": [
+      {
+        "id": "task_fixture_1",
+        "title": "分析电量趋势",
+        "state": "needs_confirmation",
+        "progress": 50,
+        "detail": "等待确认导出系统日志诊断文件",
+        "source": "conversation",
+        "relatedSessionId": "session_fixture_1",
+        "isPendingConfirmation": true,
+        "recentResult": "已初筛 120 条电池状态记录",
+        "createdAt": "2026-09-12T10:00:00.000Z",
+        "updatedAt": "2026-09-12T10:02:00.000Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "msg_fixture_1",
+        "sessionId": "session_fixture_1",
+        "role": "user",
+        "text": "请帮我看看今天的电池耗电情况并生成报告",
+        "relatedTaskId": "task_fixture_1",
+        "createdAt": "2026-09-12T10:01:00.000Z"
+      }
+    ],
+    "attention": [
+      {
+        "id": "attn_fixture_1",
+        "source": "task",
+        "severity": "high",
+        "status": "open",
+        "title": "任务待确认：导出诊断文件",
+        "summary": "任务「分析电量趋势」需要操作权限导出系统日志",
+        "relatedSessionId": "session_fixture_1",
+        "relatedTaskId": "task_fixture_1",
+        "dedupeKey": "task:task_fixture_1:confirm",
+        "deepLink": "phonebridge://task/task_fixture_1",
+        "createdAt": "2026-09-12T10:02:30.000Z",
+        "updatedAt": "2026-09-12T10:02:30.000Z"
+      }
+    ],
+    "mote": {
+      "profileId": "rimuru",
+      "name": "利姆鲁",
+      "active": true,
+      "level": 3,
+      "xp": 15,
+      "interactions": 8,
+      "mood": 85,
+      "gaze": "camera_track",
+      "reminderStrength": 0.8,
+      "updatedAt": "2026-09-12T10:03:00.000Z"
+    },
+    "health": {
+      "connected": true,
+      "battery": 78,
+      "memory": 52,
+      "temperature": 33.5,
+      "networkRx": 1048576,
+      "networkTx": 524288,
+      "sensors": {
+        "camera": false,
+        "audio": true
+      },
+      "updatedAt": "2026-09-12T10:03:30.000Z"
+    },
+    "autonomy": {
+      "level": "whitelist",
+      "allowedTools": ["device.screen", "device.battery"],
+      "emergencyStop": false,
+      "pendingApprovals": 1,
+      "updatedAt": "2026-09-12T10:02:30.000Z"
+    }
+  },
+  "mockInput": {
+    "gps": {
+      "latitude": 31.2304,
+      "longitude": 121.4737,
+      "accuracy": 5.0,
+      "timestamp": 1757654400000,
+      "description": "Round 1 shared base placeholder only, no Round 2 GPS gameplay"
+    },
+    "network": {
+      "connected": true,
+      "type": "wifi",
+      "latencyMs": 15
+    },
+    "provider": {
+      "providerId": "local",
+      "model": "rule-v1",
+      "available": true
+    }
+  }
+}

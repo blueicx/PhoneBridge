@@ -243,6 +243,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var moteRelationship = MoteRelationshipSummary()
     private var moteStateJson = JSONObject()
     private var workspaceRevision: Long = 0L
+    private val timelineProjection = TimelineProjection()
     private val workspaceEventGate = WorkspaceEventGate()
     private var cockpitUsesOfflineMirror = false
     private var cockpitSummaryExpanded = false
@@ -3046,6 +3047,27 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         logAdapter.add("info", "正在应用模型：${modelLabels[index]}")
     }
 
+    private fun applyTimelineEvent(event: JSONObject) {
+        val createdAt = event.optString("createdAt").ifBlank { event.optString("timestamp") }
+        val timestamp = createdAt.toLongOrNull() ?: runCatching { Instant.parse(createdAt).toEpochMilli() }.getOrDefault(0L)
+        val payload = event.optJSONObject("payload")?.let { jsonObject ->
+            jsonObject.keys().asSequence().associateWith { key -> jsonObject.opt(key) }
+        } ?: emptyMap()
+        timelineProjection.applyEvent(
+            TimelineEvent(
+                eventId = event.optString("eventId"),
+                revision = event.optLong("revision", 0L),
+                timestamp = timestamp,
+                entityType = event.optString("entity").ifBlank { event.optString("entityType") },
+                entityId = event.optString("entityId"),
+                entityVersion = event.optInt("entityVersion", 1).coerceAtLeast(1),
+                operation = event.optString("operation", "update"),
+                payload = payload,
+                deleted = event.optBoolean("deleted", false)
+            )
+        )
+    }
+
     private fun handleServerJson(text: String) {
         runCatching {
             val json = JSONObject(text)
@@ -3087,6 +3109,15 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     json.optJSONObject("motes")?.let { handleMoteSnapshot(it) }
                     json.optJSONObject("workspace")?.let { workspace ->
                         runOnUiThread { applyWorkspaceSnapshot(workspace) }
+                        workspace.optJSONObject("timeline")?.let { timelineJson ->
+                            val model = TimelineParser.parse(
+                                JSONObject()
+                                    .put("revision", timelineJson.optLong("revision", 0L))
+                                    .put("snapshot", timelineJson)
+                                    .toString()
+                            )
+                            timelineProjection.applySnapshot(model.snapshot)
+                        }
                     }
                     val tasks = json.optJSONArray("tasks") ?: JSONArray()
                     val parsedTasks = LinkedHashMap<String, TaskItem>()
@@ -3247,9 +3278,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                         val event = events.optJSONObject(index) ?: continue
                         val eventRevision = event.optLong("revision", revision)
                         if (workspaceEventGate.accept(eventRevision, event.optString("eventId"))) {
-                            val payload = event.optJSONObject("payload") ?: JSONObject()
-                            payload.put("type", event.optString("type"))
-                            handleServerJson(payload.toString())
+                            if (event.optString("entity").isNotBlank() || event.optString("entityType").isNotBlank()) {
+                                applyTimelineEvent(event)
+                            } else {
+                                val payload = event.optJSONObject("payload") ?: JSONObject()
+                                payload.put("type", event.optString("type"))
+                                handleServerJson(payload.toString())
+                            }
                         }
                     }
                     if (workspaceEventGate.consumeGap()) {
@@ -3258,6 +3293,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                         workspaceRevision = workspaceEventGate.revision
                         getSharedPreferences("workspace_meta", Context.MODE_PRIVATE).edit().putLong("revision", workspaceRevision).apply()
                     }
+                }
+                "workspace.timeline" -> {
+                    val event = json.optJSONObject("event") ?: return@runCatching
+                    applyTimelineEvent(event)
                 }
                 "chat" -> {
                     val role = json.optString("role")
