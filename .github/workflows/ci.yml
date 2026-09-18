@@ -33,14 +33,12 @@ jobs:
       - name: Workspace performance budget
         shell: pwsh
         run: ./scripts/bench_workspace.ps1
-      - name: Make Gradle wrapper executable
-        run: chmod +x android/gradlew
       - name: Android unit tests
         working-directory: android
-        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+        run: bash ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
       - name: Android debug build
         working-directory: android
-        run: ./gradlew :app:assembleDebug --no-daemon --console=plain
+        run: bash ./gradlew :app:assembleDebug --no-daemon --console=plain
       - name: Diff whitespace
         run: git diff --check
       - name: Release worktree clean
