@@ -107,3 +107,14 @@ App 的“节点”按钮可同时填写节点地址和访问令牌。令牌文�
 - 最新画面：`GET /frame`
 - 对讲录音：`GET /audio`
 - 持续音频：`GET /live_audio`
+
+## 批次 A：可靠性与发布闭环
+
+- `server/runtime-persistence.js` 统一管理 schema v2、SHA-256 校验、旧裸 JSON 迁移、原子替换、有限备份和损坏文件隔离恢复。
+- Workspace、时间线、Mote、关系/任务和 provider 安全设置共享同一运行时持久化目录；provider 密钥和令牌不会写入持久化 payload。
+- 健康检查：`GET /health/live`、`GET /health/ready`，兼容 `/api/health/liveness` 与 `/api/health/readiness`；`/api/diagnostics` 增加持久化恢复指标。
+- 日志通过结构化 JSON 输出并对 token、密码、Authorization、Cookie 和密钥模式脱敏；访问令牌轮换接口只返回轮换结果，不返回新令牌。
+- 备份/恢复：`scripts/backup_runtime.ps1`、`scripts/restore_runtime.ps1`；备份只包含可恢复状态文件，排除 token、日志、画面和构建产物。
+- CI 现在覆盖 Node、协议回归、性能预算、敏感扫描、Android 单测/Debug 构建、差异检查和干净工作树检查。
+
+批次 A 的设计、迁移和回滚说明见 [`docs/superpowers/phonebridge-batch-a.md`](docs/superpowers/phonebridge-batch-a.md)。真实手机、AR、PTT 和持续运行验收仍需设备恢复后单独进行。

@@ -11,6 +11,9 @@ const { RevisionSnapshotCache, BroadcastCoalescer } = require('./workspace-perfo
 const { WorkspaceTimeline } = require('./workspace-timeline');
 const { AiProviderManager } = require('./ai-provider');
 const { DiagnosticsCollector } = require('./diagnostics');
+const { RuntimePersistence } = require('./runtime-persistence');
+const { HealthChecks } = require('./health');
+const { createStructuredLogger } = require('./structured-log');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -62,6 +65,11 @@ const STATE_FILE = path.join(RUNTIME_DIR, 'runtime-state.json');
 const HANDOFF_FILE = path.join(RUNTIME_DIR, 'handoff.json');
 const LOCK_FILE = process.env.PHONEBRIDGE_LOCK_FILE || path.join(RUNTIME_DIR, 'node.lock');
 let handoffState = null;
+const runtimePersistence = new RuntimePersistence({
+  dir: RUNTIME_DIR,
+  onRecovery: event => console.warn(JSON.stringify({ event: 'runtime.recovered', ...event }))
+});
+const structuredLogger = createStructuredLogger({ sink: line => console.log(line), context: { component: 'phonebridge' } });
 
 function acquireSingletonLock() {
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -151,8 +159,7 @@ function newerHandoff(local, remote) {
 
 function loadPersistentState() {
   try {
-    if (!fs.existsSync(STATE_FILE)) return;
-    const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    const state = runtimePersistence.load('runtime-state', {});
     frameCount = Number(state.frameCount) || 0;
     audioCount = Number(state.audioCount) || 0;
     streamChunkCount = Number(state.streamChunkCount) || 0;
@@ -193,20 +200,11 @@ function savePersistentState() {
     logs: publicLogs(300),
     chatHistory: chatHistory.slice(-200)
   };
-  const temp = `${STATE_FILE}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(temp, JSON.stringify(payload));
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        fs.renameSync(temp, STATE_FILE);
-        return;
-      } catch (error) {
-        if (attempt === 2 || !['EPERM', 'EACCES', 'ENOENT'].includes(error.code)) throw error;
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, true, (attempt + 1) * 20);
-      }
-    }
-  } finally {
-    try { fs.unlinkSync(temp); } catch (_) {}
+    runtimePersistence.save('runtime-state', payload);
+  } catch (error) {
+    structuredLogger.error('runtime.persist_failed', { error: error.message });
+    throw error;
   }
 }
 
@@ -218,10 +216,14 @@ function loadAccessToken() {
   const tokenFile = path.join(__dirname, 'access.token');
   try {
     const existing = fs.readFileSync(tokenFile, 'utf8').trim();
-    if (existing.length >= 24) return existing;
+    if (existing.length >= 24) {
+      try { fs.chmodSync(tokenFile, 0o600); } catch (_) {}
+      return existing;
+    }
   } catch (_) {}
   const generated = crypto.randomBytes(24).toString('hex');
   fs.writeFileSync(tokenFile, `${generated}\n`, { mode: 0o600 });
+  try { fs.chmodSync(tokenFile, 0o600); } catch (_) {}
   return generated;
 }
 
@@ -230,6 +232,7 @@ function rotateAccessToken() {
   const rotated = crypto.randomBytes(24).toString('hex');
   if (process.env.PHONEBRIDGE_TOKEN) throw new Error('环境变量令牌不能在运行时轮换');
   fs.writeFileSync(tokenFile, `${rotated}\n`, { mode: 0o600 });
+  try { fs.chmodSync(tokenFile, 0o600); } catch (_) {}
   ACCESS_TOKEN = rotated;
   return rotated;
 }
@@ -238,17 +241,19 @@ let ACCESS_TOKEN = loadAccessToken();
 const workspaceStore = new WorkspaceStore({
   journalPath: path.join(RUNTIME_DIR, 'workspace-events.jsonl'),
   snapshotPath: path.join(RUNTIME_DIR, 'workspace-state.json'),
+  persistence: runtimePersistence,
   persistDebounceMs: 250,
 });
 process.on('exit', () => workspaceStore.persistenceScheduler?.flushNow());
-const moteStore = new MoteStore({ snapshotPath: path.join(RUNTIME_DIR, 'mote-state.json') });
-const moteRelationshipStore = new MoteRelationshipStore({ snapshotPath: path.join(RUNTIME_DIR, 'mote-relationship.json') });
+const moteStore = new MoteStore({ snapshotPath: path.join(RUNTIME_DIR, 'mote-state.json'), persistence: runtimePersistence });
+const moteRelationshipStore = new MoteRelationshipStore({ snapshotPath: path.join(RUNTIME_DIR, 'mote-relationship.json'), persistence: runtimePersistence });
 const moteQuestStore = new MoteQuestStore({
   quests: [
     { id: 'daily-observer', title: '完成一次观察', reward: 5 },
     { id: 'task-companion', title: '完成一次任务', reward: 10 },
   ],
   snapshotPath: path.join(RUNTIME_DIR, 'mote-quests.json'),
+  persistence: runtimePersistence,
 });
 const deviceHealthStore = new DeviceHealthStore({
   bridge: 'disconnected',
@@ -258,8 +263,9 @@ const deviceHealthStore = new DeviceHealthStore({
   authorization: 'unknown',
   outbox: 'online',
 });
-const workspaceTimeline = new WorkspaceTimeline({ retention: 500 });
+const workspaceTimeline = new WorkspaceTimeline({ retention: 500, persistence: runtimePersistence });
 const aiProviderManager = new AiProviderManager({
+  persistence: runtimePersistence,
   adapters: {
     codex: {
       chat: async ({ prompt, memories, options }) => rawChatWithModel(prompt, memories, options),
@@ -268,6 +274,11 @@ const aiProviderManager = new AiProviderManager({
   }
 });
 const diagnosticsCollector = new DiagnosticsCollector({ startTime: startedAt });
+const healthChecks = new HealthChecks({
+  persistence: () => ({ ok: true, recovered: Boolean(runtimePersistence.lastRecovery) }),
+  workspace: () => ({ ok: Boolean(workspaceStore) }),
+  token: () => ({ ok: Boolean(ACCESS_TOKEN) }),
+});
 const proactiveState = {
   paused: false,
   quietStart: 23,
@@ -447,7 +458,7 @@ function addLog(level, message) {
   const item = { time: nowTime(), level, message };
   logs.push(item);
   if (logs.length > 300) logs.splice(0, logs.length - 300);
-  console.log(`[${level}] ${message}`);
+  structuredLogger.write(level, 'runtime.log', { message });
   broadcast({ type: 'log', ...item });
 }
 
@@ -1520,6 +1531,13 @@ const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, 'http://localhost');
 
   try {
+    if (req.method === 'GET' && ['/health/live', '/api/health/liveness'].includes(parsedUrl.pathname)) {
+      return sendJson(res, 200, healthChecks.liveness());
+    }
+    if (req.method === 'GET' && ['/health/ready', '/api/health/readiness'].includes(parsedUrl.pathname)) {
+      const readiness = healthChecks.readiness();
+      return sendJson(res, readiness.ok ? 200 : 503, readiness);
+    }
     if (parsedUrl.pathname === '/login' && req.method === 'POST') {
       const body = await readBody(req);
       const payload = JSON.parse(body || '{}');
@@ -1581,7 +1599,7 @@ const server = http.createServer(async (req, res) => {
     if (parsedUrl.pathname === '/api/diagnostics' && req.method === 'GET') {
       diagnosticsCollector.updateTelemetry(phoneTelemetry);
       diagnosticsCollector.setEventBacklog(taskRunner.list().filter(r => r.state === 'queued' || r.state === 'running').length);
-      return sendJson(res, 200, diagnosticsCollector.snapshot());
+      return sendJson(res, 200, { ...diagnosticsCollector.snapshot(), persistence: runtimePersistence.snapshot() });
     }
     if (parsedUrl.pathname === '/api/ai/providers' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, providers: aiProviderManager.getProviders() });
@@ -1705,9 +1723,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/auth/rotate' && req.method === 'POST') {
       try {
-        const token = rotateAccessToken();
+        rotateAccessToken();
         addLog('warn', '节点访问令牌已轮换，旧令牌立即失效');
-        return sendJson(res, 200, { ok: true, token });
+        return sendJson(res, 200, { ok: true, rotated: true });
       } catch (error) {
         return sendJson(res, 409, { ok: false, error: error.message });
       }

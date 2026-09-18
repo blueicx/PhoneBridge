@@ -2,17 +2,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 class MoteRelationshipStore {
-  constructor({ now = () => Date.now(), snapshotPath = null } = {}) {
+  constructor({ now = () => Date.now(), snapshotPath = null, persistence = null } = {}) {
     this.now = now;
     this.snapshotPath = snapshotPath;
+    this.persistence = persistence;
     this.state = { version: 1, level: 1, xp: 0, interactions: 0, seenEventIds: [] };
     this._load();
   }
   _load() {
-    if (!this.snapshotPath) return;
-    try { this.state = { ...this.state, ...JSON.parse(fs.readFileSync(this.snapshotPath, 'utf8')) }; } catch (error) { if (error.code !== 'ENOENT') this.loadError = error; }
+    if (!this.snapshotPath && !this.persistence) return;
+    try {
+      const value = this.persistence ? this.persistence.load('mote-relationship', {}) : JSON.parse(fs.readFileSync(this.snapshotPath, 'utf8'));
+      this.state = { ...this.state, ...value };
+    } catch (error) { if (error.code !== 'ENOENT') this.loadError = error; }
   }
   _save() {
+    if (this.persistence) { this.persistence.save('mote-relationship', this.state); return; }
     if (!this.snapshotPath) return;
     fs.mkdirSync(path.dirname(this.snapshotPath), { recursive: true });
     const temp = `${this.snapshotPath}.tmp`;
@@ -36,21 +41,23 @@ class MoteRelationshipStore {
 }
 
 class MoteQuestStore {
-  constructor({ quests = [], now = () => Date.now(), snapshotPath = null } = {}) {
+  constructor({ quests = [], now = () => Date.now(), snapshotPath = null, persistence = null } = {}) {
     this.quests = quests.map(q => ({ ...q }));
     this.now = now;
     this.snapshotPath = snapshotPath;
+    this.persistence = persistence;
     this.claimed = new Map();
     this._load();
   }
   _load() {
-    if (!this.snapshotPath) return;
+    if (!this.snapshotPath && !this.persistence) return;
     try {
-      const data = JSON.parse(fs.readFileSync(this.snapshotPath, 'utf8'));
+      const data = this.persistence ? this.persistence.load('mote-quests', {}) : JSON.parse(fs.readFileSync(this.snapshotPath, 'utf8'));
       for (const item of data.claimed || []) if (item?.eventId && item?.questId) this.claimed.set(String(item.eventId), String(item.questId));
     } catch (error) { if (error.code !== 'ENOENT') this.loadError = error; }
   }
   _save() {
+    if (this.persistence) { this.persistence.save('mote-quests', this.snapshot()); return; }
     if (!this.snapshotPath) return;
     fs.mkdirSync(path.dirname(this.snapshotPath), { recursive: true });
     const temp = `${this.snapshotPath}.tmp`;

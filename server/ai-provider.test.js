@@ -1,10 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
   AiProviderManager,
   sanitizeProviderConfig,
   redactSecret
 } = require('./ai-provider');
+const { RuntimePersistence } = require('./runtime-persistence');
 
 const fakeOpenAiKey = ['sk', '-1234567890abcdef'].join('');
 const fakeGeminiKey = ['AIza', 'SySecretGeminiKey123'].join('');
@@ -49,6 +53,18 @@ test('AiProviderManager registers default providers and redacts in getProviders(
   const openai = providers.find(p => p.id === 'openai');
   assert.ok(openai.apiKey.includes('***'));
   assert.notEqual(openai.apiKey, ['sk', '-1234567890123456'].join(''));
+});
+
+test('AiProviderManager persists safe settings without provider secrets', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phonebridge-provider-'));
+  const persistence = new RuntimePersistence({ dir });
+  const first = new AiProviderManager({ persistence, configs: { openai: { apiKey: 'sk-runtime-secret', model: 'gpt-test' } } });
+  first.updateSettings({ activeProviderId: 'local', timeoutMs: 5000 });
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'provider-settings.json'), 'utf8'));
+  assert.doesNotMatch(JSON.stringify(saved), /sk-runtime-secret/);
+  const restored = new AiProviderManager({ persistence });
+  assert.equal(restored.getSettings().activeProviderId, 'local');
+  assert.equal(restored.getSettings().timeoutMs, 5000);
 });
 
 test('PATCH / settings preserves existing apiKey when receiving redacted placeholder', () => {

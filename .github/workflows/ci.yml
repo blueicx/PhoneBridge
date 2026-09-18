@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: server/package-lock.json
       - name: Install server dependencies
@@ -24,6 +24,12 @@ jobs:
       - name: Node tests
         shell: bash
         run: node --test $(find server -name '*.test.js' -print)
+      - name: Secret scan
+        shell: pwsh
+        run: ./scripts/scan_secrets.ps1
+      - name: Protocol compatibility
+        shell: bash
+        run: node --test server/workspace-timeline.test.js server/workspace-api.test.js
       - name: Workspace performance budget
         shell: pwsh
         run: ./scripts/bench_workspace.ps1
@@ -37,3 +43,6 @@ jobs:
         run: ./gradlew :app:assembleDebug --no-daemon --console=plain
       - name: Diff whitespace
         run: git diff --check
+      - name: Release worktree clean
+        shell: bash
+        run: test -z "$(git status --porcelain)"

@@ -174,3 +174,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
      ```powershell
      & 'C:\Users\blueice\AppData\Local\Android\Sdk\platform-tools\adb.exe' -P 5038 -s QV7017NH1F shell svc power stayon false
      ```
+
+## 11. 批次 A：可靠性与发布闭环（2026-09-18）
+
+- `server/runtime-persistence.js` 提供 schema v2、旧裸 JSON 迁移、SHA-256 快照校验、原子写入、有限 `.bak.N` 备份、损坏快照隔离和最近备份恢复。
+- `WorkspaceStore`、`WorkspaceTimeline`、Mote 主状态、关系/任务状态和 provider 非敏感设置接入同一持久化管理器；API key、token、Cookie、密码和 Authorization 不进入状态文件。
+- 新增 `server/health.js` 和 `/health/live`、`/health/ready`（同时提供 `/api/health/liveness`、`/api/health/readiness`）；诊断输出包含 schema/recovery 统计。
+- 新增 `server/structured-log.js`，运行日志以 JSON 记录并做敏感值脱敏；`/api/auth/rotate` 不再在 HTTP 响应中回传新令牌，令牌文件启动/轮换时强制尝试 `0600` 权限。
+- 新增 `scripts/backup_runtime.ps1`、`scripts/restore_runtime.ps1`、`scripts/scan_secrets.ps1`；备份排除令牌、日志、画面、APK 和临时运行文件。
+- CI 增加协议回归、性能预算、敏感扫描、Android Debug 构建和干净工作树检查，Node runner 更新为 22。
+- 独立验证：Node `74/74` 通过；性能基准 `elapsedMs=1.173`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；备份/恢复脚本在临时目录验证通过；`git diff --check` 和敏感扫描通过。
+- 本轮仍未连接实体机，未运行 ADB、安装 APK、AR、PTT、现实线索点击或长时间温度/电量回归。
+
+### 批次 A 后续收尾
+
+1. 在当前分支运行 Android `:app:testDebugUnitTest` 与 `:app:assembleDebug`。
+2. 审查并提交批次 A，推送 `feature/integrated-enhancement`，再核对 GitHub Actions 结果。
+3. 只有批次 A 远端验证完成后，才进入批次 B；不修改 `main`。

@@ -1,0 +1,19 @@
+{
+  "name": "PhoneBridge",
+  "batch": "A",
+  "branch": "feature/integrated-enhancement",
+  "runtimeSchemaVersion": 2,
+  "artifacts": [
+    "server/runtime-persistence.js",
+    "server/health.js",
+    "server/structured-log.js",
+    "scripts/backup_runtime.ps1",
+    "scripts/restore_runtime.ps1",
+    "scripts/scan_secrets.ps1",
+    ".github/workflows/ci.yml",
+    "docs/superpowers/phonebridge-batch-a.md"
+  ],
+  "deviceQa": "deferred",
+  "secretsIncluded": false,
+  "rollback": "docs/superpowers/phonebridge-batch-a.md#回滚"
+}

@@ -136,10 +136,11 @@ function validateArgumentSchema(args, schema = {}) {
 }
 
 class WorkspaceStore {
-  constructor({ now = () => Date.now(), journalPath = null, snapshotPath = null, eventRetention = 500, persistDebounceMs = 0 } = {}) {
+  constructor({ now = () => Date.now(), journalPath = null, snapshotPath = null, persistence = null, eventRetention = 500, persistDebounceMs = 0 } = {}) {
     this.now = now;
     this.journalPath = journalPath;
     this.snapshotPath = snapshotPath;
+    this.persistence = persistence;
     this.sessions = new Map();
     this.tools = new Map();
     this.tasks = new Map();
@@ -165,9 +166,11 @@ class WorkspaceStore {
   }
 
   _loadSnapshot() {
-    if (!this.snapshotPath) return;
+    if (!this.snapshotPath && !this.persistence) return;
     try {
-      const data = JSON.parse(fs.readFileSync(this.snapshotPath, 'utf8'));
+      const data = this.persistence
+        ? this.persistence.load('workspace-state', {})
+        : JSON.parse(fs.readFileSync(this.snapshotPath, 'utf8'));
       for (const session of data.sessions || []) this.sessions.set(session.id, session);
       for (const task of data.tasks || []) this.tasks.set(task.id, task);
       for (const automation of data.automations || []) this.automations.set(automation.id, automation);
@@ -200,11 +203,8 @@ class WorkspaceStore {
   }
 
   _persistNow() {
-    if (!this.snapshotPath) return;
-    const directory = path.dirname(this.snapshotPath);
-    fs.mkdirSync(directory, { recursive: true });
-    const temporary = `${this.snapshotPath}.tmp`;
-    fs.writeFileSync(temporary, JSON.stringify({
+    if (!this.snapshotPath && !this.persistence) return;
+    const payload = {
       sessions: [...this.sessions.values()],
       tasks: [...this.tasks.values()],
       automations: [...this.automations.values()],
@@ -221,7 +221,15 @@ class WorkspaceStore {
       eventRevision: this.eventRevision,
       approvals: [...this.approvals.values()],
       emergency: this.emergency,
-    }, null, 2));
+    };
+    if (this.persistence) {
+      this.persistence.save('workspace-state', payload);
+      return;
+    }
+    const directory = path.dirname(this.snapshotPath);
+    fs.mkdirSync(directory, { recursive: true });
+    const temporary = `${this.snapshotPath}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(payload, null, 2));
     fs.renameSync(temporary, this.snapshotPath);
   }
 

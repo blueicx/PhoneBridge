@@ -1,8 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { WorkspaceTimeline } = require('./workspace-timeline');
+const { RuntimePersistence } = require('./runtime-persistence');
 
 test('protocol fixture workspace-timeline.json conforms to unified timeline schema', () => {
   const fixturePath = path.join(__dirname, '..', 'protocol-fixtures', 'workspace-timeline.json');
@@ -178,4 +180,16 @@ test('WorkspaceTimeline keeps canonical protocol aliases and deduplicates repeat
   assert.equal(first.createdAt, '2026-09-12T10:00:00.000Z');
   assert.equal(first.entityType, first.entity);
   assert.equal(first.timestamp, first.createdAt);
+});
+
+test('WorkspaceTimeline restores events and projections through runtime persistence', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phonebridge-timeline-'));
+  const persistence = new RuntimePersistence({ dir });
+  const first = new WorkspaceTimeline({ persistence });
+  first.recordEvent({ eventId: 'persisted-event', entityType: 'task', entityId: 't1', operation: 'create', payload: { id: 't1', state: 'pending' } });
+
+  const restored = new WorkspaceTimeline({ persistence });
+  assert.equal(restored.headRevision, 1);
+  assert.equal(restored.query({}).events[0].eventId, 'persisted-event');
+  assert.equal(restored.getSnapshot().tasks[0].id, 't1');
 });

@@ -66,20 +66,28 @@ function normalizeMoteState(value) {
 }
 
 class MoteStore {
-  constructor({ now = () => Date.now(), snapshotPath = null } = {}) {
+  constructor({ now = () => Date.now(), snapshotPath = null, persistence = null } = {}) {
     this.now = now;
     this.snapshotPath = snapshotPath;
+    this.persistence = persistence;
     this.state = createMoteState();
     this._load();
   }
 
   _load() {
-    if (!this.snapshotPath) return;
-    try { this.state = normalizeMoteState(JSON.parse(fs.readFileSync(this.snapshotPath, 'utf8'))); } catch (error) { if (error.code !== 'ENOENT') this.loadError = error; }
+    if (!this.snapshotPath && !this.persistence) return;
+    try {
+      const value = this.persistence ? this.persistence.load('mote-state', {}) : JSON.parse(fs.readFileSync(this.snapshotPath, 'utf8'));
+      this.state = normalizeMoteState(value);
+    } catch (error) { if (error.code !== 'ENOENT') this.loadError = error; }
   }
 
   _save() {
     this.state.updatedAt = new Date(this.now()).toISOString();
+    if (this.persistence) {
+      this.persistence.save('mote-state', this.state);
+      return;
+    }
     if (!this.snapshotPath) return;
     fs.mkdirSync(path.dirname(this.snapshotPath), { recursive: true });
     const temporary = `${this.snapshotPath}.tmp`;

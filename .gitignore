@@ -9,6 +9,15 @@ server/access.token
 
 # Runtime state, logs and local service artifacts
 server/runtime-state*.json
+server/workspace-state*.json
+server/workspace-events*.jsonl
+server/workspace-timeline*.json
+server/mote-state*.json
+server/mote-relationship*.json
+server/mote-quests*.json
+server/provider-settings*.json
+server/*.json.bak.*
+server/*.json.corrupt-*
 server/handoff.json
 server/node.lock
 server/*.log
@@ -16,6 +25,7 @@ server/*.out.log
 server/*.err.log
 server/*.bak
 server/backups/
+runtime-backups/
 server/frames/
 server/screenshots/
 watchdog.log

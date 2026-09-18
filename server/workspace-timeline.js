@@ -9,9 +9,10 @@ function clone(value) {
 }
 
 class WorkspaceTimeline {
-  constructor({ retention = 500, now = () => Date.now() } = {}) {
+  constructor({ retention = 500, now = () => Date.now(), persistence = null } = {}) {
     this.retention = Math.max(1, Number(retention) || 500);
     this.now = now;
+    this.persistence = persistence;
     this.headRevision = 0;
     this.events = [];
     this.eventsById = new Map();
@@ -52,6 +53,26 @@ class WorkspaceTimeline {
         updatedAt: iso(this.now())
       }
     };
+    this._load();
+  }
+
+  _load() {
+    if (!this.persistence) return;
+    const saved = this.persistence.load('workspace-timeline', {});
+    this.headRevision = Math.max(0, Number(saved.headRevision) || 0);
+    this.entityVersions = new Map(Array.isArray(saved.entityVersions) ? saved.entityVersions : []);
+    this.events = Array.isArray(saved.events) ? saved.events.slice(-this.retention) : [];
+    this.eventsById = new Map(this.events.filter(event => event?.eventId).map(event => [event.eventId, event]));
+    for (const event of this.events) this._applyToProjection(event);
+  }
+
+  _persist() {
+    if (!this.persistence) return;
+    this.persistence.save('workspace-timeline', {
+      headRevision: this.headRevision,
+      entityVersions: [...this.entityVersions.entries()],
+      events: this.events,
+    });
   }
 
   _entityKey(entityType, entityId) {
@@ -108,6 +129,7 @@ class WorkspaceTimeline {
     }
 
     this._applyToProjection(envelope);
+    this._persist();
     return clone(envelope);
   }
 

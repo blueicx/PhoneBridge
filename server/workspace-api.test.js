@@ -73,6 +73,13 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.equal(health.body.ok, true);
     assert.equal(typeof health.body.health.overall, 'string');
 
+    const liveness = await fetch(`${BASE}/health/live`);
+    assert.equal(liveness.status, 200);
+    assert.deepEqual(await liveness.json(), { ok: true, status: 'alive' });
+    const readiness = await fetch(`${BASE}/health/ready`);
+    assert.equal(readiness.status, 200);
+    assert.equal((await readiness.json()).status, 'ready');
+
     const page = await fetch(`${BASE}/`, { headers: { 'x-phonebridge-token': TOKEN } });
     const html = await page.text();
     assert.match(html, /If-None-Match/);

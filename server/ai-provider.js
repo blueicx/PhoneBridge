@@ -155,7 +155,8 @@ class AiProviderManager {
     adapters = {},
     fetchImpl = globalThis.fetch,
     enableNetworkAdapters = true,
-    now = () => Date.now()
+    now = () => Date.now(),
+    persistence = null
   } = {}) {
     this.activeProviderId = activeProviderId;
     this.fallbackToLocal = true;
@@ -166,6 +167,7 @@ class AiProviderManager {
     this.lastProbedAt = null;
     this.now = now;
     this.fetchImpl = fetchImpl;
+    this.persistence = persistence;
 
     // Real raw configs
     this.configs = {
@@ -223,6 +225,36 @@ class AiProviderManager {
       } : {}),
       ...adapters
     };
+    this._loadPersistedSettings();
+  }
+
+  _loadPersistedSettings() {
+    if (!this.persistence) return;
+    const saved = this.persistence.load('provider-settings', {});
+    if (saved.activeProviderId && this.configs[saved.activeProviderId]) this.activeProviderId = saved.activeProviderId;
+    if (saved.timeoutMs !== undefined) this.timeoutMs = Math.max(1000, Math.min(120000, Number(saved.timeoutMs) || 15000));
+    if (saved.fallbackToLocal !== undefined) this.fallbackToLocal = Boolean(saved.fallbackToLocal);
+    if (saved.localRulesEnabled !== undefined) this.localRulesEnabled = Boolean(saved.localRulesEnabled);
+    for (const [id, incoming] of Object.entries(saved.providers || {})) {
+      if (!this.configs[id]) continue;
+      this.configs[id] = { ...this.configs[id], ...incoming };
+    }
+  }
+
+  _persistSettings() {
+    if (!this.persistence) return;
+    const providers = {};
+    for (const [id, config] of Object.entries(this.configs)) {
+      const { apiKey, headers, ...safe } = config;
+      providers[id] = { ...safe };
+    }
+    this.persistence.save('provider-settings', {
+      activeProviderId: this.activeProviderId,
+      fallbackToLocal: this.fallbackToLocal,
+      timeoutMs: this.timeoutMs,
+      localRulesEnabled: this.localRulesEnabled,
+      providers,
+    });
   }
 
   getProviders() {
@@ -278,6 +310,7 @@ class AiProviderManager {
       }
     }
 
+    this._persistSettings();
     return this.getSettings();
   }
 
