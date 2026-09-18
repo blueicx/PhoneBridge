@@ -355,6 +355,9 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.equal(typeof workspace.body.eventRevision, 'number');
   } finally {
     child.kill();
+    if (child.exitCode === null) {
+      await new Promise(resolve => child.once('exit', resolve));
+    }
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
 });
