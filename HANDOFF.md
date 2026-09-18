@@ -186,8 +186,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 独立验证：Node `74/74` 通过；性能基准 `elapsedMs=1.173`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；备份/恢复脚本在临时目录验证通过；`git diff --check` 和敏感扫描通过。
 - 本轮仍未连接实体机，未运行 ADB、安装 APK、AR、PTT、现实线索点击或长时间温度/电量回归。
 
+- 收口提交：`36bed8b`（批次 A 实现）、`5fe5688`（Linux 子进程退出后的临时目录清理）、`0bab242`（CI 不再改变 `gradlew` 文件模式）。远端 `feature/integrated-enhancement` 已与 `0bab242235090eb23bd389bd1b8de477494b03b3` 一致。
+- GitHub Actions run `35348080142` 已成功，Node、协议、性能、敏感扫描、Android 单测、Debug 构建、差异检查和干净工作树均通过；只有 GitHub 关于 actions 使用 Node 20 的弃用提示。
+- 当前工作树干净，`main` 未修改；Antigravity 编排接口仍遗留 `executing/acceptance` 状态，但实际文件审查、修复、测试、提交和远端验收已由 Codex 完成。
+
 ### 批次 A 后续收尾
 
-1. 在当前分支运行 Android `:app:testDebugUnitTest` 与 `:app:assembleDebug`。
-2. 审查并提交批次 A，推送 `feature/integrated-enhancement`，再核对 GitHub Actions 结果。
-3. 只有批次 A 远端验证完成后，才进入批次 B；不修改 `main`。
+1. 手机恢复后，按计划补做三类现实线索、文本聊天、PTT、通知、小组件、断线恢复、长时间运行、温度和电量检查。
+2. 批次 B 开始前重新展示计划并等待确认；不修改 `main`。
