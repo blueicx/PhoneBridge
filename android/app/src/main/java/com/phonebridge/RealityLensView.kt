@@ -80,6 +80,9 @@ class RealityLensView @JvmOverloads constructor(
     private var isTracking = false
     private val rotationMatrix = FloatArray(9)
     private val orientationAngles = FloatArray(3)
+    private val canvasAnchorProvider = CanvasSensorAnchorProvider()
+    private val arCoreAnchorProvider = ArCoreAnchorProvider(available = false)
+    private val anchorSelector = RealityAnchorSelector(arCoreAnchorProvider, canvasAnchorProvider)
 
     // Orientation tracking & calibration
     private var calibrated = false
@@ -103,6 +106,8 @@ class RealityLensView @JvmOverloads constructor(
     private var petJoyTimer = 0f     // 0f..1f spawns hearts & sparkles
     private var petSpeechBubble: String? = null
     private var petSpeechTimer = 0f
+    private var frameFps = 30f
+    private var frameTemperatureCelsius = 25f
 
     // Runtime rendered coordinates: id -> Triple(cx, cy, inView)
     private val renderedPositions = mutableMapOf<String, Triple<Float, Float, Boolean>>()
@@ -169,6 +174,11 @@ class RealityLensView @JvmOverloads constructor(
     fun setBehaviorHint(hint: MoteBehaviorOutput) {
         behaviorHint = hint
         invalidate()
+    }
+
+    fun setPerformanceState(fps: Float, temperatureCelsius: Float) {
+        frameFps = fps.coerceIn(0f, 120f)
+        frameTemperatureCelsius = temperatureCelsius.coerceIn(-20f, 100f)
     }
 
     fun setDiscovered(ids: Collection<String>) {
@@ -254,13 +264,31 @@ class RealityLensView @JvmOverloads constructor(
         return (from + diff * weight + 360f) % 360f
     }
 
+    private fun anchorFrame(targetBearing: Float, targetPitch: Float, distanceBand: String): RealityFrame = RealityFrame(
+        timestampMs = System.currentTimeMillis(),
+        bearingDegrees = if (calibrated) currentAzimuth - baseAzimuth else 0f,
+        pitchDegrees = if (calibrated) currentPitch - basePitch else 0f,
+        rollDegrees = 0f,
+        targetBearingDegrees = targetBearing,
+        distanceBand = distanceBand,
+        width = width,
+        height = height,
+        fps = fpsEstimate,
+        temperatureCelsius = temperatureCelsius,
+        targetPitchDegrees = targetPitch,
+    )
+
+    private val fpsEstimate: Float
+        get() = frameFps
+
+    private val temperatureCelsius: Float
+        get() = frameTemperatureCelsius
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val elapsed = System.currentTimeMillis() - startedAt
         val seconds = elapsed / 1000f
         val pulse = (elapsed % 1600L) / 1600f
-        val fovH = 62f
-        val fovV = 78f
         val margin = min(width, height) * 0.08f
 
         // Advance interactive animations
@@ -284,20 +312,16 @@ class RealityLensView @JvmOverloads constructor(
             val inView: Boolean
 
             if (calibrated) {
+                val pose = anchorSelector.update(anchorFrame(node.azimuthDeg, node.pitchDeg, "mid"))
                 val deltaAzimuth = ((node.azimuthDeg - (currentAzimuth - baseAzimuth) + 540f) % 360f) - 180f
-                val deltaPitch = node.pitchDeg - (currentPitch - basePitch)
-
-                val projX = width * 0.5f + (deltaAzimuth / (fovH * 0.5f)) * (width * 0.5f)
-                val projY = height * 0.5f - (deltaPitch / (fovV * 0.5f)) * (height * 0.5f)
-
-                inView = abs(deltaAzimuth) <= fovH * 0.5f && abs(deltaPitch) <= fovV * 0.5f
+                inView = pose.visible
 
                 if (inView) {
-                    cx = projX
-                    cy = projY
+                    cx = pose.x
+                    cy = pose.y
                     drawInViewNode(canvas, node, cx, cy, pulse)
                 } else {
-                    val angle = atan2(projY - height * 0.5f, projX - width * 0.5f)
+                    val angle = atan2(pose.y - height * 0.5f, pose.x - width * 0.5f)
                     val edgeX = width * 0.5f + cos(angle) * (width * 0.5f - margin)
                     val edgeY = height * 0.5f + sin(angle) * (height * 0.5f - margin)
                     cx = edgeX
@@ -316,7 +340,7 @@ class RealityLensView @JvmOverloads constructor(
         }
 
         // 2. Render Pokemon-GO Style 3D Living Companion Model Anchored in Real Space
-        renderLivingCompanionModel(canvas, seconds, pulse, fovH, fovV, margin)
+        renderLivingCompanionModel(canvas, seconds, pulse, margin)
 
         postInvalidateDelayed(32)
     }
@@ -326,8 +350,7 @@ class RealityLensView @JvmOverloads constructor(
      * (standing on the floor/desk in front of the player).
      */
     private fun renderLivingCompanionModel(
-        canvas: Canvas, seconds: Float, pulse: Float,
-        fovH: Float, fovV: Float, margin: Float
+        canvas: Canvas, seconds: Float, pulse: Float, margin: Float
     ) {
         val moteBaseRadius = min(width, height) * 0.135f
         val breath = sin(seconds * 2.2f) * 0.04f
@@ -337,19 +360,15 @@ class RealityLensView @JvmOverloads constructor(
         val projX: Float
         val projY: Float
         val deltaAzimuth: Float
-        val deltaPitch: Float
 
         if (calibrated) {
             deltaAzimuth = ((moteAzimuthDeg - (currentAzimuth - baseAzimuth) + 540f) % 360f) - 180f
-            deltaPitch = motePitchDeg - (currentPitch - basePitch)
-
-            projX = width * 0.5f + (deltaAzimuth / (fovH * 0.5f)) * (width * 0.5f)
-            projY = height * 0.5f - (deltaPitch / (fovV * 0.5f)) * (height * 0.5f) - jumpOffset - floatSway
-
-            isMoteInView = abs(deltaAzimuth) <= fovH * 0.52f && abs(deltaPitch) <= fovV * 0.52f
+            val pose = anchorSelector.update(anchorFrame(moteAzimuthDeg, motePitchDeg, "near"))
+            projX = pose.x
+            projY = pose.y - jumpOffset - floatSway
+            isMoteInView = pose.visible
         } else {
             deltaAzimuth = 0f
-            deltaPitch = 0f
             projX = width * 0.5f
             projY = height * 0.65f - jumpOffset - floatSway
             isMoteInView = true

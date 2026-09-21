@@ -4015,6 +4015,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         )
         companionView.setBehaviorHint(behavior)
         realityLensView.setBehaviorHint(behavior)
+        realityLensView.setPerformanceState(
+            fps = fpsCounter.get().takeIf { it > 0 }?.toFloat() ?: 30f,
+            temperatureCelsius = latestTelemetry?.batteryTemperature ?: 25f
+        )
         companionView.update(pet)
         renderFocusTools()
         linkMetric.text = if (online) "链路 在线" else "链路 离线"

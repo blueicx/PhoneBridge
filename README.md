@@ -65,7 +65,9 @@
 - Android 新增 `CompanionSummary` 协议模型，主界面和 Mote 小组件读取同一份摘要字段，断线时继续使用本地镜像。
 - Android 当前版本为 `2.0.0`（`versionCode 2`）；批次 B 已加入可选 HTTPS/WSS、证书指纹配对和脱敏诊断导出，正式签名仍需外部 keystore。
 
-上述 2.0 能力已加入统一双端摘要入口，但仍需完成 Wi-Fi 配对发布流程和实体机验收；不要把模拟器测试当作 GPS、ARCore、PTT 或长时间运行的实机证据。
+上述 2.0 能力已加入统一双端摘要入口；Wi-Fi TLS 配对、正式签名发布和未列出的实机闭环仍需单独验收，不把模拟器或局部实机结果扩大为完整功能证据。
+
+批次 C 已加入统一 `RealityAnchorProvider`：默认 Canvas/传感器投影，ARCore 不可用、温度过高或帧率不足时自动回退；`RealityLocationPolicy` 拒绝模拟、过期和低精度位置，只保留粗区域。当前实体机抽样验收：`Xperia XZ2 / Android 15` 已安装 `2.0.0` Debug APK；真实摄像头推流、服务端 `/frame` 接收、在线摘要、现实镜头 Canvas 叠加和退出回退均通过，无 App 崩溃。GPS、ARCore 真平面、PTT、文本聊天、断线恢复和长时间运行仍未宣称完成。
 
 ## 启动
 

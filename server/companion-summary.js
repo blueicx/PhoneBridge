@@ -57,7 +57,11 @@ function buildCompanionSummary({
     version: 1,
     generatedAt: number(generatedAt),
     connection: {
-      online: Boolean(health.connected || health.bridge === 'connected' || health.node === 'active'),
+      online: Boolean(
+        health.connected ||
+        ['connected', 'online', 'active'].includes(String(health.bridge || '').toLowerCase()) ||
+        ['connected', 'online', 'active'].includes(String(health.node || '').toLowerCase())
+      ),
       battery: number(health.battery),
       temperature: number(health.temperature),
     },

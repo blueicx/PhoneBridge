@@ -61,3 +61,11 @@ test('companion summary handles empty or malformed projections safely', () => {
   assert.equal(summary.mote.id, 'rimuru');
   assert.equal(summary.ai.providerId, 'local');
 });
+
+test('companion summary treats the Android online health vocabulary as connected', () => {
+  const summary = buildCompanionSummary({
+    snapshot: { deviceHealth: { bridge: 'online', node: 'online', battery: 54, temperature: 31 } },
+  });
+
+  assert.deepEqual(summary.connection, { online: true, battery: 54, temperature: 31 });
+});

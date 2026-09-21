@@ -217,7 +217,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本批最终验证：Node 全量 **93/93**；Android `:app:testDebugUnitTest :app:assembleDebug` 返回 `BUILD SUCCESSFUL`；性能预算 `elapsedMs=0.718`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；敏感扫描、语法检查和 `git diff --check` 通过。
 - 边界：本批仍不宣称 Wi-Fi TLS、签名发布、ARCore/GPS/PTT 或实体机通知/小组件验收完成。
 
-## 14. 批次 B：TLS 配对与侧载发布底座（进行中）
+## 14. 批次 B：TLS 配对与侧载发布底座（已完成）
 
 - 新增 `server/tls-config.js`：证书/私钥成对加载、证书 SHA-256 指纹和 `ws/wss` 传输描述；服务端在配置 TLS 时自动切换 HTTPS/WSS。
 - 非回环绑定节点没有 TLS 时拒绝启动远程配对；远程 claim 必须来自加密连接；`PHONEBRIDGE_PAIRING_HOST` 用于返回手机可访问的局域网地址。
@@ -226,3 +226,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 批次 B 验证：Node **96/96**；Android `:app:testDebugUnitTest :app:assembleDebug` 返回 `BUILD SUCCESSFUL`；性能预算 `elapsedMs=0.706`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；敏感扫描、语法检查和 `git diff --check` 通过。
 - Debug APK：`android/app/build/outputs/apk/debug/app-debug.apk`，90,773,754 bytes，SHA-256 `8C2FD0D836A1084E6C393F1148DE74A69190B4CF229EF891BE683B2B1CCC9B50`。
 - 当前仍未使用正式签名 keystore，也未进行真实局域网 TLS、手机配对、ARCore/GPS/PTT 和长时间运行验收。
+
+## 15. 批次 C：现实锚定与实体机首轮验收（2026-09-22）
+
+- 新增 Android `RealityAnchor.kt`：统一 `RealityAnchorProvider`、Canvas/传感器投影、ARCore 能力抽象和热量/帧率降级选择；`RealityLensView` 只消费统一锚点结果。
+- 新增 `RealityLocationPolicy.kt`：位置权限关闭、定位关闭、无样本、模拟位置、过期样本和低精度样本统一回退到 `CAMERA_ONLY`；合格位置只转换为粗区域，不保存连续轨迹。
+- 修正统一伴侣摘要健康状态映射：兼容 Android 上报的 `bridge/node=online`，避免 App 顶部在线而摘要误报离线；新增 Node 回归测试。
+- 设备连接：`192.168.101.68:43003`，型号 `Xperia XZ2`，Android `15`，ADB server 使用独立端口 `5038`；通过 `adb reverse tcp:9503 tcp:9503` 连接当前开发节点。
+- 实机证据：最终 APK 安装成功，`versionCode=2`、`versionName=2.0.0`，大小 `91,221,325` bytes，SHA-256 `7A32DC1F0A73CDD4A2C5F5C0191FB09D95E5F6132E92A373648E67CA11093C80`；启动进程存活、无 App `FATAL EXCEPTION`；摄像头启动后 UI 显示 `眼睛开启 · 在线` 与 `画面 10fps`，服务端 `/frame` 返回 HTTP 200（约 46KB），遥测电量 65%、温度 28°C；停止后回到 `CAM OFF/0fps`；现实镜头显示真实预览与 Canvas 叠加并可正常退出。
+- 本轮仍未宣称完成：GPS 权限真实授权与位置采样、ARCore 真平面锚定、三类现实线索点击奖励、文本聊天、PTT、通知/小组件、断线恢复和长时间温度/电量回归。当前 `ArCoreAnchorProvider` 保持无外部依赖的能力抽象，默认使用 Canvas 回退。
