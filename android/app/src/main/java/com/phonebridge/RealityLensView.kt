@@ -108,6 +108,7 @@ class RealityLensView @JvmOverloads constructor(
     private var petSpeechTimer = 0f
     private var frameFps = 30f
     private var frameTemperatureCelsius = 25f
+    private var coarseRegion: String? = null
 
     // Runtime rendered coordinates: id -> Triple(cx, cy, inView)
     private val renderedPositions = mutableMapOf<String, Triple<Float, Float, Boolean>>()
@@ -264,6 +265,11 @@ class RealityLensView @JvmOverloads constructor(
         return (from + diff * weight + 360f) % 360f
     }
 
+    fun setCoarseRegion(region: String?) {
+        coarseRegion = region?.trim()?.takeIf { it.startsWith("cell:") }
+        invalidate()
+    }
+
     private fun anchorFrame(targetBearing: Float, targetPitch: Float, distanceBand: String): RealityFrame = RealityFrame(
         timestampMs = System.currentTimeMillis(),
         bearingDegrees = if (calibrated) currentAzimuth - baseAzimuth else 0f,
@@ -304,6 +310,10 @@ class RealityLensView @JvmOverloads constructor(
         }
 
         renderedPositions.clear()
+
+        coarseRegion?.let { region ->
+            drawChip(canvas, "粗区域 · $region", width * .5f, margin + 34f, 0xCC081410.toInt(), 0xFFB8D9FF.toInt())
+        }
 
         // 1. Draw In-World Clue Relics
         nodes.forEach { node ->

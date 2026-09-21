@@ -8,6 +8,7 @@ const EXPLORABLE_MOTE_IDS = Object.freeze([
   'bloom_sprite', 'crystal_lizard', 'dune_fox', 'shadow_moth'
 ]);
 const CLUE_TYPES = Object.freeze(['location', 'object', 'light']);
+const LEGACY_CLUE_ALIASES = Object.freeze({ place: 'location' });
 
 const MOTE_PROFILES = Object.freeze([
   { id: 'mote', name: '星核', initial: true, voice: '理性稳重', proactive: 'balanced', taskAffinity: ['planning', 'analysis'], emotionBias: { calm: .18, focus: .24 }, colors: { primary: '#8ea7ff', secondary: '#d8e2ff' }, motion: 'measured-orbit', particles: 'stardust', visualPreset: 'star-core' },
@@ -131,7 +132,8 @@ class MoteStore {
 
   collectClue({ eventId, clueType }) {
     const event = String(eventId || '').trim();
-    const type = String(clueType || '').trim().toLowerCase();
+    const rawType = String(clueType || '').trim().toLowerCase();
+    const type = LEGACY_CLUE_ALIASES[rawType] || rawType;
     if (!event) throw new Error('eventId is required');
     if (!CLUE_TYPES.includes(type)) throw new Error(`invalid clueType: ${type}`);
     if (this.state.exploration.seenEventIds.includes(event)) return { duplicate: true, unlockedId: null, state: this.getState() };

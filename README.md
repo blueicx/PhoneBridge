@@ -65,9 +65,9 @@
 - Android 新增 `CompanionSummary` 协议模型，主界面和 Mote 小组件读取同一份摘要字段，断线时继续使用本地镜像。
 - Android 当前版本为 `2.0.0`（`versionCode 2`）；批次 B 已加入可选 HTTPS/WSS、证书指纹配对和脱敏诊断导出，正式签名仍需外部 keystore。
 
-上述 2.0 能力已加入统一双端摘要入口；Wi-Fi TLS 配对、正式签名发布和未列出的实机闭环仍需单独验收，不把模拟器或局部实机结果扩大为完整功能证据。
+上述 2.0 能力已加入统一双端摘要入口；Wi-Fi TLS 配对与正式签名发布仍需外部证书/keystore，实机结果按能力逐项记录，不把 Canvas 回退扩大为 ARCore 真平面证据。
 
-批次 C 已加入统一 `RealityAnchorProvider`：默认 Canvas/传感器投影，ARCore 不可用、温度过高或帧率不足时自动回退；`RealityLocationPolicy` 拒绝模拟、过期和低精度位置，只保留粗区域。当前实体机抽样验收：`Xperia XZ2 / Android 15` 已安装 `2.0.0` Debug APK；真实摄像头推流、服务端 `/frame` 接收、在线摘要、现实镜头 Canvas 叠加和退出回退均通过，无 App 崩溃。GPS、ARCore 真平面、PTT、文本聊天、断线恢复和长时间运行仍未宣称完成。
+批次 C 已加入统一 `RealityAnchorProvider`：默认 Canvas/传感器投影，ARCore 不可用、温度过高或帧率不足时自动回退；`RealityLocationPolicy` 拒绝模拟、过期和低精度位置，只保留粗区域；Android 进入现实镜头时按需请求大致位置权限。`Xperia XZ2 / Android 15` 实机已完成相机推流、服务端 `/frame`、现实镜头 Canvas 叠加与退出、三类线索点击并解锁焰芽、文本离线回退、PTT 录音、断线自动恢复、通知频道和小组件 Provider 注册，以及约 30 秒相机稳定性观测。当前仍明确未宣称 ARCore 真平面锚定、真实 GPS fix、正式签名发布和长期运行闭环。
 
 ## 启动
 
@@ -137,4 +137,4 @@ App 的“节点”按钮可同时填写节点地址和访问令牌。令牌文�
 - 备份/恢复：`scripts/backup_runtime.ps1`、`scripts/restore_runtime.ps1`；备份只包含可恢复状态文件，排除 token、日志、画面和构建产物。
 - CI 现在覆盖 Node、协议回归、性能预算、敏感扫描、Android 单测/Debug 构建、差异检查和干净工作树检查。
 
-批次 A 的设计、迁移和回滚说明见 [`docs/superpowers/phonebridge-batch-a.md`](docs/superpowers/phonebridge-batch-a.md)。真实手机、AR、PTT 和持续运行验收仍需设备恢复后单独进行。
+批次 A 的设计、迁移和回滚说明见 [`docs/superpowers/phonebridge-batch-a.md`](docs/superpowers/phonebridge-batch-a.md)。最新实体机证据与未验证边界见 `HANDOFF.md` 第 16 节。

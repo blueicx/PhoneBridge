@@ -54,6 +54,15 @@ test('deduplicates eventId and migrates incomplete persisted state', () => {
   fs.rmSync(runtimeDir, { recursive: true, force: true });
 });
 
+test('accepts the legacy Android place clue alias without breaking canonical state', () => {
+  const store = new MoteStore();
+  store.setExplorationTarget(EXPLORABLE_MOTE_IDS[0]);
+  const result = store.collectClue({ eventId: 'legacy-place', clueType: 'place' });
+  assert.equal(result.duplicate, false);
+  assert.equal(result.state.exploration.fragments.location, true);
+  assert.equal(result.state.exploration.fragments.place, undefined);
+});
+
 test('relationship level deterministically increases reminder strength', () => {
   const quiet = deriveMoteBehavior({ profileId: 'mote', relationshipLevel: 1 });
   const bonded = deriveMoteBehavior({ profileId: 'mote', relationshipLevel: 5 });

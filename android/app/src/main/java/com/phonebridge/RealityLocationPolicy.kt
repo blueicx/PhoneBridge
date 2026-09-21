@@ -1,5 +1,12 @@
 package com.phonebridge
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.os.Build
+import androidx.core.content.ContextCompat
+
 data class RealityLocationSample(
     val latitude: Double,
     val longitude: Double,
@@ -49,5 +56,53 @@ object RealityLocationPolicy {
             region = RealityRegion.fromCoordinates(sample.latitude, sample.longitude),
             reason = "coarse_region",
         )
+    }
+}
+
+object RealityLocationCoordinator {
+    fun resolve(
+        permissionGranted: Boolean,
+        locationEnabled: Boolean,
+        samples: List<RealityLocationSample>,
+        nowMs: Long,
+    ): RealityLocationDecision {
+        val usable = samples
+            .sortedByDescending { it.timestampMs }
+            .map { RealityLocationPolicy.resolve(permissionGranted, locationEnabled, it, nowMs) }
+            .firstOrNull { it.mode == RealityLocationMode.COARSE_REGION }
+        return usable ?: RealityLocationPolicy.resolve(permissionGranted, locationEnabled, null, nowMs)
+    }
+}
+
+class RealityLocationSampler(private val context: Context) {
+    fun sample(nowMs: Long = System.currentTimeMillis()): RealityLocationDecision {
+        val permissionGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        val enabled = manager?.allProviders?.any { provider ->
+            runCatching { manager.isProviderEnabled(provider) }.getOrDefault(false)
+        } == true
+        val samples = if (permissionGranted && manager != null) {
+            manager.allProviders.mapNotNull { provider ->
+                runCatching { manager.getLastKnownLocation(provider) }.getOrNull()?.let { location ->
+                    RealityLocationSample(
+                        latitude = location.latitude,
+                        longitude = location.longitude,
+                        accuracyMeters = location.accuracy,
+                        isMock = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                            location.isFromMockProvider
+                        } else {
+                            false
+                        },
+                        timestampMs = location.time,
+                    )
+                }
+            }
+        } else {
+            emptyList()
+        }
+        return RealityLocationCoordinator.resolve(permissionGranted, enabled, samples, nowMs)
     }
 }

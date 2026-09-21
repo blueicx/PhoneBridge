@@ -7,6 +7,15 @@ import org.junit.Test
 
 class RealityLocationPolicyTest {
     @Test
+    fun coordinatorChoosesTheNewestUsableCoarseSample() {
+        val older = RealityLocationSample(31.2304, 121.4737, 12f, false, 1_000L)
+        val newerMock = older.copy(isMock = true, timestampMs = 2_000L)
+        val decision = RealityLocationCoordinator.resolve(true, true, listOf(newerMock, older), 2_000L)
+        assertEquals(RealityLocationMode.COARSE_REGION, decision.mode)
+        assertEquals("cell:1561:6073", decision.region)
+    }
+
+    @Test
     fun permissionAndLocationSwitchesFallBackToCameraOnly() {
         val sample = RealityLocationSample(31.2304, 121.4737, accuracyMeters = 12f, isMock = false, timestampMs = 1000L)
         assertEquals(RealityLocationMode.CAMERA_ONLY, RealityLocationPolicy.resolve(false, true, sample, 1000L).mode)

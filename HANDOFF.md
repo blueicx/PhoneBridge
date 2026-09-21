@@ -235,3 +235,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 设备连接：`192.168.101.68:43003`，型号 `Xperia XZ2`，Android `15`，ADB server 使用独立端口 `5038`；通过 `adb reverse tcp:9503 tcp:9503` 连接当前开发节点。
 - 实机证据：最终 APK 安装成功，`versionCode=2`、`versionName=2.0.0`，大小 `91,221,325` bytes，SHA-256 `7A32DC1F0A73CDD4A2C5F5C0191FB09D95E5F6132E92A373648E67CA11093C80`；启动进程存活、无 App `FATAL EXCEPTION`；摄像头启动后 UI 显示 `眼睛开启 · 在线` 与 `画面 10fps`，服务端 `/frame` 返回 HTTP 200（约 46KB），遥测电量 65%、温度 28°C；停止后回到 `CAM OFF/0fps`；现实镜头显示真实预览与 Canvas 叠加并可正常退出。
 - 本轮仍未宣称完成：GPS 权限真实授权与位置采样、ARCore 真平面锚定、三类现实线索点击奖励、文本聊天、PTT、通知/小组件、断线恢复和长时间温度/电量回归。当前 `ArCoreAnchorProvider` 保持无外部依赖的能力抽象，默认使用 Canvas 回退。
+
+## 16. 批次 C 收尾：现实协议修复与实体机回归（2026-09-22）
+
+- 修复现实线索协议缺口：Android 旧的 `place` 节点统一映射为服务端协议的 `location`；线索事件改为稳定的 `reality-lens:<coarse-region-or-camera>:<clue>` eventId，离线重试不会重复奖励。服务端同时保留旧别名兼容，Node 回归覆盖别名幂等。
+- 新增 Android `RealityLocationCoordinator` 与 `RealityLocationSampler`：进入现实镜头时按需请求 `ACCESS_COARSE_LOCATION`，只读取最近粗粒度样本；权限拒绝、定位关闭、模拟位置、过期、低精度和无 fix 都回退 `CAMERA_ONLY`。显示/传输只允许 `cell:*`，不持久化精确坐标或轨迹。
+- 实机设备：`192.168.101.68:43003` / Xperia XZ2 / Android 15 / ADB server 5038；新 APK 安装成功，SHA-256 `A15BA0E4D8BB33532C3F38A6CF4E552521934452D07268056C00EC59D64F3094`，大小 `91,224,726` bytes。
+- 实机现实镜头：按需位置权限弹窗正常；真实摄像头画面、Canvas Mote、地点/物体/光线三类线索均点击成功；服务端 `mote.state` 实际从 6 个初始形态解锁 `ember_sprig`，稳定 eventId 为 `reality-lens:camera:location/object/light`，重复线索不增加事件。
+- 实机文本/语音：发送 `ping` 得到本地离线回退回复；PTT 录音开始/停止 HTTP 均返回 200，服务端收到 28 个音频块并写入 `44,800 bytes`，无识别文本时安全返回“没有听清”，无 App 崩溃。
+- 实机断线/恢复：停止节点后 UI 显示“重连中 / 链路离线”；重启节点后自动恢复，服务端 `clients=1`、`outboxPending=0`。通知频道 `mote_resident`、常驻通知的“抚摸/换眼/回复”动作和 `MoteWidgetProvider` 已由系统注册信息确认。
+- 实机稳定性：相机连续观测约 30 秒采样 3 次，进程 PID 保持 `16962`，电池温度 `39.5°C`、电量 `50%` 稳定；服务端 frame 计数达到 `5036`、camera=true、bridge=online；停止后 UI 回到 `CAM OFF / 0fps`，未发现 `FATAL EXCEPTION`。
+- 当前仍未宣称：ARCore 真平面锚定（设备走 Canvas 回退）、真实 GPS fix（本轮无可用最近位置样本，已验证安全回退）、正式签名 APK、完整小组件桌面视觉布局和长时间数小时运行。
+- 本轮收尾验证：Node `node --check server/index.js` 与 `node --test server/*.test.js` **98/98**；性能预算 `elapsedMs=1.149`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；敏感扫描通过；Android `android\\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain` 返回 `BUILD SUCCESSFUL`；`git diff --check` 通过。Git 的 LF/CRLF 提示不属于差异错误。

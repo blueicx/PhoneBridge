@@ -9,14 +9,26 @@
 
 param(
     [int]$Port = 5038,
-    [string]$Serial = "QV7017NH1F",
+    [string]$Serial = "192.168.101.68:43003",
+    [string]$OutputPath = "",
     [switch]$SkipEnter
 )
 
-$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-if (-not (Test-Path $adb)) {
-    Write-Error "ADB not found at: $adb"
+$adbCandidates = @()
+foreach ($sdkRoot in @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT)) {
+    if ($sdkRoot) { $adbCandidates += (Join-Path $sdkRoot 'platform-tools\adb.exe') }
+}
+$adbCandidates += 'C:\Users\blueice\AppData\Local\Android\Sdk\platform-tools\adb.exe'
+if ($env:LOCALAPPDATA) { $adbCandidates += (Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools\adb.exe') }
+$adbCandidates = $adbCandidates | Where-Object { Test-Path -LiteralPath $_ }
+$adb = $adbCandidates | Select-Object -First 1
+if (-not $adb) {
+    Write-Error "ADB not found. Checked ANDROID_HOME, ANDROID_SDK_ROOT and the standard Windows SDK path."
     exit 1
+}
+
+if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+    $OutputPath = Join-Path $env:TEMP 'phonebridge-reality-clues.png'
 }
 
 Write-Host "=== Reality Lens Clue Tap & Reward QA Test ===" -ForegroundColor Cyan
@@ -81,10 +93,10 @@ if ($rewardLogs) {
 }
 
 # 6. Capture Evidence Screenshot
-$screenshotPath = "F:\CodexApps\PhoneBridge\w4_reality_clues_tested.png"
+$screenshotPath = [IO.Path]::GetFullPath($OutputPath)
 Write-Host "`n[Step 4] Capturing Verification Screenshot to $screenshotPath..." -ForegroundColor Yellow
 & $adb -P $Port -s $Serial exec-out screencap -p > $screenshotPath
-if (Test-Path $screenshotPath) {
+if (Test-Path -LiteralPath $screenshotPath) {
     Write-Host "Screenshot captured successfully: $screenshotPath" -ForegroundColor Green
 }
 

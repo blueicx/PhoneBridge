@@ -94,6 +94,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     companion object {
         private const val TAG = "PhoneBridge"
         private const val REQUEST_PERMISSIONS = 71
+        private const val REQUEST_LOCATION_PERMISSION = 72
         private const val TYPE_FRAME = 1
         private const val TYPE_AUDIO = 2
         private const val TYPE_SPEAK = 5
@@ -287,6 +288,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     @Volatile private var immersiveMode = false
     private var realityLensActive = false
     private var realityLensRequestedCamera = false
+    private val realityLocationSampler by lazy { RealityLocationSampler(this) }
+    private var realityRegion: String? = null
     private var normalPreviewParams: androidx.constraintlayout.widget.ConstraintLayout.LayoutParams? = null
     private var focusToolsExpanded = false
     private var normalHeroParams: androidx.constraintlayout.widget.ConstraintLayout.LayoutParams? = null
@@ -1730,6 +1733,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_LOCATION_PERMISSION) {
+            updateRealityLocation()
+            return
+        }
         if (requestCode != REQUEST_PERMISSIONS) return
         if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             connectSavedServer()
@@ -1756,6 +1763,39 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             return
         }
         startCamera()
+    }
+
+    private fun updateRealityLocation() {
+        val decision = realityLocationSampler.sample()
+        realityRegion = decision.region
+        realityLensView.setCoarseRegion(decision.region)
+        val message = when (decision.mode) {
+            RealityLocationMode.COARSE_REGION -> "现实区域已切换到 ${decision.region}"
+            RealityLocationMode.CAMERA_ONLY -> "现实镜头仅使用相机：${decision.reason}"
+        }
+        logAdapter.add(if (decision.mode == RealityLocationMode.COARSE_REGION) "info" else "warn", message)
+        if (realityLensActive) setStatus(message)
+        if (decision.region != null && BridgeLink.isOnline) {
+            workspaceRequest(
+                "/api/reality/events?region=${android.net.Uri.encode(decision.region)}",
+                onSuccess = { json ->
+                    val count = json.optJSONArray("events")?.length() ?: 0
+                    logAdapter.add("info", "附近现实事件已刷新：$count 个（仅粗区域）")
+                }
+            )
+        }
+    }
+
+    private fun requestRealityLocationIfNeeded() {
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            updateRealityLocation()
+        } else {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(android.Manifest.permission.ACCESS_COARSE_LOCATION),
+                REQUEST_LOCATION_PERMISSION
+            )
+        }
     }
 
     private fun applyDeviceCommand(action: String) {
@@ -1878,6 +1918,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         ).forEach { id -> findViewById<View>(id)?.visibility = View.GONE }
         realityLensView.setPetState(pet)
         realityLensView.visibility = View.VISIBLE
+        requestRealityLocationIfNeeded()
         renderCameraHeroState()
         renderFocusTools()
         findViewById<View>(R.id.previewFrame).post {
@@ -1895,6 +1936,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             frame.layoutParams = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(it)
         }
         realityLensView.visibility = View.GONE
+        realityLensView.setCoarseRegion(null)
+        realityRegion = null
         renderCameraHeroState()
         if (immersiveMode) {
             focusToolbar.visibility = View.VISIBLE
@@ -1920,6 +1963,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
 
         val nextDiscovered = discovered + node.id
+        val clueType = RealityClueProtocol.canonicalType(node.id)
         saveDiscoveredRealityNodes(nextDiscovered)
         realityLensView.markDiscovered(node.id)
         pet = pet.copy(experience = pet.experience + 4)
@@ -1937,8 +1981,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         enqueueWorkspaceEvent(
             WorkspaceEventTypes.MOTE_EXPLORATION,
             JSONObject()
-                .put("eventId", "reality-${node.id}-${System.currentTimeMillis()}" )
-                .put("clueType", node.id)
+                .put("eventId", RealityClueProtocol.eventId(node.id, realityRegion))
+                .put("clueType", clueType)
+                .put("region", realityRegion)
         )
         logAdapter.add("success", "现实线索 +4 经验：${node.title}")
         say(buildString {

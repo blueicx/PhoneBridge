@@ -23,6 +23,21 @@ data class RealityProgress(
     val habitatComfort: Int = 0,
 )
 
+object RealityClueProtocol {
+    private val aliases = mapOf("place" to "location")
+
+    fun canonicalType(value: String?): String {
+        val normalized = value?.trim()?.lowercase() ?: ""
+        return aliases[normalized] ?: normalized.takeIf { it in setOf("location", "object", "light") } ?: "location"
+    }
+
+    fun eventId(nodeId: String?, coarseRegion: String? = null): String {
+        val clue = canonicalType(nodeId)
+        val region = coarseRegion?.trim()?.takeIf { it.startsWith("cell:") } ?: "camera"
+        return "reality-lens:$region:$clue"
+    }
+}
+
 object RealityRegion {
     fun fromCoordinates(latitude: Double, longitude: Double, cellSize: Double = .02): String {
         require(latitude.isFinite() && longitude.isFinite() && cellSize > 0)
