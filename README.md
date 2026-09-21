@@ -59,6 +59,7 @@
 - AI provider 能力、流式 request、取消、每日输出预算和本地记忆存储；新增 `/api/ai/capabilities`、`POST /api/ai/requests/:id/cancel`、`/api/memories`。
 - 现实探索引擎：确定性粗区域事件、过期/跨区域校验、遭遇、库存、合成、装备、家园、任务和幂等奖励；新增 `/api/reality/catalog`、`/api/reality/events`、`/api/reality/events/:id/start|resolve`、`/api/reality/crafting`、`/api/reality/loadout`、`/api/reality/habitat`。
 - Mote 图鉴扩展为 20 个形态，新增潮獭、月鹿、岩鼹、风貂、雷雀、雪兔、花灵、晶蜥、沙狐和影蛾；Android 已加入协议解析和配置回退。
+- 本地配对底座：认证 Web 可调用 `POST /api/pairing/start` 获取五分钟一次性配对码；手机通过 loopback `POST /api/pairing/claim` 领取新令牌。固定环境令牌和非 loopback 节点会拒绝配对。
 
 上述 2.0 能力仍需完成最终双端 UI、配对发布流程和实体机验收；不要把模拟器测试当作 GPS、ARCore、PTT 或长时间运行的实机证据。
 

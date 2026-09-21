@@ -17,6 +17,7 @@ const { createStructuredLogger } = require('./structured-log');
 const { DeviceSimulator } = require('./device-simulator');
 const { MemoryStore } = require('./ai-memory');
 const { RealityEngine } = require('./reality-engine');
+const { PairingManager } = require('./pairing');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -287,6 +288,7 @@ const healthChecks = new HealthChecks({
 });
 const memoryStore = new MemoryStore({ persistence: runtimePersistence });
 const realityEngine = new RealityEngine({ persistence: runtimePersistence });
+const pairingManager = new PairingManager();
 const proactiveState = {
   paused: false,
   quietStart: 23,
@@ -1578,6 +1580,18 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ ok: true }));
     }
 
+    if (parsedUrl.pathname === '/api/pairing/claim' && req.method === 'POST') {
+      const remote = String(req.socket.remoteAddress || '');
+      const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+      if (!loopback) return sendJson(res, 403, { ok: false, error: 'pairing is restricted to a loopback connection' });
+      if (process.env.PHONEBRIDGE_TOKEN) return sendJson(res, 409, { ok: false, error: 'pairing is disabled while a fixed environment token is configured' });
+      try {
+        const result = pairingManager.claim(await readJson(req));
+        const token = rotateAccessToken();
+        return sendJson(res, 200, { ok: true, ...result, token });
+      } catch (error) { return sendJson(res, 409, { ok: false, error: error.message }); }
+    }
+
     if (!requestHasAccess(req)) {
       if (parsedUrl.pathname === '/') {
         res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'});
@@ -1585,6 +1599,14 @@ const server = http.createServer(async (req, res) => {
       }
       denyAccess(res);
       return;
+    }
+
+    if (parsedUrl.pathname === '/api/pairing/start' && req.method === 'POST') {
+      if (BIND_HOST !== '127.0.0.1' && BIND_HOST !== 'localhost' && BIND_HOST !== '::1') {
+        return sendJson(res, 409, { ok: false, error: 'pairing requires a loopback-bound node' });
+      }
+      const offer = pairingManager.start({ host: BIND_HOST, port: PORT, fingerprint: process.env.PHONEBRIDGE_TLS_FINGERPRINT || null });
+      return sendJson(res, 201, { ok: true, offer });
     }
 
     if (deviceSimulator && parsedUrl.pathname === '/api/dev/simulator' && req.method === 'GET') {
