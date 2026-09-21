@@ -19,6 +19,7 @@ const { MemoryStore } = require('./ai-memory');
 const { RealityEngine } = require('./reality-engine');
 const { PairingManager } = require('./pairing');
 const { prepareConversation } = require('./session-context');
+const { buildCompanionSummary } = require('./companion-summary');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -324,6 +325,7 @@ const snapshotCache = new RevisionSnapshotCache({
         },
         motes: { state: payload.motes.state, roster: payload.motes.roster, behavior: payload.motes.behavior, relationship: payload.motes.relationship },
         autonomy: payload.autonomy,
+        companionSummary: payload.companionSummary,
       }),
     };
   },
@@ -1191,7 +1193,7 @@ async function handleChat(text, memories = []) {
 }
 
 function buildSnapshotPayload() {
-  return {
+  const payload = {
     type: 'snapshot',
     stats: statsSnapshot(),
     tasks: publicTasks(),
@@ -1211,6 +1213,14 @@ function buildSnapshotPayload() {
     autonomy: workspaceStore.getAutonomyPolicy(),
     approvals: workspaceStore.listToolApprovals().slice(0, 100),
   };
+  payload.companionSummary = buildCompanionSummary({
+    generatedAt: Date.now(),
+    snapshot: payload,
+    ai: aiProviderManager.getSettings(),
+    memory: memoryStore.snapshot(),
+    reality: { state: realityEngine.snapshot() },
+  });
+  return payload;
 }
 
 function snapshotPayload() {
@@ -1374,11 +1384,14 @@ const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name
 </style><div class="wrap"><div class="top"><div><div class="logo">Mote</div><div class="sub">PhoneBridge · sensory familiar</div></div><div style="margin-left:auto;display:flex;gap:12px;align-items:center"><div class="pill" id="status">loading</div><button onclick="logout()" style="padding:4px 12px;font-size:12px;background:#0d1b15">退出</button></div></div>
 <div class="grid"><div class="panel"><h2>实时感官</h2><img id="frame"><div class="metrics" style="margin-top:12px"><div class="metric"><b id="cpu">-</b><span>手机 CPU</span></div><div class="metric"><b id="mem">-</b><span>内存</span></div><div class="metric"><b id="bat">-</b><span>电量</span></div><div class="metric"><b id="temp">-</b><span>温度</span></div></div><div class="row"><button class="primary" onclick="device('camera_on')">开眼</button><button onclick="device('camera_front')">前眼</button><button onclick="device('camera_back')">后眼</button><button onclick="device('listen_on')">监听</button><button onclick="say()">说话</button></div><div class="row"><input id="speech" placeholder="输入要在手机上播放的话" style="flex:1"></div><div class=row><select id=idleTimeout title="空闲断流时间"><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5 selected>5 分钟</option><option value=10>10 分钟</option><option value=30>30 分钟</option></select><button onclick=setIdleTimeout()>空闲断流</button></div><div class=row><select id=screenOffTimeout title="息屏自动退出时间"><option value=0>不自动退出</option><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5>5 分钟</option><option value=10 selected>10 分钟</option><option value=30>30 分钟</option><option value=60>60 分钟</option></select><button onclick=setScreenOffTimeout()>息屏退出</button></div></div>
 <div class="panel"><h2>指挥台</h2><div class="tabs"><button class="active" data-tab="tasks">任务</button><button data-tab="log">日志</button><button data-tab="sensors">传感器</button><button data-tab="frame">画面</button></div><div id="tasks"></div><div id="log" hidden></div><div id="sensors" hidden></div><div id="framebox" hidden><img id="frame2"></div><div class="row"><input id="cmd" placeholder="help / ping 8.8.8.8 / screenshot / ps / say 你好" style="flex:1"><button class="primary" onclick="sendCmd()">执行</button></div><textarea id="detail" readonly placeholder="选中任务的输出会出现在这里"></textarea></div></div>
-<div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div></div>
+<div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>现实探索</h2><div class="sub">只输入粗区域 ID，不上传精确位置；例如 <code>cell:1561:6073</code>。</div><div class="row"><input id="realityRegion" placeholder="粗区域 ID" style="flex:1"><button class="primary" onclick="refreshReality()">刷新事件</button></div><div id="realitySummary" class="sub" style="margin-top:8px">尚未加载现实事件</div></div>
 <script>
 let selected='';
+let companionSummaryRevision = '';
+let providerOptionsRevision = '';
 function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function jsAttr(s){return JSON.stringify(String(s??'')).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function sel(id){selected=id;let t=(window.TASKS||{})[id];detail.value=t?t.detail:''}
 function tab(name,b){document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active');['tasks','log','sensors','frame'].forEach(x=>document.getElementById(x).hidden=x!==name)}
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>tab(b.dataset.tab,b));
@@ -1450,13 +1463,50 @@ async function refreshDiagnosticsAndTimeline() {
 setInterval(refreshDiagnosticsAndTimeline, 5000);
 refreshDiagnosticsAndTimeline();
 
+async function refreshCompanionSummary(){
+  try{
+    const response=await api('/api/companion/summary');
+    if(response._status===304 || !response.summary) return;
+    const s=response.summary;
+    const signature=JSON.stringify(s);
+    if(companionSummaryRevision!==signature){
+      companionSummaryRevision=signature;
+      companionSummary.textContent=(s.mote.name||'Mote')+' Lv.'+s.mote.level+' · '+(s.connection.online?'在线':'离线')+' · 任务 '+s.tasks.running+'/'+s.tasks.total+' · 待确认 '+s.tasks.needsConfirmation+' · 提醒 '+s.attention.open+' · 现实 '+s.reality.eventCount+' · AI '+s.ai.providerName+' · 记忆 '+s.ai.memoryCount+' · '+(s.safety.emergencyStop?'急停中':'自治 '+s.safety.autonomyLevel);
+    }
+    const providers=await api('/api/ai/providers');
+    const providerSignature=JSON.stringify(providers.providers||[]);
+    if(providerOptionsRevision!==providerSignature){
+      providerOptionsRevision=providerSignature;
+      aiProviderSelect.innerHTML=(providers.providers||[]).map(p=>'<option value="'+esc(p.id)+'" '+(p.isActive?'selected':'')+'>'+esc(p.name||p.id)+' · '+esc((p.capabilities||[]).join('/'))+'</option>').join('');
+    }
+  }catch(error){ companionSummary.textContent='伴侣摘要不可用：'+error.message; }
+}
+async function probeSelectedProvider(){
+  const id=aiProviderSelect.value;
+  if(!id) return;
+  try{ const result=await api('/api/ai/providers/'+encodeURIComponent(id)+'/probe',{method:'POST'}); aiProbeResult.textContent='正常 · '+result.latencyMs+'ms'; }
+  catch(error){ aiProbeResult.textContent='失败 · '+error.message; }
+}
+setInterval(refreshCompanionSummary, 5000);
+refreshCompanionSummary();
+
 async function refreshReality(){
   const region = realityRegion.value.trim();
   if(!region){ realitySummary.textContent='请输入粗区域 ID'; return; }
   try{
     const [state, events] = await Promise.all([api('/api/reality/state'), api('/api/reality/events?region='+encodeURIComponent(region))]);
-    realitySummary.innerHTML='<b>区域 '+esc(region)+'</b> · 事件 '+events.events.length+' · Mote Lv.'+(state.state.level||1)+' · XP '+(state.state.xp||0)+'<br>'+events.events.map(e=>'<span class="pill" style="display:inline-block;margin:5px 4px 0 0">'+esc(e.kind)+'/'+esc(e.clueType)+' · '+esc(e.distanceBand)+' · '+e.bearing+'°</span>').join('');
+    const inventoryCount=Object.values(state.state.inventory||{}).reduce((a,b)=>a+(Number(b)||0),0);
+    realitySummary.innerHTML='<b>区域 '+esc(region)+'</b> · 事件 '+events.events.length+' · Mote Lv.'+(state.state.level||1)+' · XP '+(state.state.xp||0)+' · 物品 '+inventoryCount+'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px">'+events.events.map(e=>'<div class=item><b>'+esc(e.kind)+' / '+esc(e.clueType)+'</b><div class=sub>'+esc(e.distanceBand)+' · '+e.bearing+'° · 难度 '+e.difficulty+'</div><div class=row><button onclick="realityAction('+jsAttr(e.id)+','+jsAttr('start')+','+jsAttr(e.clueType)+')">遭遇</button><button class=primary onclick="realityAction('+jsAttr(e.id)+','+jsAttr('resolve')+','+jsAttr(e.clueType)+')">收集</button></div></div>').join('')+'</div>';
   }catch(error){ realitySummary.textContent='现实事件加载失败：'+error.message; }
+}
+async function realityAction(id, action, clueType){
+  const region = realityRegion.value.trim();
+  if(!region) return;
+  try{
+    const response=await api('/api/reality/events/'+encodeURIComponent(id)+'/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({region,clueType,actions:action==='start'?[]:['observe']})});
+    realitySummary.dataset.lastAction=id+':'+action+':'+JSON.stringify(response.reward||response.encounter||{});
+    await refreshReality();
+  }catch(error){ realitySummary.textContent='现实动作失败：'+error.message; }
 }
 
 async function refreshWorkspaceNow(){try{
@@ -1666,6 +1716,16 @@ const server = http.createServer(async (req, res) => {
       diagnosticsCollector.updateTelemetry(phoneTelemetry);
       diagnosticsCollector.setEventBacklog(taskRunner.list().filter(r => r.state === 'queued' || r.state === 'running').length);
       return sendJson(res, 200, { ...diagnosticsCollector.snapshot(), persistence: runtimePersistence.snapshot() });
+    }
+    if (parsedUrl.pathname === '/api/companion/summary' && req.method === 'GET') {
+      const etag = `"companion-${workspaceStore.eventRevision}-${snapshotRevision}"`;
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+      const summary = JSON.parse(summaryPayload()).companionSummary;
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ETag: etag, 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify({ ok: true, summary }));
     }
     if (parsedUrl.pathname === '/api/ai/providers' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, providers: aiProviderManager.getProviders() });

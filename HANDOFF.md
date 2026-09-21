@@ -207,3 +207,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 会话上下文新增确定性摘要与长度裁剪，聊天任务现在把会话历史和本地记忆传给 provider，并记录已使用的记忆。
 - 本轮最终验收仍属于代码/协议/模拟器/构建验收；GitHub Actions 将由最新推送触发，不能提前视为远端 CI 已通过。
 - 明确未完成：服务端/Android 深度拆分、完整 Web/Android 现实玩法 UI、Wi-Fi TLS 配对、签名 2.0 APK、ARCore、GPS、PTT、通知/小组件实机闭环。
+
+## 13. 批次 A：统一伴侣摘要与双端现实入口（2026-09-22）
+
+- 新增 `server/companion-summary.js`，把任务、Attention、Mote、设备健康、现实探索、AI Provider、记忆和自治安全状态投影成脱敏 `version=1` 摘要。
+- 新增 `GET /api/companion/summary`，使用 revision/snapshot ETag；未变化时返回 `304`，不触发 Web 解析和重绘。
+- Web 工作台消费统一摘要，展示 Provider 能力与探针结果；现实事件卡片支持直接发起遭遇和收集动作，并展示 Mote 等级、XP、库存数量。
+- Android 新增 `CompanionSummary.kt` 与单元测试；`MainActivity` 和 `MoteWidgetProvider` 使用统一摘要字段，保留 Room/离线镜像和旧协议兼容。
+- 本批最终验证：Node 全量 **93/93**；Android `:app:testDebugUnitTest :app:assembleDebug` 返回 `BUILD SUCCESSFUL`；性能预算 `elapsedMs=0.718`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；敏感扫描、语法检查和 `git diff --check` 通过。
+- 边界：本批仍不宣称 Wi-Fi TLS、签名发布、ARCore/GPS/PTT 或实体机通知/小组件验收完成。

@@ -242,6 +242,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var moteRosterJson = JSONArray()
     private var moteRelationship = MoteRelationshipSummary()
     private var moteStateJson = JSONObject()
+    private var companionSummary = CompanionSummary()
     private var workspaceRevision: Long = 0L
     private val timelineProjection = TimelineProjection()
     private val workspaceEventGate = WorkspaceEventGate()
@@ -876,12 +877,16 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 !it.status.equals("dismissed", true) &&
                 !it.status.equals("ignored", true)
         }
-        cockpitSummaryStatus.text = buildList {
-            add(if (cockpitUsesOfflineMirror) "离线镜像" else "链路 ${deviceHealthLabel(deviceHealthState.overall.name)}")
-            add("${activeCount} 条提醒")
-            add(if (activeWorkspaceTask == null) "无进行中任务" else "有进行中任务")
-            add("Mote Lv.${moteRelationship.level}")
-        }.joinToString(" · ")
+        cockpitSummaryStatus.text = if (!cockpitUsesOfflineMirror && companionSummary.generatedAt > 0L) {
+            companionSummary.compactStatus()
+        } else {
+            buildList {
+                add(if (cockpitUsesOfflineMirror) "离线镜像" else "链路 ${deviceHealthLabel(deviceHealthState.overall.name)}")
+                add("${activeCount} 条提醒")
+                add(if (activeWorkspaceTask == null) "无进行中任务" else "有进行中任务")
+                add("Mote Lv.${moteRelationship.level}")
+            }.joinToString(" · ")
+        }
         currentTaskSummary.text = if (activeWorkspaceTask == null) {
             getString(R.string.current_task_empty)
         } else {
@@ -3100,6 +3105,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     }
                 }
                 "snapshot" -> {
+                    json.optJSONObject("companionSummary")?.let { summaryJson ->
+                        companionSummary = CompanionSummaryParser.parse(summaryJson)
+                    }
                     val revision = json.optLong("eventRevision", json.optJSONObject("workspace")?.optLong("eventRevision", 0L) ?: 0L)
                     if (revision > workspaceRevision) {
                         workspaceRevision = revision
@@ -4040,6 +4048,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             .putInt("activeTasks", activeTasks.count { !it.value.status.equals("done", true) })
             .putInt("battery", latestTelemetry?.batteryPercent ?: 0)
             .putFloat("temperature", latestTelemetry?.batteryTemperature ?: 0f)
+            .putInt("summaryTotalTasks", companionSummary.totalTasks)
+            .putInt("summaryRunningTasks", companionSummary.runningTasks)
+            .putInt("summaryAttention", companionSummary.openAttention)
+            .putInt("summaryRealityEvents", companionSummary.realityEvents)
+            .putBoolean("summaryOnline", companionSummary.connectionOnline)
             .putLong("updated", System.currentTimeMillis())
             .apply()
     }

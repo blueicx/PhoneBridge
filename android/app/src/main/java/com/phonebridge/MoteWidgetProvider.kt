@@ -56,6 +56,11 @@ class MoteWidgetProvider : AppWidgetProvider() {
         val fps = widgetPrefs.getInt("fps", 0)
         val battery = widgetPrefs.getInt("battery", 0)
         val activeTasks = widgetPrefs.getInt("activeTasks", 0)
+        val summaryTotalTasks = widgetPrefs.getInt("summaryTotalTasks", activeTasks)
+        val summaryRunningTasks = widgetPrefs.getInt("summaryRunningTasks", activeTasks)
+        val summaryAttention = widgetPrefs.getInt("summaryAttention", 0)
+        val summaryRealityEvents = widgetPrefs.getInt("summaryRealityEvents", 0)
+        val summaryOnline = widgetPrefs.getBoolean("summaryOnline", connected)
         val views = RemoteViews(context.packageName, R.layout.widget_mote).apply {
             setTextViewText(R.id.widgetTitle, "${profile.name} · Lv.$level")
             setTextViewText(
@@ -64,7 +69,7 @@ class MoteWidgetProvider : AppWidgetProvider() {
             )
             setTextViewText(
                 R.id.widgetMeta,
-                "${if (connected) "在线" else "离线"} · $fps fps · 电量 $battery% · 任务 $activeTasks"
+                "${if (summaryOnline) "在线" else "离线"} · $fps fps · 电量 $battery% · 任务 $summaryRunningTasks/$summaryTotalTasks · 提醒 $summaryAttention · 现实 $summaryRealityEvents"
             )
             setOnClickPendingIntent(R.id.widgetFeed, careIntent(context, "feed"))
             setOnClickPendingIntent(R.id.widgetListen, commandIntent(context, "listen"))

@@ -81,6 +81,18 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     assert.equal(diagRes.body.performance.fpsTarget, 30);
     assert.equal(diagRes.body.performance.throttlingStrategy, 'background_reduced');
 
+    // 2b. Test the compact cross-client companion summary and conditional cache
+    const companionRes = await request('/api/companion/summary');
+    assert.equal(companionRes.response.status, 200);
+    assert.equal(companionRes.body.ok, true);
+    assert.equal(companionRes.body.summary.version, 1);
+    assert.equal(typeof companionRes.body.summary.tasks.total, 'number');
+    assert.equal(Object.prototype.hasOwnProperty.call(companionRes.body.summary.ai, 'apiKey'), false);
+    const companionEtag = companionRes.headers.get('etag');
+    assert.ok(companionEtag, 'companion summary should return ETag');
+    const companion304 = await request('/api/companion/summary', { headers: { 'if-none-match': companionEtag } });
+    assert.equal(companion304.response.status, 304);
+
     // 3. Test GET /api/ai/providers
     const providersRes = await request('/api/ai/providers');
     assert.equal(providersRes.response.status, 200);
