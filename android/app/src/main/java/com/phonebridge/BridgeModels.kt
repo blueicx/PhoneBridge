@@ -17,7 +17,17 @@ enum class PetAppearance(val label: String) {
     EMBER_SPRIG("焰芽"),
     PRISM_MOTH("棱光蝶"),
     MOSS_TORTOISE("苔龟"),
-    ORBIT_RAVEN("星鸦");
+    ORBIT_RAVEN("星鸦"),
+    TIDE_OTTER("潮獭"),
+    MOON_DEER("月鹿"),
+    STONE_MOLE("岩鼹"),
+    WIND_MARTEN("风貂"),
+    VOLT_SPARROW("雷雀"),
+    FROST_HARE("雪兔"),
+    BLOOM_SPRITE("花灵"),
+    CRYSTAL_LIZARD("晶蜥"),
+    DUNE_FOX("沙狐"),
+    SHADOW_MOTH("影蛾");
 
     companion object {
         fun fromWire(value: String?): PetAppearance = when (value.orEmpty().trim().lowercase()) {
@@ -31,6 +41,16 @@ enum class PetAppearance(val label: String) {
             "prism_moth", "prism-moth", "棱光蝶" -> PRISM_MOTH
             "moss_tortoise", "moss-tortoise", "苔龟" -> MOSS_TORTOISE
             "orbit_raven", "orbit-raven", "星鸦" -> ORBIT_RAVEN
+            "tide_otter", "tide-otter", "潮獭" -> TIDE_OTTER
+            "moon_deer", "moon-deer", "月鹿" -> MOON_DEER
+            "stone_mole", "stone-mole", "岩鼹" -> STONE_MOLE
+            "wind_marten", "wind-marten", "风貂" -> WIND_MARTEN
+            "volt_sparrow", "volt-sparrow", "雷雀" -> VOLT_SPARROW
+            "frost_hare", "frost-hare", "雪兔" -> FROST_HARE
+            "bloom_sprite", "bloom-sprite", "花灵" -> BLOOM_SPRITE
+            "crystal_lizard", "crystal-lizard", "晶蜥" -> CRYSTAL_LIZARD
+            "dune_fox", "dune-fox", "沙狐" -> DUNE_FOX
+            "shadow_moth", "shadow-moth", "影蛾" -> SHADOW_MOTH
             else -> MOTE
         }
     }

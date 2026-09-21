@@ -14,6 +14,9 @@ const { DiagnosticsCollector } = require('./diagnostics');
 const { RuntimePersistence } = require('./runtime-persistence');
 const { HealthChecks } = require('./health');
 const { createStructuredLogger } = require('./structured-log');
+const { DeviceSimulator } = require('./device-simulator');
+const { MemoryStore } = require('./ai-memory');
+const { RealityEngine } = require('./reality-engine');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -70,6 +73,9 @@ const runtimePersistence = new RuntimePersistence({
   onRecovery: event => console.warn(JSON.stringify({ event: 'runtime.recovered', ...event }))
 });
 const structuredLogger = createStructuredLogger({ sink: line => console.log(line), context: { component: 'phonebridge' } });
+const deviceSimulator = process.env.PHONEBRIDGE_ENABLE_SIMULATOR === '1'
+  ? new DeviceSimulator({ seed: process.env.PHONEBRIDGE_SIMULATOR_SEED || 'phonebridge-sim' })
+  : null;
 
 function acquireSingletonLock() {
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -279,6 +285,8 @@ const healthChecks = new HealthChecks({
   workspace: () => ({ ok: Boolean(workspaceStore) }),
   token: () => ({ ok: Boolean(ACCESS_TOKEN) }),
 });
+const memoryStore = new MemoryStore({ persistence: runtimePersistence });
+const realityEngine = new RealityEngine({ persistence: runtimePersistence });
 const proactiveState = {
   paused: false,
   quietStart: 23,
@@ -846,11 +854,20 @@ taskRunner.setExecutor(async ({ task, signal, report, waitIfPaused }) => {
   await waitIfPaused();
   if (signal.aborted) throw new Error('cancelled');
   report(10);
-  const result = await chatWithModel(String(task.metadata?.text || task.detail || ''), task.metadata?.memories || [], {
+  const requestId = String(task.metadata?.requestId || `ai_${task.id}`);
+  const cancelOnAbort = () => aiProviderManager.cancel(requestId);
+  signal.addEventListener('abort', cancelOnAbort, { once: true });
+  const configuredMemories = Array.isArray(task.metadata?.memories) && task.metadata.memories.length
+    ? task.metadata.memories
+    : memoryStore.list({ limit: 20 }).map(item => item.text);
+  const result = await chatWithModel(String(task.metadata?.text || task.detail || ''), configuredMemories, {
     model: session.model,
+    providerId: session.providerId,
+    requestId,
     sessionId,
     history: session.messages,
   });
+  signal.removeEventListener('abort', cancelOnAbort);
   if (signal.aborted) throw new Error('cancelled');
   const assistant = workspaceStore.appendMessage(sessionId, { role: 'assistant', text: result.reply, streamId: result.id });
   broadcast({ type: 'workspace.message', sessionId, message: assistant });
@@ -1141,6 +1158,7 @@ async function chatWithModel(text, memories = [], options = {}) {
     prompt: String(text || ''),
     memories,
     providerId: options.providerId || null,
+    requestId: options.requestId || null,
     options
   });
   diagnosticsCollector.recordProviderLatency(result.fallbackProvider || result.providerId, aiProviderManager.lastLatencyMs);
@@ -1569,6 +1587,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (deviceSimulator && parsedUrl.pathname === '/api/dev/simulator' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, state: deviceSimulator.snapshot(), reality: deviceSimulator.realityEvent() });
+    }
+    if (deviceSimulator && parsedUrl.pathname === '/api/dev/simulator' && req.method === 'PATCH') {
+      try {
+        const state = deviceSimulator.apply(await readJson(req));
+        return sendJson(res, 200, { ok: true, state, reality: deviceSimulator.realityEvent() });
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: error.message });
+      }
+    }
+
     if (parsedUrl.pathname === '/api/workspace' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, ...workspaceSnapshot() });
     }
@@ -1615,6 +1645,40 @@ const server = http.createServer(async (req, res) => {
       } catch (error) {
         return sendJson(res, 400, { ok: false, error: error.message });
       }
+    }
+    if (parsedUrl.pathname === '/api/ai/capabilities' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        ok: true,
+        providers: aiProviderManager.getProviders().map(provider => ({ id: provider.id, capabilities: provider.capabilities || ['text'] })),
+        defaults: { timeoutMs: aiProviderManager.timeoutMs, maxOutputTokens: aiProviderManager.maxOutputTokens, dailyOutputTokenBudget: aiProviderManager.dailyOutputTokenBudget }
+      });
+    }
+    const aiCancelMatch = parsedUrl.pathname.match(/^\/api\/ai\/requests\/([^/]+)\/cancel$/);
+    if (aiCancelMatch && req.method === 'POST') {
+      const cancelled = aiProviderManager.cancel(decodeURIComponent(aiCancelMatch[1]));
+      return sendJson(res, cancelled ? 200 : 404, { ok: cancelled, cancelled });
+    }
+    if (parsedUrl.pathname === '/api/memories' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, ...memoryStore.snapshot(), memories: memoryStore.list({ query: parsedUrl.searchParams.get('query') || '', limit: parsedUrl.searchParams.get('limit') || 50, sensitivity: parsedUrl.searchParams.get('sensitivity') || null }) });
+    }
+    if (parsedUrl.pathname === '/api/memories' && req.method === 'POST') {
+      try {
+        const result = memoryStore.add(await readJson(req));
+        broadcast({ type: 'workspace.memory', memory: result.entry, revision: result.revision });
+        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
+      } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    if (parsedUrl.pathname === '/api/memories/export' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, memories: memoryStore.export({ includeSensitive: parsedUrl.searchParams.get('includeSensitive') === 'true' }) });
+    }
+    const memoryMatch = parsedUrl.pathname.match(/^\/api\/memories\/([^/]+)$/);
+    if (memoryMatch && req.method === 'PATCH') {
+      try { return sendJson(res, 200, { ok: true, ...memoryStore.update(decodeURIComponent(memoryMatch[1]), await readJson(req)) }); }
+      catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    if (memoryMatch && req.method === 'DELETE') {
+      const result = memoryStore.remove(decodeURIComponent(memoryMatch[1]));
+      return sendJson(res, result.removed ? 200 : 404, { ok: result.removed, ...result });
     }
     const aiProbeMatch = parsedUrl.pathname.match(/^\/api\/ai\/providers\/([^/]+)\/probe$/);
     if (aiProbeMatch && req.method === 'POST') {
@@ -1709,6 +1773,44 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
       } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
+    if (parsedUrl.pathname === '/api/reality/catalog' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, catalog: realityEngine.catalog() });
+    }
+    if (parsedUrl.pathname === '/api/reality/state' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, state: realityEngine.snapshot() });
+    }
+    if (parsedUrl.pathname === '/api/reality/events' && req.method === 'GET') {
+      const region = parsedUrl.searchParams.get('region') || realityEngine.snapshot().region || '';
+      try { return sendJson(res, 200, { ok: true, events: realityEngine.eventsFor(region) }); }
+      catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    const realityEventMatch = parsedUrl.pathname.match(/^\/api\/reality\/events\/([^/]+)\/(start|resolve)$/);
+    if (realityEventMatch && req.method === 'POST') {
+      try {
+        const payload = await readJson(req);
+        const eventId = decodeURIComponent(realityEventMatch[1]);
+        const result = realityEventMatch[2] === 'start'
+          ? realityEngine.startEncounter({ eventId, region: payload.region })
+          : realityEngine.resolve({ eventId, region: payload.region, clueType: payload.clueType, actions: payload.actions });
+        if (realityEventMatch[2] === 'resolve' && !result.duplicate) {
+          moteRelationshipStore.recordInteraction({ eventId: `reality:${eventId}`, kind: 'reality', amount: result.reward?.xp || 1 });
+          broadcast({ type: 'reality.progress', result, state: realityEngine.snapshot() });
+        }
+        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
+      } catch (error) { return sendJson(res, /expired|invalid|region|clue/i.test(error.message) ? 409 : 400, { ok: false, error: error.message }); }
+    }
+    if (parsedUrl.pathname === '/api/reality/crafting' && req.method === 'POST') {
+      try { const result = realityEngine.craft((await readJson(req)).recipeId); broadcast({ type: 'reality.inventory', state: result.state }); return sendJson(res, 201, { ok: true, ...result }); }
+      catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    if (parsedUrl.pathname === '/api/reality/loadout' && req.method === 'PATCH') {
+      try { const state = realityEngine.setLoadout((await readJson(req)).items); broadcast({ type: 'reality.loadout', state }); return sendJson(res, 200, { ok: true, state }); }
+      catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    if (parsedUrl.pathname === '/api/reality/habitat' && req.method === 'PATCH') {
+      try { const state = realityEngine.decorate((await readJson(req)).decorationId); broadcast({ type: 'reality.habitat', state }); return sendJson(res, 200, { ok: true, state }); }
+      catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
     if (parsedUrl.pathname === '/api/motes/quests' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, quests: moteQuestStore.list() });
     }
@@ -1755,7 +1857,7 @@ const server = http.createServer(async (req, res) => {
       broadcast({ type: 'workspace.session', session });
       return sendJson(res, 201, { ok: true, session });
     }
-    const sessionMatch = parsedUrl.pathname.match(/^\/api\/workspace\/sessions\/([^/]+)(?:\/(messages|authorize|revoke|policy))?$/);
+    const sessionMatch = parsedUrl.pathname.match(/^\/api\/workspace\/sessions\/([^/]+)(?:\/(messages|authorize|revoke|policy|ai))?$/);
     if (sessionMatch) {
       const sessionId = decodeURIComponent(sessionMatch[1]);
       const suffix = sessionMatch[2] || '';
@@ -1763,13 +1865,14 @@ const server = http.createServer(async (req, res) => {
       if (suffix === 'messages' && req.method === 'POST') {
         const payload = await readJson(req);
         const message = workspaceStore.appendMessage(sessionId, payload);
-        const task = workspaceStore.createTask({ source: 'conversation', title: `会话：${String(message.text).slice(0, 36)}`, detail: message.text, metadata: { sessionId, messageId: message.id } });
+        const requestId = `ai_${crypto.randomUUID()}`;
+        const task = workspaceStore.createTask({ source: 'conversation', title: `会话：${String(message.text).slice(0, 36)}`, detail: message.text, metadata: { sessionId, messageId: message.id, requestId, memories: Array.isArray(payload.memories) ? payload.memories : [] } });
         broadcast({ type: 'workspace.message', sessionId, message });
         broadcast({ type: 'workspace.task', task });
         if (payload.runModel !== false && message.role === 'user') {
           runWorkspaceMessage(sessionId, message, task.id, Array.isArray(payload.memories) ? payload.memories : []).catch(() => {});
         }
-        return sendJson(res, 202, { ok: true, message, task });
+        return sendJson(res, 202, { ok: true, message, task, requestId: task.metadata.requestId });
       }
       if (suffix === 'messages' && req.method === 'GET') {
         return sendJson(res, 200, { ok: true, messages: workspaceStore.getSession(sessionId).messages });
@@ -1792,6 +1895,13 @@ const server = http.createServer(async (req, res) => {
         const policy = workspaceStore.updateSessionPolicy(sessionId, await readJson(req));
         broadcast({ type: 'workspace.policy', scope: 'session', policy });
         return sendJson(res, 200, { ok: true, policy });
+      }
+      if (suffix === 'ai' && req.method === 'PATCH') {
+        try {
+          const session = workspaceStore.updateSession(sessionId, { aiPolicy: await readJson(req) });
+          broadcast({ type: 'workspace.session', session });
+          return sendJson(res, 200, { ok: true, session });
+        } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
       }
       if (!suffix && req.method === 'GET') return sendJson(res, 200, { ok: true, session: workspaceStore.getSession(sessionId) });
       if (!suffix && req.method === 'PATCH') return sendJson(res, 200, { ok: true, session: workspaceStore.updateSession(sessionId, await readJson(req)) });

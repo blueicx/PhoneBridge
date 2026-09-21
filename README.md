@@ -51,6 +51,17 @@
 - Web 控制台多视图与深链：增加收件箱/进行中/历史任务视图、任务与聊天上下文关联、Attention/通知深链数据属性、增量时间线与诊断摘要更新；304/无关事件跳过重绘。
 - Android 统一投影底座：新增 `WorkspaceTimeline.kt`（StateFlow 投影更新、任务卡片协议、深链协议、断线缓存间隙恢复、GPS 占位输入底座）与 `AiProvider.kt`（脱敏配置、离线本地回退解析器），保持既有 Canvas 渲染形态分支不变。
 
+## PhoneBridge 2.0 持续增强
+
+当前分支正在推进 2.0 四批增强。已落地的基础能力包括：
+
+- 开发/测试专用确定性设备模拟器：设置 `PHONEBRIDGE_ENABLE_SIMULATOR=1` 后可使用 `GET/PATCH /api/dev/simulator` 模拟粗区域、线索方向、网络、传感器、电量、温度和帧率；默认关闭。
+- AI provider 能力、流式 request、取消、每日输出预算和本地记忆存储；新增 `/api/ai/capabilities`、`POST /api/ai/requests/:id/cancel`、`/api/memories`。
+- 现实探索引擎：确定性粗区域事件、过期/跨区域校验、遭遇、库存、合成、装备、家园、任务和幂等奖励；新增 `/api/reality/catalog`、`/api/reality/events`、`/api/reality/events/:id/start|resolve`、`/api/reality/crafting`、`/api/reality/loadout`、`/api/reality/habitat`。
+- Mote 图鉴扩展为 20 个形态，新增潮獭、月鹿、岩鼹、风貂、雷雀、雪兔、花灵、晶蜥、沙狐和影蛾；Android 已加入协议解析和配置回退。
+
+上述 2.0 能力仍需完成最终双端 UI、配对发布流程和实体机验收；不要把模拟器测试当作 GPS、ARCore、PTT 或长时间运行的实机证据。
+
 ## 启动
 
 APK：

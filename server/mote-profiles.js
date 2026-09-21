@@ -2,7 +2,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const INITIAL_MOTE_IDS = Object.freeze(['mote', 'sprite', 'ghost', 'circuit', 'cloud_whale', 'rimuru']);
-const EXPLORABLE_MOTE_IDS = Object.freeze(['ember_sprig', 'prism_moth', 'moss_tortoise', 'orbit_raven']);
+const EXPLORABLE_MOTE_IDS = Object.freeze([
+  'ember_sprig', 'prism_moth', 'moss_tortoise', 'orbit_raven',
+  'tide_otter', 'moon_deer', 'stone_mole', 'wind_marten', 'volt_sparrow', 'frost_hare',
+  'bloom_sprite', 'crystal_lizard', 'dune_fox', 'shadow_moth'
+]);
 const CLUE_TYPES = Object.freeze(['location', 'object', 'light']);
 
 const MOTE_PROFILES = Object.freeze([
@@ -16,6 +20,16 @@ const MOTE_PROFILES = Object.freeze([
   { id: 'prism_moth', name: '棱光蝶', initial: false, voice: '敏锐灵巧', proactive: 'balanced', taskAffinity: ['observation', 'triage'], emotionBias: { curiosity: .25, alert: .2 }, colors: { primary: '#64e8ff', secondary: '#c896ff' }, motion: 'orbiting-glide', particles: 'prismatic-rays', visualPreset: 'prism-moth' },
   { id: 'moss_tortoise', name: '苔龟', initial: false, voice: '沉稳守护', proactive: 'low', taskAffinity: ['health', 'maintenance'], emotionBias: { calm: .32, protect: .28 }, colors: { primary: '#77b255', secondary: '#c3a66b' }, motion: 'slow-breath', particles: 'moss-dust', visualPreset: 'moss-tortoise' },
   { id: 'orbit_raven', name: '星鸦', initial: false, voice: '远眺侦察', proactive: 'high', taskAffinity: ['remote-status', 'scanning'], emotionBias: { alert: .28, distance: .24 }, colors: { primary: '#5267c9', secondary: '#f4f6ff' }, motion: 'scan-turn', particles: 'scan-arcs', visualPreset: 'orbit-raven' },
+  { id: 'tide_otter', name: '潮獭', initial: false, voice: '轻快亲和', proactive: 'high', taskAffinity: ['social-care', 'flow'], emotionBias: { joy: .3, empathy: .18 }, colors: { primary: '#3bc7d8', secondary: '#d8ffff' }, motion: 'wave-roll', particles: 'water-rings', visualPreset: 'tide-otter', ability: '润滑节奏：连续完成任务时减少一次等待' },
+  { id: 'moon_deer', name: '月鹿', initial: false, voice: '宁静敏锐', proactive: 'low', taskAffinity: ['reflection', 'night'], emotionBias: { calm: .34, focus: .2 }, colors: { primary: '#8b91e8', secondary: '#fff2c9' }, motion: 'quiet-step', particles: 'moon-dust', visualPreset: 'moon-deer', ability: '月相记忆：夜间线索获得额外稳定度' },
+  { id: 'stone_mole', name: '岩鼹', initial: false, voice: '踏实专注', proactive: 'low', taskAffinity: ['collection', 'maintenance'], emotionBias: { calm: .28, protect: .25 }, colors: { primary: '#9b8066', secondary: '#e4c9a5' }, motion: 'burrow-pulse', particles: 'stone-specks', visualPreset: 'stone-mole', ability: '矿脉直觉：材料事件更容易发现' },
+  { id: 'wind_marten', name: '风貂', initial: false, voice: '灵巧迅疾', proactive: 'high', taskAffinity: ['speed', 'execution'], emotionBias: { urgency: .28, joy: .2 }, colors: { primary: '#8de4ec', secondary: '#ffffff' }, motion: 'wind-dash', particles: 'ribbon-wind', visualPreset: 'wind-marten', ability: '顺风步：方向校准挑战容错提高' },
+  { id: 'volt_sparrow', name: '雷雀', initial: false, voice: '清醒机敏', proactive: 'high', taskAffinity: ['devices', 'alerts'], emotionBias: { alert: .34, focus: .22 }, colors: { primary: '#f5d547', secondary: '#b8f3ff' }, motion: 'spark-hop', particles: 'electric-feathers', visualPreset: 'volt-sparrow', ability: '脉冲扫描：设备异常时优先生成提醒' },
+  { id: 'frost_hare', name: '雪兔', initial: false, voice: '谨慎精准', proactive: 'balanced', taskAffinity: ['precision', 'observation'], emotionBias: { calm: .2, alert: .24 }, colors: { primary: '#d9f2ff', secondary: '#a4c8ff' }, motion: 'frost-bounce', particles: 'snow-points', visualPreset: 'frost-hare', ability: '冷静取景：稳定镜头挑战时间窗口延长' },
+  { id: 'bloom_sprite', name: '花灵', initial: false, voice: '温柔滋养', proactive: 'balanced', taskAffinity: ['habitat', 'growth'], emotionBias: { joy: .22, empathy: .3 }, colors: { primary: '#f59cc8', secondary: '#d9ffb5' }, motion: 'petal-sway', particles: 'petals', visualPreset: 'bloom-sprite', ability: '栖息繁茂：家园舒适度加成提高' },
+  { id: 'crystal_lizard', name: '晶蜥', initial: false, voice: '敏锐折射', proactive: 'balanced', taskAffinity: ['light', 'analysis'], emotionBias: { curiosity: .32, focus: .18 }, colors: { primary: '#b5a2ff', secondary: '#75f2e2' }, motion: 'crystal-turn', particles: 'shards', visualPreset: 'crystal-lizard', ability: '折光识别：光线线索评级提高' },
+  { id: 'dune_fox', name: '沙狐', initial: false, voice: '坚韧从容', proactive: 'balanced', taskAffinity: ['endurance', 'field'], emotionBias: { courage: .25, calm: .2 }, colors: { primary: '#e8aa5b', secondary: '#ffe1a8' }, motion: 'sand-glide', particles: 'sand-stars', visualPreset: 'dune-fox', ability: '耐热行迹：高温时仍保持基础探索收益' },
+  { id: 'shadow_moth', name: '影蛾', initial: false, voice: '安静侦察', proactive: 'low', taskAffinity: ['stealth', 'remote-status'], emotionBias: { empathy: .2, alert: .26 }, colors: { primary: '#5a4d83', secondary: '#e6d7ff' }, motion: 'shadow-drift', particles: 'ink-wings', visualPreset: 'shadow-moth', ability: '暗处观察：低光环境下减少线索误判' },
 ]);
 
 const PROFILE_BY_ID = new Map(MOTE_PROFILES.map(profile => [profile.id, profile]));

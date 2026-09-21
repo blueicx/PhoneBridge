@@ -46,6 +46,8 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
       PHONEBRIDGE_TOKEN: TOKEN,
       PHONEBRIDGE_RUNTIME_DIR: runtimeDir,
       PHONEBRIDGE_LOCK_FILE: path.join(runtimeDir, 'test.lock'),
+      PHONEBRIDGE_ENABLE_SIMULATOR: '1',
+      PHONEBRIDGE_SIMULATOR_SEED: 'api-test',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -123,6 +125,37 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     });
     assert.equal(probeInvalidRes.response.status, 400);
     assert.equal(probeInvalidRes.body.ok, false);
+
+    const capabilitiesRes = await request('/api/ai/capabilities');
+    assert.equal(capabilitiesRes.response.status, 200);
+    assert.ok(capabilitiesRes.body.providers.some(provider => provider.id === 'local' && provider.capabilities.includes('offline')));
+
+    const memoryRes = await request('/api/memories', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'api-memory', text: '喜欢安静提醒', source: 'test' })
+    });
+    assert.equal(memoryRes.response.status, 201);
+    const memories = await request('/api/memories?query=安静');
+    assert.equal(memories.body.memories[0].id, 'api-memory');
+
+    const reality = await request('/api/reality/events?region=cell:1:2');
+    assert.equal(reality.response.status, 200);
+    assert.equal(reality.body.events.length, 8);
+    const event = reality.body.events[0];
+    const resolved = await request(`/api/reality/events/${encodeURIComponent(event.id)}/resolve`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ region: 'cell:1:2', clueType: event.clueType, actions: ['observe'] })
+    });
+    assert.equal(resolved.response.status, 201);
+    const duplicate = await request(`/api/reality/events/${encodeURIComponent(event.id)}/resolve`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ region: 'cell:1:2', clueType: event.clueType })
+    });
+    assert.equal(duplicate.body.duplicate, true);
+
+    const simulator = await request('/api/dev/simulator');
+    assert.equal(simulator.response.status, 200);
+    assert.equal(simulator.body.state.seed, 'api-test');
 
   } finally {
     child.kill('SIGTERM');

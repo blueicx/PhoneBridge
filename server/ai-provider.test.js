@@ -186,3 +186,38 @@ test('probeProvider reports status and latency without exposing keys', async () 
   assert.equal(probeUnknown.ok, false);
   assert.ok(probeUnknown.error);
 });
+
+test('provider settings expose capabilities and enforce the daily output budget', async () => {
+  const manager = new AiProviderManager({
+    activeProviderId: 'local',
+    dailyOutputTokenBudget: 2,
+    adapters: { local: { chat: async () => ({ reply: '123456789' }), capabilities: () => ['text', 'offline'] } }
+  });
+  assert.deepEqual(manager.getProviders().find(item => item.id === 'local').capabilities, ['text', 'offline', 'cancel']);
+  await assert.rejects(() => manager.chat({ prompt: 'budget' }), /budget exhausted/);
+  assert.equal(manager.getSettings().budgetRemaining, 2);
+});
+
+test('stream falls back to deterministic chunks and cancellation aborts active adapters', async () => {
+  let resolve;
+  const manager = new AiProviderManager({
+    activeProviderId: 'custom',
+    configs: { custom: { id: 'custom', model: 'test', capabilities: ['text', 'stream', 'cancel'] } },
+    adapters: {
+      custom: {
+        stream: async function* ({ signal }) {
+          await new Promise(done => { resolve = done; signal.addEventListener('abort', done, { once: true }); });
+          if (signal.aborted) throw new Error('aborted');
+          yield 'never';
+        }
+      },
+      local: { chat: async () => ({ reply: 'offline response' }) }
+    }
+  });
+  const iterator = manager.stream({ requestId: 'cancel-me', prompt: 'x' });
+  const pending = iterator.next();
+  await new Promise(resolveTick => setImmediate(resolveTick));
+  assert.equal(manager.cancel('cancel-me'), true);
+  resolve?.();
+  await assert.rejects(() => pending, /aborted|cancelled/);
+});

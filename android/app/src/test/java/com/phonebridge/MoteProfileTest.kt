@@ -6,10 +6,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MoteProfileTest {
-    @Test fun registryContainsTenProfilesAndUnknownFallsBack() {
-        assertEquals(10, MoteProfiles.all.size)
+    @Test fun registryContainsTwentyProfilesAndUnknownFallsBack() {
+        assertEquals(20, MoteProfiles.all.size)
         assertEquals(6, MoteProfiles.initial.size)
-        assertEquals(4, MoteProfiles.explorable.size)
+        assertEquals(14, MoteProfiles.explorable.size)
         assertEquals(PetAppearance.MOTE, PetAppearance.fromWire("unknown"))
         assertEquals(PetAppearance.EMBER_SPRIG, PetAppearance.fromWire("ember_sprig"))
         assertNotNull(MoteProfiles.profile(PetAppearance.ORBIT_RAVEN))

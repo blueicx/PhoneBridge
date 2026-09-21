@@ -529,9 +529,9 @@ class WorkspaceStore {
     }
   }
 
-  createSession({ id: sessionId = id('session'), title = '新会话', providerId = 'codex', model = '', systemPrompt = '', tools = [] } = {}) {
+  createSession({ id: sessionId = id('session'), title = '新会话', providerId = 'codex', model = '', systemPrompt = '', tools = [], aiPolicy = {} } = {}) {
     const timestamp = iso(this.now());
-    const session = { id: sessionId, title, providerId, model, systemPrompt, tools, messages: [], createdAt: timestamp, updatedAt: timestamp, armedUntil: null };
+    const session = { id: sessionId, title, providerId, model, systemPrompt, tools, aiPolicy: clone(aiPolicy), messages: [], createdAt: timestamp, updatedAt: timestamp, armedUntil: null };
     this.sessions.set(session.id, session);
     this._persist();
     return clone(session);
@@ -548,7 +548,7 @@ class WorkspaceStore {
   updateSession(sessionId, patch = {}) {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error('session not found');
-    const allowed = ['title', 'providerId', 'model', 'systemPrompt', 'tools'];
+    const allowed = ['title', 'providerId', 'model', 'systemPrompt', 'tools', 'aiPolicy'];
     for (const key of allowed) if (patch[key] !== undefined) session[key] = patch[key];
     session.updatedAt = iso(this.now());
     this._persist();

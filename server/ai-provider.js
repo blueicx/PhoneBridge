@@ -76,6 +76,10 @@ class LocalRuleFallbackAdapter {
   async probe() {
     return { ok: true, latencyMs: 1, model: 'local-rules-v1', status: 'healthy' };
   }
+
+  capabilities() {
+    return ['text', 'offline', 'cancel'];
+  }
 }
 
 function requestSignal(timeoutMs) {
@@ -156,7 +160,9 @@ class AiProviderManager {
     fetchImpl = globalThis.fetch,
     enableNetworkAdapters = true,
     now = () => Date.now(),
-    persistence = null
+    persistence = null,
+    maxOutputTokens = 1024,
+    dailyOutputTokenBudget = 50000
   } = {}) {
     this.activeProviderId = activeProviderId;
     this.fallbackToLocal = true;
@@ -168,6 +174,11 @@ class AiProviderManager {
     this.now = now;
     this.fetchImpl = fetchImpl;
     this.persistence = persistence;
+    this.maxOutputTokens = Math.max(64, Math.min(8192, Number(maxOutputTokens) || 1024));
+    this.dailyOutputTokenBudget = Math.max(0, Math.min(1000000, Number(dailyOutputTokenBudget) || 0));
+    this.dailyOutputTokens = 0;
+    this.budgetDay = new Date(this.now()).toISOString().slice(0, 10);
+    this.activeRequests = new Map();
 
     // Real raw configs
     this.configs = {
@@ -176,7 +187,8 @@ class AiProviderManager {
         name: 'Codex 命令行桥接',
         type: 'codex',
         model: 'codex-chat',
-        status: 'ready'
+        status: 'ready',
+        capabilities: ['text', 'stream', 'tools', 'cancel']
       },
       openai: {
         id: 'openai',
@@ -186,7 +198,8 @@ class AiProviderManager {
         model: 'gpt-4o-mini',
         apiKey: '',
         headers: {},
-        status: 'configured'
+        status: 'configured',
+        capabilities: ['text', 'stream', 'cancel']
       },
       gemini: {
         id: 'gemini',
@@ -196,14 +209,16 @@ class AiProviderManager {
         model: 'gemini-1.5-flash',
         apiKey: '',
         headers: {},
-        status: 'configured'
+        status: 'configured',
+        capabilities: ['text', 'vision', 'stream', 'cancel']
       },
       local: {
         id: 'local',
         name: '本地离线规则',
         type: 'local',
         model: 'local-rules-v1',
-        status: 'ready'
+        status: 'ready',
+        capabilities: ['text', 'offline', 'cancel']
       }
     };
 
@@ -235,6 +250,8 @@ class AiProviderManager {
     if (saved.timeoutMs !== undefined) this.timeoutMs = Math.max(1000, Math.min(120000, Number(saved.timeoutMs) || 15000));
     if (saved.fallbackToLocal !== undefined) this.fallbackToLocal = Boolean(saved.fallbackToLocal);
     if (saved.localRulesEnabled !== undefined) this.localRulesEnabled = Boolean(saved.localRulesEnabled);
+    if (saved.maxOutputTokens !== undefined) this.maxOutputTokens = Math.max(64, Math.min(8192, Number(saved.maxOutputTokens) || 1024));
+    if (saved.dailyOutputTokenBudget !== undefined) this.dailyOutputTokenBudget = Math.max(0, Math.min(1000000, Number(saved.dailyOutputTokenBudget) || 0));
     for (const [id, incoming] of Object.entries(saved.providers || {})) {
       if (!this.configs[id]) continue;
       this.configs[id] = { ...this.configs[id], ...incoming };
@@ -253,6 +270,8 @@ class AiProviderManager {
       fallbackToLocal: this.fallbackToLocal,
       timeoutMs: this.timeoutMs,
       localRulesEnabled: this.localRulesEnabled,
+      maxOutputTokens: this.maxOutputTokens,
+      dailyOutputTokenBudget: this.dailyOutputTokenBudget,
       providers,
     });
   }
@@ -262,6 +281,7 @@ class AiProviderManager {
       const sanitized = sanitizeProviderConfig(c);
       return {
         ...sanitized,
+        capabilities: Array.isArray(c.capabilities) ? [...c.capabilities] : this.adapterCapabilities(c.id),
         isActive: sanitized.id === this.activeProviderId
       };
     });
@@ -277,6 +297,10 @@ class AiProviderManager {
       fallbackToLocal: this.fallbackToLocal,
       timeoutMs: this.timeoutMs,
       localRulesEnabled: this.localRulesEnabled,
+      maxOutputTokens: this.maxOutputTokens,
+      dailyOutputTokenBudget: this.dailyOutputTokenBudget,
+      dailyOutputTokens: this.dailyOutputTokens,
+      budgetRemaining: this.budgetRemaining(),
       degradationCount: this.degradationCount,
       providers: this.getProviders()
     };
@@ -294,6 +318,12 @@ class AiProviderManager {
     }
     if (patch.localRulesEnabled !== undefined) {
       this.localRulesEnabled = Boolean(patch.localRulesEnabled);
+    }
+    if (patch.maxOutputTokens !== undefined) {
+      this.maxOutputTokens = Math.max(64, Math.min(8192, Number(patch.maxOutputTokens) || 1024));
+    }
+    if (patch.dailyOutputTokenBudget !== undefined) {
+      this.dailyOutputTokenBudget = Math.max(0, Math.min(1000000, Number(patch.dailyOutputTokenBudget) || 0));
     }
 
     if (patch.providers && typeof patch.providers === 'object') {
@@ -316,6 +346,49 @@ class AiProviderManager {
 
   getDegradationCount() {
     return this.degradationCount;
+  }
+
+  adapterCapabilities(id) {
+    const config = this.configs[id] || {};
+    if (Array.isArray(config.capabilities)) return [...config.capabilities];
+    const adapter = this.adapters[id];
+    if (adapter && typeof adapter.capabilities === 'function') return adapter.capabilities();
+    return ['text'];
+  }
+
+  budgetRemaining() {
+    this.resetBudgetIfNeeded();
+    return this.dailyOutputTokenBudget === 0
+      ? null
+      : Math.max(0, this.dailyOutputTokenBudget - this.dailyOutputTokens);
+  }
+
+  resetBudgetIfNeeded() {
+    const day = new Date(this.now()).toISOString().slice(0, 10);
+    if (day !== this.budgetDay) {
+      this.budgetDay = day;
+      this.dailyOutputTokens = 0;
+    }
+  }
+
+  estimateTokens(text) {
+    return Math.max(1, Math.ceil(String(text || '').length / 4));
+  }
+
+  consumeBudget(text) {
+    this.resetBudgetIfNeeded();
+    const amount = this.estimateTokens(text);
+    if (this.dailyOutputTokenBudget > 0 && this.dailyOutputTokens + amount > this.dailyOutputTokenBudget) {
+      throw new Error('AI daily output budget exhausted');
+    }
+    this.dailyOutputTokens += amount;
+  }
+
+  cancel(requestId) {
+    const controller = this.activeRequests.get(String(requestId || ''));
+    if (!controller) return false;
+    controller.abort();
+    return true;
   }
 
   async probeProvider(providerId) {
@@ -362,27 +435,39 @@ class AiProviderManager {
     }
   }
 
-  async chat({ prompt = '', messages = [], memories = [], providerId = null, options = {} } = {}) {
+  async chat({ prompt = '', messages = [], memories = [], providerId = null, options = {}, requestId = null, signal = null } = {}) {
     const targetProviderId = providerId || this.activeProviderId;
     const start = this.now();
+    const id = String(requestId || `ai_${crypto.randomUUID()}`);
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) throw new Error('AI request cancelled');
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+    this.activeRequests.set(id, controller);
+    const requestSignalValue = controller.signal;
 
     // 1. Try explicit target provider
-    if (targetProviderId !== 'local') {
-      try {
-        const adapter = this.adapters[targetProviderId];
-        if (adapter && typeof adapter.chat === 'function') {
-          const res = await adapter.chat({
-            prompt,
-            messages,
-            memories,
-            options,
-            timeoutMs: this.timeoutMs,
-            config: this.configs[targetProviderId]
-          });
-          this.lastLatencyMs = this.now() - start;
-          return {
-            ok: true,
-            id: res.id || `ai_${crypto.randomUUID()}`,
+    try {
+      if (targetProviderId !== 'local') {
+        try {
+          const adapter = this.adapters[targetProviderId];
+          if (adapter && typeof adapter.chat === 'function') {
+            const res = await adapter.chat({
+              prompt,
+              messages,
+              memories,
+              options,
+              timeoutMs: this.timeoutMs,
+              config: this.configs[targetProviderId],
+              signal: requestSignalValue
+            });
+            this.consumeBudget(res.reply || '');
+            this.lastLatencyMs = this.now() - start;
+            return {
+              ok: true,
+            id,
             providerId: targetProviderId,
             reply: res.reply || '',
             model: res.model || this.configs[targetProviderId]?.model,
@@ -390,18 +475,20 @@ class AiProviderManager {
           };
         }
         throw new Error(`Provider ${targetProviderId} adapter unavailable`);
-      } catch (error) {
+        } catch (error) {
+          if (requestSignalValue.aborted) throw new Error('AI request cancelled');
         // Fallback rule:
         // "显式 provider 优先，失败只回退本地，备用联网 provider 不自动调用"
         if (!this.fallbackToLocal || !this.localRulesEnabled) throw error;
         this.degradationCount++;
         // Explicitly fallback ONLY to local
         const localAdapter = this.adapters.local || new LocalRuleFallbackAdapter();
-        const fallbackRes = await localAdapter.chat({ prompt, messages });
+        const fallbackRes = await localAdapter.chat({ prompt, messages, signal: requestSignalValue });
+        this.consumeBudget(fallbackRes.reply || '');
         this.lastLatencyMs = this.now() - start;
         return {
           ok: true,
-          id: fallbackRes.id || `ai_${crypto.randomUUID()}`,
+          id,
           providerId: targetProviderId,
           fallbackProvider: 'local',
           reply: fallbackRes.reply,
@@ -409,21 +496,49 @@ class AiProviderManager {
           degraded: true,
           error: error.message
         };
+        }
+      }
+
+      // Direct local call
+      const localAdapter = this.adapters.local || new LocalRuleFallbackAdapter();
+      const fallbackRes = await localAdapter.chat({ prompt, messages, signal: requestSignalValue });
+      if (requestSignalValue.aborted) throw new Error('AI request cancelled');
+      this.consumeBudget(fallbackRes.reply || '');
+      this.lastLatencyMs = this.now() - start;
+      return {
+        ok: true,
+        id,
+        providerId: 'local',
+        reply: fallbackRes.reply,
+        model: fallbackRes.model,
+        degraded: false
+      };
+    } finally {
+      this.activeRequests.delete(id);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  async *stream(request = {}) {
+    const requestId = String(request.requestId || `ai_${crypto.randomUUID()}`);
+    const targetProviderId = request.providerId || this.activeProviderId;
+    const adapter = this.adapters[targetProviderId];
+    if (adapter && typeof adapter.stream === 'function') {
+      const controller = new AbortController();
+      this.activeRequests.set(requestId, controller);
+      try {
+        for await (const delta of adapter.stream({ ...request, requestId, signal: controller.signal, config: this.configs[targetProviderId], timeoutMs: this.timeoutMs })) {
+          if (controller.signal.aborted) throw new Error('AI request cancelled');
+          yield String(delta);
+        }
+        return;
+      } finally {
+        this.activeRequests.delete(requestId);
       }
     }
-
-    // Direct local call
-    const localAdapter = this.adapters.local || new LocalRuleFallbackAdapter();
-    const fallbackRes = await localAdapter.chat({ prompt, messages });
-    this.lastLatencyMs = this.now() - start;
-    return {
-      ok: true,
-      id: fallbackRes.id || `ai_${crypto.randomUUID()}`,
-      providerId: 'local',
-      reply: fallbackRes.reply,
-      model: fallbackRes.model,
-      degraded: false
-    };
+    const result = await this.chat({ ...request, requestId });
+    const text = String(result.reply || '');
+    for (const chunk of text.match(/.{1,24}/gu) || []) yield chunk;
   }
 }
 

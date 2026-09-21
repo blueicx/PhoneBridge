@@ -168,7 +168,7 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
 
     const motes = await request('/api/motes');
     assert.equal(motes.response.status, 200);
-    assert.equal(motes.body.roster.length, 10);
+    assert.equal(motes.body.roster.length, 20);
     const activeMote = await request('/api/motes/active', {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'sprite' }),
     });

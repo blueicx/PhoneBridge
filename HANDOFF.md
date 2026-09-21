@@ -194,3 +194,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 
 1. 手机恢复后，按计划补做三类现实线索、文本聊天、PTT、通知、小组件、断线恢复、长时间运行、温度和电量检查。
 2. 批次 B 开始前重新展示计划并等待确认；不修改 `main`。
+
+## 12. PhoneBridge 2.0 当前实施状态（2026-09-22）
+
+- 已写入执行计划：`docs/superpowers/plans/2026-09-22-phonebridge-2.0.md`。
+- 已加入确定性 `server/device-simulator.js` 与 Android `DeviceSimulation.kt`，覆盖粗区域、现实事件、网络、传感器、电量、温度和帧率模拟；生产默认关闭。
+- AI provider 已增加能力描述、requestId、取消、流式分块、本地预算和脱敏长期记忆存储；新增 `/api/ai/capabilities`、`/api/ai/requests/:id/cancel`、`/api/memories`。
+- 现实引擎已加入 `server/reality-engine.js`：40 个区域事件、20 种遭遇、40 件材料/道具、20 个配方、30 件装饰和 36 条任务；奖励、库存、家园与事件均按幂等状态处理。
+- Mote 图鉴服务端和 Android 配置扩展到 20 个形态；新增形态仍消费统一行为提示，尚未逐一进行实体机视觉验收。
+- 当前验证：Node 全量测试已达到 **83/83**；Android `:app:testDebugUnitTest` 已通过。新增文件和 API 完成后仍需进行完整构建、性能、敏感扫描、CI 和独立代码审查。
+- 明确未完成：服务端/Android 深度拆分、完整 Web/Android 现实玩法 UI、TLS 配对、签名 2.0 APK、ARCore、GPS、PTT、通知/小组件实机闭环。

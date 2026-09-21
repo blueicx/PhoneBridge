@@ -11,10 +11,10 @@ const {
   deriveMoteBehavior,
 } = require('./mote-profiles');
 
-test('keeps six initial and four explorable complete Mote profiles', () => {
-  assert.equal(MOTE_PROFILES.length, 10);
+test('keeps six initial and fourteen explorable complete Mote profiles', () => {
+  assert.equal(MOTE_PROFILES.length, 20);
   assert.equal(INITIAL_MOTE_IDS.length, 6);
-  assert.equal(EXPLORABLE_MOTE_IDS.length, 4);
+  assert.equal(EXPLORABLE_MOTE_IDS.length, 14);
   for (const profile of MOTE_PROFILES) {
     for (const key of ['id', 'name', 'initial', 'voice', 'proactive', 'taskAffinity', 'emotionBias', 'colors', 'motion', 'particles', 'visualPreset']) {
       assert.ok(profile[key] !== undefined, `${profile.id} missing ${key}`);
