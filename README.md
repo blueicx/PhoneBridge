@@ -123,7 +123,7 @@ App 的“节点”按钮可同时填写节点地址和访问令牌。令牌文�
 
 ## 批次 A：可靠性与发布闭环
 
-- `server/runtime-persistence.js` 统一管理 schema v2、SHA-256 校验、旧裸 JSON 迁移、原子替换、有限备份和损坏文件隔离恢复。
+- `server/runtime-persistence.js` 统一管理 schema v3、兼容 schema v2/旧裸 JSON 迁移、SHA-256 校验、原子替换、有限备份和损坏文件隔离恢复。
 - Workspace、时间线、Mote、关系/任务和 provider 安全设置共享同一运行时持久化目录；provider 密钥和令牌不会写入持久化 payload。
 - 健康检查：`GET /health/live`、`GET /health/ready`，兼容 `/api/health/liveness` 与 `/api/health/readiness`；`/api/diagnostics` 增加持久化恢复指标。
 - 日志通过结构化 JSON 输出并对 token、密码、Authorization、Cookie 和密钥模式脱敏；访问令牌轮换接口只返回轮换结果，不返回新令牌。

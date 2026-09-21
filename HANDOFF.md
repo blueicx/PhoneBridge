@@ -202,7 +202,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - AI provider 已增加能力描述、requestId、取消、流式分块、本地预算和脱敏长期记忆存储；新增 `/api/ai/capabilities`、`/api/ai/requests/:id/cancel`、`/api/memories`。
 - 现实引擎已加入 `server/reality-engine.js`：40 个区域事件、20 种遭遇、40 件材料/道具、20 个配方、30 件装饰和 36 条任务；奖励、库存、家园与事件均按幂等状态处理。
 - Mote 图鉴服务端和 Android 配置扩展到 20 个形态；新增形态仍消费统一行为提示，尚未逐一进行实体机视觉验收。
-- 当前验证：Node 全量测试已达到 **88/88**；Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 已通过。新增文件和 API 完成后仍需进行完整性能、敏感扫描、CI 和独立代码审查。
+- 当前验证：Node 全量测试 **91/91**；性能预算输出 `elapsedMs=1.067`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；Android `:app:testDebugUnitTest :app:assembleDebug` 返回 `BUILD SUCCESSFUL`；敏感扫描、`node --check server/index.js` 和 `git diff --check` 均通过。
 - 新增本地一次性配对模块 `server/pairing.js` 与 Android `PairingProtocol.kt`；当前只允许 loopback 配对，未宣称 Wi-Fi TLS 配对完成。
 - 会话上下文新增确定性摘要与长度裁剪，聊天任务现在把会话历史和本地记忆传给 provider，并记录已使用的记忆。
-- 明确未完成：服务端/Android 深度拆分、完整 Web/Android 现实玩法 UI、TLS 配对、签名 2.0 APK、ARCore、GPS、PTT、通知/小组件实机闭环。
+- 本轮最终验收仍属于代码/协议/模拟器/构建验收；GitHub Actions 将由最新推送触发，不能提前视为远端 CI 已通过。
+- 明确未完成：服务端/Android 深度拆分、完整 Web/Android 现实玩法 UI、Wi-Fi TLS 配对、签名 2.0 APK、ARCore、GPS、PTT、通知/小组件实机闭环。
