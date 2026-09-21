@@ -8,8 +8,11 @@ data class PairingOffer(
     val port: Int,
     val fingerprint: String? = null,
     val expiresAt: Long = 0L,
+    val scheme: String = "ws",
 ) {
     fun isUsable(now: Long): Boolean = pairingId.isNotBlank() && code.length == 6 && nonce.isNotBlank() && expiresAt > now
+    fun isSecureRemote(): Boolean = !PairingProtocol.isLoopbackHost(host) && scheme.equals("wss", ignoreCase = true) && !fingerprint.isNullOrBlank()
+    fun endpointUrl(): String = "${scheme.lowercase()}://$host:$port"
 }
 
 object PairingProtocol {

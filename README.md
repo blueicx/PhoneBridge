@@ -63,6 +63,7 @@
 - 运行时持久化已升级到 schema v3，兼容迁移 v2 信封和旧裸 JSON；会话上下文会裁剪长历史并生成确定性摘要。
 - 批次 A 新增统一脱敏伴侣摘要：`GET /api/companion/summary`，支持 ETag/304；Web 工作台展示 Mote、任务、提醒、现实探索、Provider、记忆和自治状态，现实事件可直接发起遭遇或收集。
 - Android 新增 `CompanionSummary` 协议模型，主界面和 Mote 小组件读取同一份摘要字段，断线时继续使用本地镜像。
+- Android 当前版本为 `2.0.0`（`versionCode 2`）；批次 B 已加入可选 HTTPS/WSS、证书指纹配对和脱敏诊断导出，正式签名仍需外部 keystore。
 
 上述 2.0 能力已加入统一双端摘要入口，但仍需完成 Wi-Fi 配对发布流程和实体机验收；不要把模拟器测试当作 GPS、ARCore、PTT 或长时间运行的实机证据。
 
@@ -117,6 +118,7 @@ F:\CodexApps\PhoneBridge\cloudflared.exe tunnel --url http://127.0.0.1:9503 --no
 - 诊断与运行指标：`GET /api/diagnostics`；提供启动耗时、同步延迟、积压计数、设备遥测、provider 延迟和降级计数。
 - 可插拔 AI 适配器与设置：`GET /api/ai/providers`、`GET /api/ai/settings`、`PATCH /api/ai/settings`、`POST /api/ai/providers/:id/probe`。
 - 统一伴侣摘要：`GET /api/companion/summary`；现实探索事件动作：`POST /api/reality/events/:id/start|resolve`。
+- 脱敏诊断导出：`GET /api/diagnostics/export`；TLS 配置使用 `PHONEBRIDGE_TLS_KEY`、`PHONEBRIDGE_TLS_CERT` 和可选 `PHONEBRIDGE_PAIRING_HOST`。
 
 App 的“节点”按钮可同时填写节点地址和访问令牌。令牌文件位于 `server/access.token`，请勿把公网地址和令牌一起公开。
 - 浏览器令牌失效时会重新提示输入；取消提示不会造成无限弹窗。WebSocket、API、画面和音频都校验同一个令牌。

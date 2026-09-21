@@ -216,3 +216,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - Android 新增 `CompanionSummary.kt` 与单元测试；`MainActivity` 和 `MoteWidgetProvider` 使用统一摘要字段，保留 Room/离线镜像和旧协议兼容。
 - 本批最终验证：Node 全量 **93/93**；Android `:app:testDebugUnitTest :app:assembleDebug` 返回 `BUILD SUCCESSFUL`；性能预算 `elapsedMs=0.718`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；敏感扫描、语法检查和 `git diff --check` 通过。
 - 边界：本批仍不宣称 Wi-Fi TLS、签名发布、ARCore/GPS/PTT 或实体机通知/小组件验收完成。
+
+## 14. 批次 B：TLS 配对与侧载发布底座（进行中）
+
+- 新增 `server/tls-config.js`：证书/私钥成对加载、证书 SHA-256 指纹和 `ws/wss` 传输描述；服务端在配置 TLS 时自动切换 HTTPS/WSS。
+- 非回环绑定节点没有 TLS 时拒绝启动远程配对；远程 claim 必须来自加密连接；`PHONEBRIDGE_PAIRING_HOST` 用于返回手机可访问的局域网地址。
+- 新增 `GET /api/diagnostics/export`，只输出 readiness、诊断、持久化和统一伴侣摘要，测试确认不包含访问令牌。
+- Android `PairingOffer` 增加 `wss`/指纹安全校验；版本升级到 `versionCode 2`、`versionName 2.0.0`；新增 `scripts/print_release_hash.ps1` 和发布/回滚说明。
+- 批次 B 验证：Node **96/96**；Android `:app:testDebugUnitTest :app:assembleDebug` 返回 `BUILD SUCCESSFUL`；性能预算 `elapsedMs=0.706`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；敏感扫描、语法检查和 `git diff --check` 通过。
+- Debug APK：`android/app/build/outputs/apk/debug/app-debug.apk`，90,773,754 bytes，SHA-256 `8C2FD0D836A1084E6C393F1148DE74A69190B4CF229EF891BE683B2B1CCC9B50`。
+- 当前仍未使用正式签名 keystore，也未进行真实局域网 TLS、手机配对、ARCore/GPS/PTT 和长时间运行验收。

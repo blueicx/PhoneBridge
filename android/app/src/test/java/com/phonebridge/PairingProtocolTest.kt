@@ -14,4 +14,13 @@ class PairingProtocolTest {
         assertFalse(offer.isUsable(1000))
         assertTrue(PairingProtocol.isLoopbackHost("localhost"))
     }
+
+    @Test
+    fun remotePairingRequiresWssAndCertificateFingerprint() {
+        val insecure = PairingOffer("pair_1", "123456", "nonce", "192.168.1.9", 9503, scheme = "ws")
+        val secure = insecure.copy(scheme = "wss", fingerprint = "sha256:abc")
+        assertFalse(insecure.isSecureRemote())
+        assertTrue(secure.isSecureRemote())
+        assertEquals("wss://192.168.1.9:9503", secure.endpointUrl())
+    }
 }

@@ -81,6 +81,13 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     assert.equal(diagRes.body.performance.fpsTarget, 30);
     assert.equal(diagRes.body.performance.throttlingStrategy, 'background_reduced');
 
+    const exportRes = await request('/api/diagnostics/export');
+    assert.equal(exportRes.response.status, 200);
+    assert.equal(exportRes.body.formatVersion, 1);
+    assert.ok(exportRes.body.readiness);
+    assert.ok(exportRes.body.companionSummary);
+    assert.equal(JSON.stringify(exportRes.body).includes(TOKEN), false);
+
     // 2b. Test the compact cross-client companion summary and conditional cache
     const companionRes = await request('/api/companion/summary');
     assert.equal(companionRes.response.status, 200);

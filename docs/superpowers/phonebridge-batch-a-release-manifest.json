@@ -2,7 +2,7 @@
   "name": "PhoneBridge",
   "batch": "A",
   "branch": "feature/integrated-enhancement",
-  "runtimeSchemaVersion": 2,
+  "runtimeSchemaVersion": 3,
   "artifacts": [
     "server/runtime-persistence.js",
     "server/health.js",

@@ -1,4 +1,5 @@
 const http = require('http');
+const https = require('https');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
@@ -20,6 +21,7 @@ const { RealityEngine } = require('./reality-engine');
 const { PairingManager } = require('./pairing');
 const { prepareConversation } = require('./session-context');
 const { buildCompanionSummary } = require('./companion-summary');
+const { loadTlsOptions, pairingTransport } = require('./tls-config');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -27,6 +29,13 @@ const os = require('os');
 const PORT = process.env.PHONEBRIDGE_PORT || 9501;
 const BIND_HOST = process.env.PHONEBRIDGE_BIND || '127.0.0.1';
 const RUNTIME_DIR = process.env.PHONEBRIDGE_RUNTIME_DIR || __dirname;
+const TLS_CONFIG = loadTlsOptions({
+  keyPath: process.env.PHONEBRIDGE_TLS_KEY || '',
+  certPath: process.env.PHONEBRIDGE_TLS_CERT || '',
+});
+const TLS_OPTIONS = TLS_CONFIG.options;
+const TLS_ENABLED = Boolean(TLS_OPTIONS);
+const PAIRING_HOST = process.env.PHONEBRIDGE_PAIRING_HOST || BIND_HOST;
 const FRAMES_DIR = path.join(__dirname, 'frames');
 const SHOTS_DIR = path.join(__dirname, 'screenshots');
 for (const dir of [FRAMES_DIR, SHOTS_DIR]) fs.mkdirSync(dir, { recursive: true });
@@ -1606,7 +1615,7 @@ function refreshWorkspace(){if(workspaceRefreshFrame)return;workspaceRefreshFram
 refreshWorkspace();
 </script>`;
 
-const server = http.createServer(async (req, res) => {
+const handleHttpRequest = async (req, res) => {
   res.setHeader('Vary', 'Origin');
   if (req.headers.origin && req.headers.origin === `http://${req.headers.host}`) {
     res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
@@ -1647,7 +1656,9 @@ const server = http.createServer(async (req, res) => {
     if (parsedUrl.pathname === '/api/pairing/claim' && req.method === 'POST') {
       const remote = String(req.socket.remoteAddress || '');
       const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
-      if (!loopback) return sendJson(res, 403, { ok: false, error: 'pairing is restricted to a loopback connection' });
+      const encrypted = Boolean(req.socket.encrypted);
+      if (!loopback && !TLS_ENABLED) return sendJson(res, 409, { ok: false, error: 'remote pairing requires TLS' });
+      if (!loopback && !encrypted) return sendJson(res, 403, { ok: false, error: 'remote pairing requires an encrypted connection' });
       if (process.env.PHONEBRIDGE_TOKEN) return sendJson(res, 409, { ok: false, error: 'pairing is disabled while a fixed environment token is configured' });
       try {
         const result = pairingManager.claim(await readJson(req));
@@ -1666,11 +1677,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (parsedUrl.pathname === '/api/pairing/start' && req.method === 'POST') {
-      if (BIND_HOST !== '127.0.0.1' && BIND_HOST !== 'localhost' && BIND_HOST !== '::1') {
-        return sendJson(res, 409, { ok: false, error: 'pairing requires a loopback-bound node' });
-      }
-      const offer = pairingManager.start({ host: BIND_HOST, port: PORT, fingerprint: process.env.PHONEBRIDGE_TLS_FINGERPRINT || null });
-      return sendJson(res, 201, { ok: true, offer });
+      const loopback = BIND_HOST === '127.0.0.1' || BIND_HOST === 'localhost' || BIND_HOST === '::1';
+      if (!loopback && !TLS_ENABLED) return sendJson(res, 409, { ok: false, error: 'remote pairing requires TLS' });
+      const transport = pairingTransport({ tls: TLS_ENABLED, host: PAIRING_HOST, port: PORT, fingerprint: TLS_CONFIG.fingerprint });
+      const offer = pairingManager.start({ host: PAIRING_HOST, port: PORT, fingerprint: TLS_CONFIG.fingerprint });
+      return sendJson(res, 201, { ok: true, offer: { ...offer, ...transport } });
     }
 
     if (deviceSimulator && parsedUrl.pathname === '/api/dev/simulator' && req.method === 'GET') {
@@ -1716,6 +1727,19 @@ const server = http.createServer(async (req, res) => {
       diagnosticsCollector.updateTelemetry(phoneTelemetry);
       diagnosticsCollector.setEventBacklog(taskRunner.list().filter(r => r.state === 'queued' || r.state === 'running').length);
       return sendJson(res, 200, { ...diagnosticsCollector.snapshot(), persistence: runtimePersistence.snapshot() });
+    }
+    if (parsedUrl.pathname === '/api/diagnostics/export' && req.method === 'GET') {
+      diagnosticsCollector.updateTelemetry(phoneTelemetry);
+      diagnosticsCollector.setEventBacklog(taskRunner.list().filter(r => r.state === 'queued' || r.state === 'running').length);
+      return sendJson(res, 200, {
+        ok: true,
+        formatVersion: 1,
+        generatedAt: new Date().toISOString(),
+        readiness: healthChecks.readiness(),
+        diagnostics: diagnosticsCollector.snapshot(),
+        persistence: runtimePersistence.snapshot(),
+        companionSummary: JSON.parse(summaryPayload()).companionSummary,
+      });
     }
     if (parsedUrl.pathname === '/api/companion/summary' && req.method === 'GET') {
       const etag = `"companion-${workspaceStore.eventRevision}-${snapshotRevision}"`;
@@ -2305,7 +2329,10 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     res.writeHead(500, {'Content-Type':'application/json'}); res.end(JSON.stringify({ok:false,error:e.message}));
   }
-});
+};
+const server = TLS_OPTIONS
+  ? https.createServer(TLS_OPTIONS, handleHttpRequest)
+  : http.createServer(handleHttpRequest);
 
 const wss = new WebSocketServer({ server });
 registerWorkspaceTools();
@@ -2475,5 +2502,5 @@ server.listen(PORT, BIND_HOST, ()=>{
   addLog('success','Mote 节点已启动');
   refreshCodexInfo();
   if(selectedCodexTaskId)refreshSelectedCodexTask();
-  console.log(`PhoneBridge server running on ${BIND_HOST}:${PORT}`);
+  console.log(`PhoneBridge server running on ${TLS_ENABLED ? 'https' : 'http'}://${BIND_HOST}:${PORT}`);
 });
