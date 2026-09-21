@@ -8,6 +8,7 @@ const {
   RuntimePersistence,
   migrateState,
   validateEnvelope,
+  checksumFor,
 } = require('./runtime-persistence');
 
 function tempDir() {
@@ -64,6 +65,23 @@ test('RuntimePersistence rejects a tampered checksum instead of trusting the sna
   const result = persistence.loadWithMeta('tampered', { value: 'default' });
   assert.equal(result.state.value, 'default');
   assert.ok(result.quarantinedPath && fs.existsSync(result.quarantinedPath));
+});
+
+test('RuntimePersistence migrates a valid schema v2 envelope to v3', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phonebridge-schema-v2-'));
+  const state = { marker: 'legacy', aiSettings: { activeProviderId: 'local' } };
+  fs.writeFileSync(path.join(dir, 'legacy.json'), JSON.stringify({
+    schemaVersion: 2,
+    savedAt: new Date(0).toISOString(),
+    checksum: checksumFor(state),
+    state,
+  }));
+  const persistence = new RuntimePersistence({ dir });
+  const result = persistence.loadWithMeta('legacy', {});
+  assert.equal(result.migrated, true);
+  assert.equal(result.state.schemaVersion, RUNTIME_SCHEMA_VERSION);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'legacy.json'), 'utf8')).schemaVersion, RUNTIME_SCHEMA_VERSION);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('migrateState upgrades old runtime fields without leaking credentials', () => {

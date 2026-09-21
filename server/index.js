@@ -18,6 +18,7 @@ const { DeviceSimulator } = require('./device-simulator');
 const { MemoryStore } = require('./ai-memory');
 const { RealityEngine } = require('./reality-engine');
 const { PairingManager } = require('./pairing');
+const { prepareConversation } = require('./session-context');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1156,9 +1157,12 @@ async function rawChatWithModel(text, memories = [], options = {}) {
 }
 
 async function chatWithModel(text, memories = [], options = {}) {
+  const context = prepareConversation({ history: options.history, memories });
+  memoryStore.markUsed(context.memories.map(value => memoryStore.list({ query: value, limit: 1 })[0]?.id).filter(Boolean));
   const result = await aiProviderManager.chat({
     prompt: String(text || ''),
-    memories,
+    messages: context.messages,
+    memories: context.memories,
     providerId: options.providerId || null,
     requestId: options.requestId || null,
     options

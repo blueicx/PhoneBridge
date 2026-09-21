@@ -2,7 +2,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const RUNTIME_SCHEMA_VERSION = 2;
+const RUNTIME_SCHEMA_VERSION = 3;
+const LEGACY_SCHEMA_VERSIONS = new Set([2]);
 const SECRET_KEY = /(token|secret|password|authorization|cookie|apikey|api_key|privatekey|accesskey)/i;
 
 function clone(value) {
@@ -40,11 +41,12 @@ function migrateState(input) {
 
 function validateEnvelope(envelope) {
   if (!envelope || typeof envelope !== 'object') return { ok: false, error: 'envelope is not an object' };
-  if (Number(envelope.schemaVersion) !== RUNTIME_SCHEMA_VERSION) return { ok: false, error: 'unsupported schema version' };
+  const schemaVersion = Number(envelope.schemaVersion);
+  if (schemaVersion !== RUNTIME_SCHEMA_VERSION && !LEGACY_SCHEMA_VERSIONS.has(schemaVersion)) return { ok: false, error: 'unsupported schema version' };
   if (!envelope.state || typeof envelope.state !== 'object') return { ok: false, error: 'state is missing' };
   if (!/^[a-f0-9]{64}$/i.test(String(envelope.checksum || ''))) return { ok: false, error: 'checksum is missing' };
   if (checksumFor(envelope.state) !== envelope.checksum) return { ok: false, error: 'checksum mismatch' };
-  return { ok: true };
+  return { ok: true, migrated: schemaVersion !== RUNTIME_SCHEMA_VERSION };
 }
 
 class RuntimePersistence {
@@ -126,10 +128,17 @@ class RuntimePersistence {
         const parsed = this._readFile(candidate);
         const validation = validateEnvelope(parsed);
         if (validation.ok) {
-          const state = clone(parsed.state);
+          const state = validation.migrated ? migrateState(parsed.state) : clone(parsed.state);
+          const normalizedEnvelope = validation.migrated
+            ? { schemaVersion: RUNTIME_SCHEMA_VERSION, savedAt: new Date(this.now()).toISOString(), checksum: checksumFor(state), state }
+            : parsed;
+          if (validation.migrated) {
+            migrated = true;
+            this._writeEnvelope(name, normalizedEnvelope, { backup: false });
+          }
           if (candidate !== file) {
             recovered = true;
-            this._writeEnvelope(name, parsed, { backup: false });
+            this._writeEnvelope(name, normalizedEnvelope, { backup: false });
             this.recoveryCount += 1;
             this.lastRecovery = { name, source: candidate, recoveredAt: new Date(this.now()).toISOString() };
             this.onRecovery(this.lastRecovery);

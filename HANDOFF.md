@@ -177,7 +177,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 
 ## 11. 批次 A：可靠性与发布闭环（2026-09-18）
 
-- `server/runtime-persistence.js` 提供 schema v2、旧裸 JSON 迁移、SHA-256 快照校验、原子写入、有限 `.bak.N` 备份、损坏快照隔离和最近备份恢复。
+- `server/runtime-persistence.js` 提供 schema v3、schema v2/旧裸 JSON 迁移、SHA-256 快照校验、原子写入、有限 `.bak.N` 备份、损坏快照隔离和最近备份恢复。
 - `WorkspaceStore`、`WorkspaceTimeline`、Mote 主状态、关系/任务状态和 provider 非敏感设置接入同一持久化管理器；API key、token、Cookie、密码和 Authorization 不进入状态文件。
 - 新增 `server/health.js` 和 `/health/live`、`/health/ready`（同时提供 `/api/health/liveness`、`/api/health/readiness`）；诊断输出包含 schema/recovery 统计。
 - 新增 `server/structured-log.js`，运行日志以 JSON 记录并做敏感值脱敏；`/api/auth/rotate` 不再在 HTTP 响应中回传新令牌，令牌文件启动/轮换时强制尝试 `0600` 权限。
@@ -204,4 +204,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - Mote 图鉴服务端和 Android 配置扩展到 20 个形态；新增形态仍消费统一行为提示，尚未逐一进行实体机视觉验收。
 - 当前验证：Node 全量测试已达到 **88/88**；Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 已通过。新增文件和 API 完成后仍需进行完整性能、敏感扫描、CI 和独立代码审查。
 - 新增本地一次性配对模块 `server/pairing.js` 与 Android `PairingProtocol.kt`；当前只允许 loopback 配对，未宣称 Wi-Fi TLS 配对完成。
+- 会话上下文新增确定性摘要与长度裁剪，聊天任务现在把会话历史和本地记忆传给 provider，并记录已使用的记忆。
 - 明确未完成：服务端/Android 深度拆分、完整 Web/Android 现实玩法 UI、TLS 配对、签名 2.0 APK、ARCore、GPS、PTT、通知/小组件实机闭环。
