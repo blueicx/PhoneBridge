@@ -25,4 +25,13 @@ class MoteProfileTest {
         assertEquals("embers", first.particleType)
         assertTrue(first.proactive)
     }
+
+    @Test fun everyExplorableMoteHasItsOwnVisualPresetAndBodyKind() {
+        val profiles = MoteProfiles.explorable.map { MoteVisualProfiles.profile(it.id) }
+        assertEquals(14, profiles.size)
+        assertTrue(profiles.all { it.bodyKind != MoteBodyKind.CORE })
+        assertEquals(14, profiles.map { it.bodyKind }.toSet().size)
+        assertEquals(MoteBodyKind.CORE, MoteVisualProfiles.profile(PetAppearance.MOTE).bodyKind)
+        assertEquals(MoteBodyKind.CORE, MoteVisualProfiles.profile(PetAppearance.fromWire("future_mote")).bodyKind)
+    }
 }

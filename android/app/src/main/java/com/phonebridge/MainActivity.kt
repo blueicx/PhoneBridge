@@ -253,6 +253,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var moteRosterJson = JSONArray()
     private var moteRelationship = MoteRelationshipSummary()
     private var moteStateJson = JSONObject()
+    private var moteStoryJson = JSONArray()
     private var companionSummary = CompanionSummary()
     private var workspaceRevision: Long = 0L
     private val timelineProjection = TimelineProjection()
@@ -3000,6 +3001,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         moteRosterJson = JSONArray((snapshot.optJSONArray("roster") ?: JSONArray()).toString())
         moteStateJson = JSONObject((snapshot.optJSONObject("state") ?: JSONObject()).toString())
+        moteStoryJson = JSONArray((snapshot.optJSONArray("story") ?: moteStoryJson).toString())
         val confirmedEventIds = linkedSetOf<String>()
         val stateSeen = moteStateJson.optJSONObject("exploration")?.optJSONArray("seenEventIds")
         if (stateSeen != null) {
@@ -3020,6 +3022,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         getSharedPreferences("mote_roster", Context.MODE_PRIVATE).edit()
             .putString("roster", moteRosterJson.toString())
             .putString("state", moteStateJson.toString())
+            .putString("story", moteStoryJson.toString())
             .apply()
         val active = moteStateJson.optString("activeId")
         if (active.isNotBlank()) {
@@ -3035,12 +3038,15 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
     }
 
-    private fun handleMoteRosterEvent(roster: JSONArray?, state: JSONObject?, growth: JSONObject? = null) {
+    private fun handleMoteRosterEvent(roster: JSONArray?, state: JSONObject?, growth: JSONObject? = null, story: JSONArray? = null) {
         handleMoteSnapshot(
             JSONObject()
                 .put("roster", roster ?: moteRosterJson)
                 .put("state", state ?: moteStateJson)
-                .apply { growth?.let { put("growth", it) } }
+                .apply {
+                    growth?.let { put("growth", it) }
+                    story?.let { put("story", it) }
+                }
         )
     }
 
@@ -3678,13 +3684,26 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 "workspace.policy" -> handlePolicyEvent(json.optJSONObject("policy"))
                 "autonomy.approval" -> handleAutonomyApprovalEvent(json.optJSONObject("approval"))
                 "workspace.emergency_stop" -> handleEmergencyStopEvent(json.optJSONObject("state"))
-                "mote.roster" -> handleMoteRosterEvent(json.optJSONArray("roster"), json.optJSONObject("state"), json.optJSONObject("growth"))
+                "mote.roster" -> handleMoteRosterEvent(json.optJSONArray("roster"), json.optJSONObject("state"), json.optJSONObject("growth"), json.optJSONArray("story"))
                 "mote.profile" -> json.optJSONObject("profile")?.let { profile ->
                     handleMoteRosterEvent(null, JSONObject().put("activeId", profile.optString("id")))
                 }
                 "mote.exploration" -> handleMoteRosterEvent(null, json.optJSONObject("state"), json.optJSONObject("growth"))
                 "mote.relationship" -> json.optJSONObject("relationship")?.let { handleMoteRelationshipEvent(it) }
                 "mote.quest" -> runOnUiThread { speechText.text = "Mote：有新的陪伴任务" }
+                "mote.story" -> {
+                    json.optJSONArray("story")?.let { story ->
+                        runOnUiThread {
+                            moteStoryJson = JSONArray(story.toString())
+                            getSharedPreferences("mote_roster", Context.MODE_PRIVATE).edit().putString("story", moteStoryJson.toString()).apply()
+                            val newest = json.optJSONArray("newlyCompleted")?.optJSONObject(0)?.optString("title").orEmpty()
+                            if (newest.isNotBlank()) {
+                                speechText.text = "Mote：剧情完成 · $newest"
+                                companionView.speakPulse()
+                            }
+                        }
+                    }
+                }
                 "mote.behavior" -> MoteBehaviorOutput.fromWire(json.optJSONObject("behavior"))?.let { behavior ->
                     runOnUiThread {
                         companionView.setBehaviorHint(behavior)
@@ -4014,8 +4033,14 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun showMoteDexDialog() {
         val cached = getSharedPreferences("mote_roster", Context.MODE_PRIVATE).getString("roster", null)
         val cachedState = getSharedPreferences("mote_roster", Context.MODE_PRIVATE).getString("state", null)
+        val cachedStory = getSharedPreferences("mote_roster", Context.MODE_PRIVATE).getString("story", null)
         if (!cached.isNullOrBlank()) {
-            handleMoteSnapshot(JSONObject().put("roster", JSONArray(cached)).put("state", JSONObject(cachedState ?: "{}")))
+            handleMoteSnapshot(
+                JSONObject()
+                    .put("roster", JSONArray(cached))
+                    .put("state", JSONObject(cachedState ?: "{}"))
+                    .put("story", JSONArray(cachedStory ?: "[]"))
+            )
             renderMoteDexDialog()
         }
         if (BridgeLink.isOnline) workspaceRequest("/api/motes", onSuccess = { handleMoteSnapshot(it); renderMoteDexDialog() })
@@ -4031,7 +4056,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         val target = exploration.optString("targetId").ifBlank { "暂无" }
         val fragments = exploration.optJSONObject("fragments")
         container.addView(TextView(this).apply {
-            text = "探索目标：$target\n地点 ${if (RealityClueProtocol.booleanField(fragments?.opt("location"))) "✓" else "·"}  物体 ${if (RealityClueProtocol.booleanField(fragments?.opt("object"))) "✓" else "·"}  光线 ${if (RealityClueProtocol.booleanField(fragments?.opt("light"))) "✓" else "·"}"
+            val storyEntries = MoteStoryProtocol.parse(moteStoryJson)
+            val nextStory = storyEntries.firstOrNull { it.completed && !it.claimed }?.let { "\n待领奖：${it.title} +${it.rewardXp} XP" }.orEmpty()
+            text = "探索目标：$target\n地点 ${if (RealityClueProtocol.booleanField(fragments?.opt("location"))) "✓" else "·"}  物体 ${if (RealityClueProtocol.booleanField(fragments?.opt("object"))) "✓" else "·"}  光线 ${if (RealityClueProtocol.booleanField(fragments?.opt("light"))) "✓" else "·"}\n${MoteStoryProtocol.summary(moteStoryJson)}$nextStory"
             setTextColor(Color.parseColor("#D9F5E6"))
             setPadding(0, 0, 0, dp(8))
         })
@@ -4053,7 +4080,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             }
             container.addView(button)
         }
-        AlertDialog.Builder(this).setTitle("Mote 图鉴 · ${moteRosterJson.length()}/10").setView(container).setPositiveButton("关闭", null).show()
+        AlertDialog.Builder(this).setTitle("Mote 图鉴 · ${moteRosterJson.length()}/20").setView(container).setPositiveButton("关闭", null).show()
     }
 
     private fun showSignalGameDialog() {

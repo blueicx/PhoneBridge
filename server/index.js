@@ -8,6 +8,7 @@ const { DeviceHealthStore } = require('./device-health');
 const { MoteStore, deriveMoteBehavior } = require('./mote-profiles');
 const { TaskRunner } = require('./task-runner');
 const { MoteRelationshipStore, MoteQuestStore } = require('./mote-expansion');
+const { MoteStoryStore } = require('./mote-story');
 const { RevisionSnapshotCache, BroadcastCoalescer } = require('./workspace-performance');
 const { WorkspaceTimeline } = require('./workspace-timeline');
 const { AiProviderManager } = require('./ai-provider');
@@ -303,6 +304,7 @@ const healthChecks = new HealthChecks({
 const memoryStore = new MemoryStore({ persistence: runtimePersistence });
 const realityEngine = new RealityEngine({ persistence: runtimePersistence });
 const moteGrowthStore = new MoteGrowthStore({ persistence: runtimePersistence });
+const moteStoryStore = new MoteStoryStore({ persistence: runtimePersistence });
 const realityCoordinator = createRealityCoordinator({
   moteStore,
   moteGrowthStore,
@@ -332,6 +334,61 @@ function publicTasks() {
 function publicLogs(count = 100) {
   return logs.slice(-count);
 }
+
+function moteStoryContext(extra = {}) {
+  const growth = moteGrowthStore.snapshot();
+  const tasks = workspaceStore.listTasks();
+  const sessions = workspaceStore.listSessions();
+  const clueCounts = Object.fromEntries(['location', 'object', 'light'].map(type => [
+    type,
+    (growth.processedEvents || []).filter(item => item.businessStatus === 'accepted' && item.clueType === type).length,
+  ]));
+  const successfulTasks = tasks.filter(task => task.state === 'succeeded').length;
+  const recoveredTasks = tasks.filter(task => task.state === 'succeeded' && Number(task.runner?.retryCount) > 0).length;
+  return {
+    activeId: moteStore.getState().activeId,
+    conversationCount: sessions.reduce((total, session) => total + (Array.isArray(session.messages) ? session.messages.filter(message => message.role === 'user').length : 0), 0) + chatHistory.filter(message => message.role === 'user').length,
+    successfulTasks,
+    explorationCount: (growth.processedEvents || []).filter(item => item.businessStatus === 'accepted').length,
+    clueCounts,
+    clues: Object.fromEntries(Object.entries(clueCounts).map(([type, count]) => [type, count > 0])),
+    unlockedCount: moteStore.getState().unlockedIds.length,
+    relationshipLevel: moteRelationshipStore.snapshot().level,
+    boostCount: (growth.boosts || []).length,
+    recoveredTasks,
+    ...extra,
+  };
+}
+
+function buildMoteProjection() {
+  const state = moteStore.getState();
+  const relationship = moteRelationshipStore.snapshot();
+  return {
+    state,
+    roster: moteStore.roster(),
+    behavior: deriveMoteBehavior({ profileId: state.activeId, relationshipLevel: relationship.level }),
+    relationship,
+    growth: moteGrowthStore.snapshot(),
+    quests: moteQuestStore.list(),
+    story: moteStoryStore.list(),
+  };
+}
+
+function progressMoteStory(eventId, extra = {}, { emit = true } = {}) {
+  const result = moteStoryStore.evaluate({ ...moteStoryContext(extra), eventId });
+  if (emit && result.newlyCompleted.length) {
+    broadcast({
+      type: 'mote.story',
+      story: result.events,
+      newlyCompleted: result.newlyCompleted,
+      state: result.state,
+    });
+  }
+  return result;
+}
+
+// Initial activation is a durable story milestone; it is evaluated once without broadcasting during boot.
+progressMoteStory(`startup:${moteStore.getState().activeId}`, {}, { emit: false });
 
 function syncTimelineFromBroadcast(payload) {
   if (!payload || typeof payload !== 'object') return;
@@ -364,7 +421,7 @@ function syncTimelineFromBroadcast(payload) {
         deepLink: payload.attention.relatedTaskId ? `phonebridge://task/${payload.attention.relatedTaskId}` : `phonebridge://attention/${payload.attention.id}`
       }
     });
-  } else if (type === 'mote.relationship' || type === 'mote.profile' || type === 'mote.quest') {
+  } else if (type === 'mote.relationship' || type === 'mote.profile' || type === 'mote.quest' || type === 'mote.story') {
     const active = moteStore.roster().find(item => item.active) || moteStore.roster()[0];
     const rel = moteRelationshipStore.snapshot();
     timelineEvent = workspaceTimeline.recordEvent({
@@ -378,6 +435,7 @@ function syncTimelineFromBroadcast(payload) {
         level: rel.level,
         xp: rel.xp,
         interactions: rel.interactions,
+        storyCompleted: moteStoryStore.snapshot().completed.length,
         updatedAt: new Date().toISOString()
       }
     });
@@ -834,6 +892,15 @@ function publishRunnerState(update) {
   try {
     const task = workspaceStore.updateTask(update.id, patch);
     broadcast({ type: 'workspace.task', task });
+    if (task.state === 'succeeded') {
+      const relationship = moteRelationshipStore.recordInteraction({
+        eventId: `task-success:${task.id}`,
+        kind: 'task',
+        amount: 8,
+      });
+      if (!relationship.duplicate) broadcast({ type: 'mote.relationship', relationship });
+      progressMoteStory(`task:${task.id}:${task.state}`, { successfulTasks: 1 });
+    }
     if (['succeeded', 'failed', 'cancelled'].includes(task.state)) broadcastTaskAttention(task);
   } catch (error) {
     addLog('warn', `任务状态同步失败：${error.message}`);
@@ -875,7 +942,7 @@ taskRunner.setExecutor(async ({ task, signal, report, waitIfPaused }) => {
 function broadcastMoteState() {
   const state = moteStore.getState();
   const growth = moteGrowthStore.snapshot();
-  broadcast({ type: 'mote.roster', roster: moteStore.roster(), state, growth });
+  broadcast({ type: 'mote.roster', roster: moteStore.roster(), state, growth, story: moteStoryStore.list() });
   broadcast({ type: 'mote.profile', profile: moteStore.roster().find(item => item.active) || null });
   broadcast({ type: 'mote.exploration', exploration: state.exploration, state, growth });
 }
@@ -1182,6 +1249,7 @@ async function handleChat(text, memories = [], options = {}) {
   const reply = result.reply;
   if (remember) chatHistory.push({ role: 'assistant', text: reply, time: nowTime() });
   broadcast({ type: 'chat', role: 'assistant', text: reply, time: nowTime() });
+  progressMoteStory(`chat:${chatHistory.length}:${clean.slice(0, 48)}`, { conversationCount: 1 });
   addLog('success', `Mote 对话回复：${reply.slice(0, 100)}`);
   return { ok: true, reply };
 }
@@ -1203,7 +1271,7 @@ function buildSnapshotPayload() {
     chat: chatHistory.slice(-50),
     deviceHealth: deviceHealthStore.snapshot(),
     workspace: workspaceSnapshot(),
-    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId, relationshipLevel: moteRelationshipStore.snapshot().level }), relationship: moteRelationshipStore.snapshot(), growth: moteGrowthStore.snapshot(), quests: moteQuestStore.list() },
+    motes: buildMoteProjection(),
     autonomy: workspaceStore.getAutonomyPolicy(),
     approvals: workspaceStore.listToolApprovals().slice(0, 100),
   };
@@ -1225,13 +1293,7 @@ function buildSummaryPayload() {
   const moteState = moteStore.getState();
   const moteRoster = moteStore.roster();
   const relationship = moteRelationshipStore.snapshot();
-  const motes = {
-    state: moteState,
-    roster: moteRoster,
-    behavior: deriveMoteBehavior({ profileId: moteState.activeId, relationshipLevel: relationship.level }),
-    relationship,
-    growth: moteGrowthStore.snapshot(),
-  };
+  const motes = buildMoteProjection();
   const autonomy = workspaceStore.getAutonomyPolicy();
   const workspace = {
     eventRevision: workspaceStore.eventRevision,
@@ -1330,7 +1392,7 @@ function workspaceSnapshot() {
     autonomy: workspaceStore.getAutonomyPolicy(),
     moteRelationship: moteRelationshipStore.snapshot(),
     moteQuests: moteQuestStore.list(),
-    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId, relationshipLevel: moteRelationshipStore.snapshot().level }), relationship: moteRelationshipStore.snapshot(), growth: moteGrowthStore.snapshot(), quests: moteQuestStore.list() },
+    motes: buildMoteProjection(),
     timeline: workspaceTimeline.getSnapshot(),
   };
 }
@@ -1937,13 +1999,14 @@ const handleHttpRequest = async (req, res) => {
       } catch (error) { return sendJson(res, /expired|confirmation|consumed|blocked|policy/i.test(error.message) ? 403 : 400, { ok: false, error: error.message }); }
     }
     if (parsedUrl.pathname === '/api/motes' && req.method === 'GET') {
-      return sendJson(res, 200, { ok: true, state: moteStore.getState(), roster: moteStore.roster(), growth: moteGrowthStore.snapshot() });
+      return sendJson(res, 200, { ok: true, ...buildMoteProjection() });
     }
     if (parsedUrl.pathname === '/api/motes/active' && req.method === 'PATCH') {
       try {
         const state = moteStore.setActive((await readJson(req)).id);
+        const story = progressMoteStory(`activation:${state.activeId}`);
         broadcastMoteState();
-        return sendJson(res, 200, { ok: true, state, profile: moteStore.roster().find(item => item.active) });
+        return sendJson(res, 200, { ok: true, state, profile: moteStore.roster().find(item => item.active), story: story.events });
       } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
     if (parsedUrl.pathname === '/api/motes/exploration' && req.method === 'PATCH') {
@@ -1955,17 +2018,41 @@ const handleHttpRequest = async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/motes/exploration/clues' && req.method === 'POST') {
       try {
-        const result = applyMoteClue(await readJson(req));
+        const payload = await readJson(req);
+        const result = applyMoteClue(payload);
+        const story = result.businessStatus !== 'rejected'
+          ? progressMoteStory(`clue:${payload.eventId}`, { clueCounts: { [String(payload.clueType).toLowerCase()]: 1 } })
+          : null;
         const status = result.businessStatus === 'rejected' ? 409 : result.duplicate || result.businessStatus === 'duplicate' ? 200 : 201;
-        return sendJson(res, status, { ok: true, ...result });
+        return sendJson(res, status, { ok: true, ...result, story: story?.events || moteStoryStore.list() });
       } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    if (parsedUrl.pathname === '/api/motes/story' && req.method === 'GET') {
+      const story = progressMoteStory('story:snapshot');
+      return sendJson(res, 200, { ok: true, story: story.events, state: story.state });
+    }
+    const storyClaimMatch = parsedUrl.pathname.match(/^\/api\/motes\/story\/([^/]+)\/claim$/);
+    if (storyClaimMatch && req.method === 'POST') {
+      try {
+        const eventId = decodeURIComponent(storyClaimMatch[1]);
+        const payload = await readJson(req);
+        const result = moteStoryStore.claim(eventId, payload.claimId || payload.eventId);
+        if (!result.duplicate && result.reward?.xp) {
+          const relationship = moteRelationshipStore.recordInteraction({ eventId: `story:${eventId}`, kind: 'story', amount: result.reward.xp });
+          if (!relationship.duplicate) broadcast({ type: 'mote.relationship', relationship });
+        }
+        broadcast({ type: 'mote.story', story: moteStoryStore.list(), claimed: result.event, state: result.state });
+        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result, story: moteStoryStore.list() });
+      } catch (error) { return sendJson(res, /not complete|not found/i.test(error.message) ? 409 : 400, { ok: false, error: error.message }); }
     }
     if (parsedUrl.pathname === '/api/motes/relationship' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, relationship: moteRelationshipStore.snapshot() });
     }
     if (parsedUrl.pathname === '/api/motes/relationship' && req.method === 'POST') {
       try {
-        const result = moteRelationshipStore.recordInteraction(await readJson(req));
+        const payload = await readJson(req);
+        const result = moteRelationshipStore.recordInteraction(payload);
+        progressMoteStory(`relationship:${payload.eventId || result.interactions}`, { relationshipLevel: result.level });
         broadcast({ type: 'mote.relationship', relationship: result });
         return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
       } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
@@ -2015,6 +2102,10 @@ const handleHttpRequest = async (req, res) => {
             eventId,
             clueType: payload.clueType || result.event.clueType,
             region: payload.region,
+          });
+          result.story = progressMoteStory(`reality:${eventId}`, {
+            explorationCount: 1,
+            clueCounts: { [String(payload.clueType || result.event.clueType).toLowerCase()]: 1 },
           });
           broadcast({ type: 'reality.progress', result, state: realityEngine.snapshot() });
         }

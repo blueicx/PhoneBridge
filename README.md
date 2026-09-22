@@ -187,3 +187,11 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - Node 全量 **120/120**；Android `:app:testDebugUnitTest :app:assembleDebug` **BUILD SUCCESSFUL**。
 
 实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-3.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-3.md)。实体机、GPS/ARCore 和正式签名仍按独立验收边界处理。
+
+## 全面深化批次 4：角色差异与完整成长
+
+- 服务端固定 12 个 Mote 剧情事件，完成与领奖分离并按来源事件/领奖键幂等；接口为 `GET /api/motes/story` 和 `POST /api/motes/story/:id/claim`，实时事件为 `mote.story`。
+- 剧情触发覆盖激活、对话、成功/恢复任务、现实探索、三类线索、关系升级、增益和新形态解锁；故事投影进入 Mote 图鉴、快照和 Android 缓存。
+- 行为提示继续兼容旧字段，同时增加 `motion`、`visualPreset`、`colors`、`taskAffinity`、`emotionBias` 和 `ability`，角色状态会改变注视、提醒倾向和动作节奏。
+- Android 通过 `MoteVisualProfile`/`MoteBodyKind` 统一驱动 20 个形态；14 个探索形态在 `CompanionView` 与 `RealityLensView` 使用各自轮廓、配色、动作和粒子，未知形态安全回退。
+- 设计与迁移记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-4.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-4.md)。实体机、ARCore 真平面、正式签名和长时间运行仍需独立验收。

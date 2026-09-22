@@ -32,6 +32,7 @@ object WorkspaceEventTypes {
     const val AUTONOMY_APPROVAL = "autonomy.approval"
     const val MOTE_RELATIONSHIP = "mote.relationship"
     const val MOTE_QUEST = "mote.quest"
+    const val MOTE_STORY = "mote.story"
 }
 
 object AttentionSeverity {

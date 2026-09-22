@@ -314,17 +314,21 @@ class CompanionView @JvmOverloads constructor(
                     null,
                     Shader.TileMode.CLAMP
                 )
-                else -> RadialGradient(
-                    cx - r * .27f, cy - r * .40f, r * 1.66f,
-                    intArrayOf(
-                        Color.parseColor("#FAFFFE"),
-                        Color.parseColor("#9DF5D2"),
-                        Color.parseColor("#37B391"),
-                        Color.parseColor("#153F3C")
-                    ),
-                    null,
-                    Shader.TileMode.CLAMP
-                )
+                else -> {
+                    val visual = MoteVisualProfiles.fromBehavior(state.appearance, behaviorHint)
+                    val primary = parseColorOr(visual.primaryHex, accentColor)
+                    val secondary = parseColorOr(visual.secondaryHex, secondaryColor)
+                    RadialGradient(
+                        cx - r * .27f, cy - r * .40f, r * 1.66f,
+                        intArrayOf(
+                            ColorUtils.blendARGB(Color.WHITE, secondary, .16f),
+                            primary,
+                            ColorUtils.blendARGB(primary, Color.BLACK, .58f)
+                        ),
+                        null,
+                        Shader.TileMode.CLAMP
+                    )
+                }
             }
             bodyShaderAppearance = state.appearance
             bodyShaderAccent = accentColor
@@ -458,6 +462,9 @@ class CompanionView @JvmOverloads constructor(
 
     fun setBehaviorHint(hint: MoteBehaviorOutput) {
         behaviorHint = hint
+        accentColor = parseColorOr(hint.primaryColor, accentColor)
+        secondaryColor = parseColorOr(hint.secondaryColor, secondaryColor)
+        prepareShaders()
         requestRedraw()
     }
 
@@ -467,6 +474,9 @@ class CompanionView @JvmOverloads constructor(
         prepareShaders()
         requestRedraw()
     }
+
+    private fun parseColorOr(value: String, fallback: Int): Int =
+        runCatching { Color.parseColor(value) }.getOrDefault(fallback)
 
     fun poke() {
         touchPulse = 1f
@@ -600,7 +610,7 @@ class CompanionView @JvmOverloads constructor(
             petJoy = (petJoy - dt / 2600f).coerceAtLeast(0f)
             speakPulse = (speakPulse - dt / 900f).coerceAtLeast(0f)
             val liveliness = vitality()
-            lifePhase += dt / 1000f * liveliness
+            lifePhase += dt / 1000f * liveliness * MoteVisualProfiles.fromBehavior(state.appearance, behaviorHint).motionScale
             idlePhase += dt / 1000f
             if (touchActive) {
                 idleGazeX += (0f - idleGazeX) * min(1f, dt / 260f)
@@ -640,6 +650,7 @@ class CompanionView @JvmOverloads constructor(
         prepareShaders()
         val liveliness = vitality()
         val motionScale = .54f + liveliness * .46f
+        val visualProfile = MoteVisualProfiles.fromBehavior(state.appearance, behaviorHint)
         val cx = w * 0.5f +
             cos(lifePhase * 0.7f) * w * 0.008f * motionScale +
             gazeX * 8f
@@ -651,7 +662,7 @@ class CompanionView @JvmOverloads constructor(
             PetAppearance.GHOST -> sin(lifePhase * .8f)
             PetAppearance.CIRCUIT -> if ((lifePhase % 1.4f) < .12f) 1f else 0f
             PetAppearance.RIMURU -> sin(lifePhase * 1.25f)
-            else -> sin(lifePhase * 1.9f)
+            else -> sin(lifePhase * (1.25f + visualProfile.motionScale * .65f))
         }
         val nominalCx = w * .5f
         val nominalCy = h * .52f
@@ -718,6 +729,7 @@ class CompanionView @JvmOverloads constructor(
         canvas: Canvas, cx: Float, cy: Float, radius: Float,
         seconds: Float, moodColor: Int, breath: Float
     ) {
+        val visualProfile = MoteVisualProfiles.fromBehavior(state.appearance, behaviorHint)
         when (state.appearance) {
             PetAppearance.SPRITE -> {
                 bodyPaint.style = Paint.Style.FILL
@@ -749,8 +761,225 @@ class CompanionView @JvmOverloads constructor(
             }
             else -> {
                 bodyPaint.style = Paint.Style.FILL
-                drawCore(canvas, cx, cy, radius, seconds, breath, moodColor)
+                drawProfiledBody(canvas, cx, cy, radius, seconds, breath, visualProfile)
             }
+        }
+    }
+
+    /**
+     * Shared renderer for the fourteen unlockable silhouettes. The profile supplies
+     * palette and tempo; this keeps the new forms distinct without creating a
+     * separate animation state machine for every Mote.
+     */
+    private fun drawProfiledBody(
+        canvas: Canvas, cx: Float, cy: Float, radius: Float,
+        seconds: Float, breath: Float, profile: MoteVisualProfile
+    ) {
+        val primary = parseColorOr(profile.primaryHex, accentColor)
+        val secondary = parseColorOr(profile.secondaryHex, secondaryColor)
+        val pulse = .82f + abs(sin(seconds * profile.motionScale * 2.2f)) * .18f
+        innerPaint.style = Paint.Style.FILL
+        when (profile.bodyKind) {
+            MoteBodyKind.FLAME -> {
+                bodyPath.reset()
+                bodyPath.moveTo(cx, cy - radius * 1.18f - breath * radius * .04f)
+                bodyPath.cubicTo(cx - radius * .15f, cy - radius * .72f, cx - radius * .82f, cy - radius * .54f, cx - radius * .68f, cy + radius * .30f)
+                bodyPath.cubicTo(cx - radius * .60f, cy + radius * .86f, cx + radius * .38f, cy + radius * .94f, cx + radius * .68f, cy + radius * .30f)
+                bodyPath.cubicTo(cx + radius * .88f, cy - radius * .22f, cx + radius * .28f, cy - radius * .64f, cx, cy - radius * 1.18f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+                innerPaint.color = ColorUtils.setAlphaComponent(secondary, (150f * pulse).toInt())
+                canvas.drawOval(cx - radius * .20f, cy - radius * .12f, cx + radius * .20f, cy + radius * .60f, innerPaint)
+                particlePaint.color = ColorUtils.setAlphaComponent(secondary, 190)
+                canvas.drawCircle(cx - radius * .72f, cy - radius * .72f, radius * .055f, particlePaint)
+                canvas.drawCircle(cx + radius * .74f, cy - radius * .38f, radius * .04f, particlePaint)
+            }
+            MoteBodyKind.PRISM_MOTH, MoteBodyKind.SHADOW_MOTH -> {
+                val wingColor = ColorUtils.setAlphaComponent(secondary, if (profile.bodyKind == MoteBodyKind.SHADOW_MOTH) 176 else 208)
+                canvas.save()
+                canvas.rotate(sin(seconds * profile.motionScale) * 8f, cx, cy)
+                repeat(2) { side ->
+                    val direction = if (side == 0) -1f else 1f
+                    rect.set(cx + direction * radius * .08f, cy - radius * .68f, cx + direction * radius * 1.18f, cy + radius * .18f)
+                    canvas.drawOval(rect, bodyPaint)
+                    rect.set(cx + direction * radius * .04f, cy + radius * .02f, cx + direction * radius * .98f, cy + radius * .82f)
+                    canvas.drawOval(rect, bodyPaint)
+                    innerPaint.color = wingColor
+                    rect.set(cx + direction * radius * .20f, cy - radius * .48f, cx + direction * radius * .86f, cy - radius * .08f)
+                    canvas.drawOval(rect, innerPaint)
+                }
+                canvas.restore()
+                innerPaint.color = primary
+                canvas.drawOval(cx - radius * .13f, cy - radius * .64f, cx + radius * .13f, cy + radius * .68f, innerPaint)
+                ringPaint.color = ColorUtils.setAlphaComponent(secondary, 190)
+                ringPaint.strokeWidth = max(1.5f, radius * .025f)
+                canvas.drawLine(cx - radius * .08f, cy - radius * .58f, cx - radius * .28f, cy - radius * .94f, ringPaint)
+                canvas.drawLine(cx + radius * .08f, cy - radius * .58f, cx + radius * .28f, cy - radius * .94f, ringPaint)
+            }
+            MoteBodyKind.MOSS_TORTOISE -> {
+                rect.set(cx - radius * 1.02f, cy - radius * .72f, cx + radius * 1.02f, cy + radius * .82f)
+                canvas.drawOval(rect, bodyPaint)
+                innerPaint.color = ColorUtils.setAlphaComponent(secondary, 176)
+                rect.set(cx - radius * .70f, cy - radius * .46f, cx + radius * .70f, cy + radius * .52f)
+                canvas.drawOval(rect, innerPaint)
+                repeat(4) { index ->
+                    val x = cx + (if (index % 2 == 0) -1f else 1f) * radius * .72f
+                    val y = cy + (if (index < 2) -.58f else .58f) * radius
+                    canvas.drawCircle(x, y, radius * .20f, bodyPaint)
+                }
+                innerPaint.color = primary
+                canvas.drawCircle(cx + radius * .84f, cy - radius * .05f, radius * .27f, innerPaint)
+            }
+            MoteBodyKind.ORBIT_RAVEN -> {
+                rect.set(cx - radius * .70f, cy - radius * .70f, cx + radius * .70f, cy + radius * .82f)
+                canvas.drawOval(rect, bodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx + radius * .40f, cy - radius * .24f)
+                bodyPath.lineTo(cx + radius * 1.28f, cy - radius * .08f)
+                bodyPath.lineTo(cx + radius * .42f, cy + radius * .12f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+                ringPaint.color = ColorUtils.setAlphaComponent(secondary, 200)
+                ringPaint.strokeWidth = max(2f, radius * .035f)
+                rect.set(cx - radius * 1.16f, cy - radius * .92f, cx + radius * 1.16f, cy + radius * .92f)
+                canvas.drawArc(rect, -58f + seconds * 42f, 96f, false, ringPaint)
+                canvas.drawArc(rect, 122f - seconds * 36f, 66f, false, ringPaint)
+            }
+            MoteBodyKind.TIDE_OTTER -> {
+                rect.set(cx - radius * .78f, cy - radius * .70f, cx + radius * .78f, cy + radius * .88f)
+                canvas.drawOval(rect, bodyPaint)
+                innerPaint.color = ColorUtils.setAlphaComponent(secondary, 160)
+                canvas.drawOval(cx - radius * .28f, cy - radius * .08f, cx + radius * .28f, cy + radius * .66f, innerPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx + radius * .56f, cy + radius * .48f)
+                bodyPath.cubicTo(cx + radius * 1.36f, cy + radius * .72f, cx + radius * 1.36f, cy - radius * .12f, cx + radius * .72f, cy - radius * .22f)
+                bodyPath.cubicTo(cx + radius * 1.08f, cy + radius * .20f, cx + radius * 1.12f, cy + radius * .50f, cx + radius * .56f, cy + radius * .48f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+            }
+            MoteBodyKind.MOON_DEER -> {
+                rect.set(cx - radius * .62f, cy - radius * .20f, cx + radius * .66f, cy + radius * .84f)
+                canvas.drawOval(rect, bodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx - radius * .36f, cy - radius * .18f)
+                bodyPath.lineTo(cx - radius * .28f, cy - radius * .92f)
+                bodyPath.lineTo(cx + radius * .28f, cy - radius * .92f)
+                bodyPath.lineTo(cx + radius * .38f, cy - radius * .18f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+                ringPaint.color = ColorUtils.setAlphaComponent(secondary, 210)
+                ringPaint.strokeWidth = max(1.8f, radius * .034f)
+                canvas.drawLine(cx - radius * .20f, cy - radius * .76f, cx - radius * .56f, cy - radius * 1.22f, ringPaint)
+                canvas.drawLine(cx - radius * .20f, cy - radius * .76f, cx - radius * .02f, cy - radius * 1.18f, ringPaint)
+                canvas.drawLine(cx + radius * .20f, cy - radius * .76f, cx + radius * .56f, cy - radius * 1.22f, ringPaint)
+                canvas.drawLine(cx + radius * .20f, cy - radius * .76f, cx + radius * .02f, cy - radius * 1.18f, ringPaint)
+            }
+            MoteBodyKind.STONE_MOLE -> {
+                rect.set(cx - radius * .88f, cy - radius * .66f, cx + radius * .88f, cy + radius * .72f)
+                canvas.drawOval(rect, bodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx + radius * .48f, cy - radius * .18f)
+                bodyPath.lineTo(cx + radius * 1.30f, cy + radius * .04f)
+                bodyPath.lineTo(cx + radius * .48f, cy + radius * .30f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+                innerPaint.color = ColorUtils.setAlphaComponent(secondary, 170)
+                canvas.drawCircle(cx - radius * .28f, cy - radius * .42f, radius * .18f, innerPaint)
+                canvas.drawCircle(cx + radius * .08f, cy - radius * .50f, radius * .14f, innerPaint)
+            }
+            MoteBodyKind.WIND_MARTEN -> {
+                canvas.save()
+                canvas.rotate(-8f + sin(seconds * 1.4f) * 4f, cx, cy)
+                rect.set(cx - radius * 1.08f, cy - radius * .50f, cx + radius * .86f, cy + radius * .54f)
+                canvas.drawOval(rect, bodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx + radius * .54f, cy + radius * .18f)
+                bodyPath.cubicTo(cx + radius * 1.58f, cy + radius * .22f, cx + radius * 1.48f, cy - radius * .82f, cx + radius * .70f, cy - radius * .66f)
+                bodyPath.cubicTo(cx + radius * 1.12f, cy - radius * .34f, cx + radius * 1.28f, cy + radius * .02f, cx + radius * .54f, cy + radius * .18f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+                canvas.restore()
+            }
+            MoteBodyKind.VOLT_SPARROW -> {
+                rect.set(cx - radius * .52f, cy - radius * .76f, cx + radius * .52f, cy + radius * .70f)
+                canvas.drawOval(rect, bodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx - radius * .30f, cy - radius * .08f)
+                bodyPath.lineTo(cx - radius * 1.14f, cy + radius * .34f)
+                bodyPath.lineTo(cx - radius * .34f, cy + radius * .54f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx + radius * .30f, cy - radius * .08f)
+                bodyPath.lineTo(cx + radius * 1.14f, cy + radius * .34f)
+                bodyPath.lineTo(cx + radius * .34f, cy + radius * .54f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+                innerPaint.color = secondary
+                canvas.drawCircle(cx, cy - radius * .38f, radius * .12f, innerPaint)
+            }
+            MoteBodyKind.FROST_HARE -> {
+                rect.set(cx - radius * .66f, cy - radius * .34f, cx + radius * .66f, cy + radius * .82f)
+                canvas.drawOval(rect, bodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx - radius * .48f, cy - radius * .22f)
+                bodyPath.lineTo(cx - radius * .52f, cy - radius * 1.30f)
+                bodyPath.lineTo(cx - radius * .08f, cy - radius * .64f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx + radius * .48f, cy - radius * .22f)
+                bodyPath.lineTo(cx + radius * .52f, cy - radius * 1.30f)
+                bodyPath.lineTo(cx + radius * .08f, cy - radius * .64f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+            }
+            MoteBodyKind.BLOOM_SPRITE -> {
+                repeat(6) { index ->
+                    val angle = index * Math.PI.toFloat() / 3f + seconds * .16f
+                    val px = cx + cos(angle) * radius * .54f
+                    val py = cy + sin(angle) * radius * .54f
+                    innerPaint.color = ColorUtils.setAlphaComponent(secondary, 190)
+                    canvas.save()
+                    canvas.rotate(angle * 180f / Math.PI.toFloat() + 90f, px, py)
+                    canvas.drawOval(px - radius * .18f, py - radius * .42f, px + radius * .18f, py + radius * .42f, innerPaint)
+                    canvas.restore()
+                }
+                canvas.drawCircle(cx, cy, radius * .64f, bodyPaint)
+                innerPaint.color = ColorUtils.setAlphaComponent(primary, 210)
+                canvas.drawCircle(cx, cy, radius * .30f, innerPaint)
+            }
+            MoteBodyKind.CRYSTAL_LIZARD -> {
+                bodyPath.reset()
+                bodyPath.moveTo(cx - radius * .96f, cy + radius * .20f)
+                bodyPath.lineTo(cx - radius * .46f, cy - radius * .56f)
+                bodyPath.lineTo(cx + radius * .55f, cy - radius * .46f)
+                bodyPath.lineTo(cx + radius * .84f, cy + radius * .26f)
+                bodyPath.lineTo(cx + radius * .30f, cy + radius * .72f)
+                bodyPath.lineTo(cx - radius * .52f, cy + radius * .68f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+                innerPaint.color = secondary
+                canvas.drawCircle(cx + radius * .54f, cy - radius * .22f, radius * .08f, innerPaint)
+                ringPaint.color = ColorUtils.setAlphaComponent(secondary, 210)
+                ringPaint.strokeWidth = max(1.5f, radius * .025f)
+                canvas.drawLine(cx - radius * .62f, cy + radius * .44f, cx - radius * 1.24f, cy + radius * .78f, ringPaint)
+            }
+            MoteBodyKind.DUNE_FOX -> {
+                bodyPath.reset()
+                bodyPath.moveTo(cx - radius * .62f, cy - radius * .40f)
+                bodyPath.lineTo(cx - radius * .44f, cy - radius * .92f)
+                bodyPath.lineTo(cx - radius * .08f, cy - radius * .62f)
+                bodyPath.lineTo(cx + radius * .22f, cy - radius * .98f)
+                bodyPath.lineTo(cx + radius * .52f, cy - radius * .38f)
+                bodyPath.cubicTo(cx + radius * .88f, cy + radius * .24f, cx + radius * .54f, cy + radius * .92f, cx, cy + radius * .86f)
+                bodyPath.cubicTo(cx - radius * .66f, cy + radius * .80f, cx - radius * .86f, cy + radius * .04f, cx - radius * .62f, cy - radius * .40f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, bodyPaint)
+                innerPaint.color = ColorUtils.setAlphaComponent(secondary, 156)
+                canvas.drawOval(cx - radius * .20f, cy + radius * .12f, cx + radius * .24f, cy + radius * .70f, innerPaint)
+            }
+            else -> drawCore(canvas, cx, cy, radius, seconds, breath, primary)
         }
     }
 
@@ -1655,15 +1884,25 @@ class CompanionView @JvmOverloads constructor(
         canvas: Canvas, cx: Float, cy: Float, radius: Float,
         seconds: Float, color: Int
     ) {
+        val visual = MoteVisualProfiles.fromBehavior(state.appearance, behaviorHint)
+        val profiled = visual.bodyKind !in setOf(
+            MoteBodyKind.CORE,
+            MoteBodyKind.LEAF_FOX,
+            MoteBodyKind.MIST_CAT,
+            MoteBodyKind.MECHA_BEAST,
+            MoteBodyKind.CLOUD_WHALE,
+            MoteBodyKind.SLIME,
+        )
+        val profileColor = parseColorOr(visual.primaryHex, color)
         particlePaint.strokeWidth = 2.6f
         val count = when (state.appearance) {
             PetAppearance.GHOST -> 14
             PetAppearance.CIRCUIT -> 8
             PetAppearance.CLOUD_WHALE -> 16
             PetAppearance.RIMURU -> 15
-            else -> 13
+            else -> if (profiled) 9 + (visual.particleStyle.length % 8) else 13
         }
-        particlePaint.style = if (state.appearance == PetAppearance.CIRCUIT) {
+        particlePaint.style = if (state.appearance == PetAppearance.CIRCUIT || visual.particleStyle.contains("arc", true) || visual.particleStyle.contains("circuit", true)) {
             Paint.Style.STROKE
         } else {
             Paint.Style.FILL
@@ -1681,11 +1920,13 @@ class CompanionView @JvmOverloads constructor(
                 PetAppearance.CIRCUIT -> Color.argb(96, 255, 205, 102)
                 PetAppearance.CLOUD_WHALE -> Color.argb(70, 214, 245, 255)
                 PetAppearance.RIMURU -> Color.argb(88, 168, 236, 255)
-                else -> Color.argb((34+index%4*13), Color.red(color), Color.green(color), Color.blue(color))
+                else -> Color.argb((34+index%4*13), Color.red(if (profiled) profileColor else color), Color.green(if (profiled) profileColor else color), Color.blue(if (profiled) profileColor else color))
             }
 
-            if (state.appearance == PetAppearance.CIRCUIT) {
+            if (state.appearance == PetAppearance.CIRCUIT || visual.particleStyle.contains("arc", true) || visual.particleStyle.contains("circuit", true)) {
                 canvas.drawLine(px, py, px+cos(phase*3.1f)*radius*.13f, py+sin(phase*2.7f)*radius*.13f, particlePaint)
+            } else if (profiled && (visual.particleStyle.contains("ray", true) || visual.particleStyle.contains("ribbon", true))) {
+                canvas.drawLine(px - radius * .04f, py - radius * .04f, px + cos(phase) * radius * .14f, py + sin(phase) * radius * .14f, particlePaint)
             } else {
                 canvas.drawCircle(px, py, 2.2f+index%3, particlePaint)
             }

@@ -18,6 +18,7 @@ import android.os.Vibrator
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import androidx.core.graphics.ColorUtils
 import kotlin.math.*
 
 class RealityLensView @JvmOverloads constructor(
@@ -405,6 +406,7 @@ class RealityLensView @JvmOverloads constructor(
     ) {
         val motion = behaviorHint?.motionIntensity ?: .5f
         val reminder = behaviorHint?.reminderStrength ?: 0f
+        val visual = MoteVisualProfiles.fromBehavior(petState.appearance, behaviorHint)
         val r = radius * (1f + breath * (.82f + motion * .36f + reminder * .12f))
 
         // 1. Perspective Ground Shadow on Real Floor
@@ -427,7 +429,7 @@ class RealityLensView @JvmOverloads constructor(
         val auraRadius = r * 1.38f
         modelGlowPaint.shader = RadialGradient(
             cx, cy, auraRadius,
-            intArrayOf(0x448FF0C4.toInt(), Color.TRANSPARENT),
+            intArrayOf(colorWithAlpha(visual.primaryHex, 68), Color.TRANSPARENT),
             null, Shader.TileMode.CLAMP
         )
         canvas.drawCircle(cx, cy, auraRadius, modelGlowPaint)
@@ -464,6 +466,7 @@ class RealityLensView @JvmOverloads constructor(
     }
 
     private fun drawCreatureBody(canvas: Canvas, cx: Float, cy: Float, r: Float, seconds: Float) {
+        val visual = MoteVisualProfiles.fromBehavior(petState.appearance, behaviorHint)
         when (petState.appearance) {
             PetAppearance.RIMURU -> {
                 // Translucent Slime (Cyan Pearl Volumetric Shading)
@@ -564,22 +567,138 @@ class RealityLensView @JvmOverloads constructor(
                 canvas.restore()
             }
             else -> {
-                // Default Mote: Luminous Mint Core
-                modelBodyPaint.shader = RadialGradient(
-                    cx - r * 0.28f, cy - r * 0.38f, r * 1.55f,
-                    intArrayOf(0xFFFAFFFE.toInt(), 0xFF8FF0C4.toInt(), 0xFF28967A.toInt(), 0xFF0E382E.toInt()),
-                    null, Shader.TileMode.CLAMP
-                )
-                canvas.drawCircle(cx, cy, r * 0.9f, modelBodyPaint)
-
-                // Satellite Orbit Dust
-                val orbitAngle = seconds * 2.4f
-                val ox = cx + cos(orbitAngle) * r * 1.25f
-                val oy = cy + sin(orbitAngle) * r * 0.55f
-                modelAccentPaint.color = 0xEE8FF0C4.toInt()
-                canvas.drawCircle(ox, oy, r * 0.12f, modelAccentPaint)
+                drawRealityProfiledBody(canvas, cx, cy, r, seconds, visual)
             }
         }
+    }
+
+    private fun colorWithAlpha(hex: String, alpha: Int): Int {
+        val color = runCatching { Color.parseColor(hex) }.getOrDefault(0xFF8FF0C4.toInt())
+        return Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
+    }
+
+    private fun drawRealityProfiledBody(
+        canvas: Canvas, cx: Float, cy: Float, r: Float,
+        seconds: Float, visual: MoteVisualProfile
+    ) {
+        val primary = runCatching { Color.parseColor(visual.primaryHex) }.getOrDefault(0xFF8FF0C4.toInt())
+        val secondary = runCatching { Color.parseColor(visual.secondaryHex) }.getOrDefault(Color.WHITE)
+        modelBodyPaint.shader = RadialGradient(
+            cx - r * .28f, cy - r * .38f, r * 1.55f,
+            intArrayOf(Color.WHITE, primary, ColorUtils.blendARGB(primary, Color.BLACK, .58f)),
+            null, Shader.TileMode.CLAMP
+        )
+        modelAccentPaint.color = ColorUtils.setAlphaComponent(secondary, 190)
+        when (visual.bodyKind) {
+            MoteBodyKind.FLAME -> {
+                bodyPath.reset()
+                bodyPath.moveTo(cx, cy - r * 1.18f)
+                bodyPath.cubicTo(cx - r * .18f, cy - r * .60f, cx - r * .84f, cy - r * .36f, cx - r * .62f, cy + r * .42f)
+                bodyPath.cubicTo(cx - r * .38f, cy + r * .98f, cx + r * .54f, cy + r * .86f, cx + r * .70f, cy + r * .22f)
+                bodyPath.cubicTo(cx + r * .80f, cy - r * .24f, cx + r * .22f, cy - r * .68f, cx, cy - r * 1.18f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, modelBodyPaint)
+                canvas.drawCircle(cx, cy + r * .20f, r * .20f, modelAccentPaint)
+            }
+            MoteBodyKind.PRISM_MOTH, MoteBodyKind.SHADOW_MOTH -> {
+                canvas.save()
+                canvas.rotate(sin(seconds * visual.motionScale) * 8f, cx, cy)
+                repeat(2) { side ->
+                    val direction = if (side == 0) -1f else 1f
+                    bodyBounds.set(cx + direction * r * .08f, cy - r * .72f, cx + direction * r * 1.22f, cy + r * .14f)
+                    canvas.drawOval(bodyBounds, modelBodyPaint)
+                    bodyBounds.set(cx + direction * r * .04f, cy + r * .02f, cx + direction * r * .94f, cy + r * .76f)
+                    canvas.drawOval(bodyBounds, modelBodyPaint)
+                }
+                canvas.restore()
+                canvas.drawOval(cx - r * .14f, cy - r * .64f, cx + r * .14f, cy + r * .68f, modelAccentPaint)
+            }
+            MoteBodyKind.MOSS_TORTOISE -> {
+                bodyBounds.set(cx - r * 1.06f, cy - r * .72f, cx + r * 1.06f, cy + r * .82f)
+                canvas.drawOval(bodyBounds, modelBodyPaint)
+                modelAccentPaint.alpha = 150
+                bodyBounds.set(cx - r * .70f, cy - r * .46f, cx + r * .70f, cy + r * .50f)
+                canvas.drawOval(bodyBounds, modelAccentPaint)
+                modelAccentPaint.alpha = 255
+                canvas.drawCircle(cx + r * .86f, cy - r * .04f, r * .25f, modelBodyPaint)
+            }
+            MoteBodyKind.ORBIT_RAVEN -> {
+                bodyBounds.set(cx - r * .68f, cy - r * .70f, cx + r * .68f, cy + r * .78f)
+                canvas.drawOval(bodyBounds, modelBodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx + r * .40f, cy - r * .24f)
+                bodyPath.lineTo(cx + r * 1.34f, cy - r * .06f)
+                bodyPath.lineTo(cx + r * .40f, cy + r * .16f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, modelBodyPaint)
+            }
+            MoteBodyKind.MOON_DEER -> {
+                bodyBounds.set(cx - r * .66f, cy - r * .12f, cx + r * .66f, cy + r * .86f)
+                canvas.drawOval(bodyBounds, modelBodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx - r * .38f, cy - r * .10f)
+                bodyPath.lineTo(cx - r * .30f, cy - r * .96f)
+                bodyPath.lineTo(cx + r * .28f, cy - r * .96f)
+                bodyPath.lineTo(cx + r * .38f, cy - r * .10f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, modelBodyPaint)
+                modelAccentPaint.style = Paint.Style.STROKE
+                modelAccentPaint.strokeWidth = max(2f, r * .032f)
+                canvas.drawLine(cx - r * .18f, cy - r * .78f, cx - r * .58f, cy - r * 1.22f, modelAccentPaint)
+                canvas.drawLine(cx + r * .18f, cy - r * .78f, cx + r * .58f, cy - r * 1.22f, modelAccentPaint)
+                modelAccentPaint.style = Paint.Style.FILL
+            }
+            MoteBodyKind.VOLT_SPARROW, MoteBodyKind.FROST_HARE -> {
+                bodyBounds.set(cx - r * .60f, cy - r * .72f, cx + r * .60f, cy + r * .76f)
+                canvas.drawOval(bodyBounds, modelBodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx - r * .28f, cy - r * .10f)
+                bodyPath.lineTo(cx - r * 1.12f, cy + r * .34f)
+                bodyPath.lineTo(cx - r * .34f, cy + r * .56f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, modelBodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx + r * .28f, cy - r * .10f)
+                bodyPath.lineTo(cx + r * 1.12f, cy + r * .34f)
+                bodyPath.lineTo(cx + r * .34f, cy + r * .56f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, modelBodyPaint)
+                if (visual.bodyKind == MoteBodyKind.FROST_HARE) {
+                    canvas.drawOval(cx - r * .52f, cy - r * 1.34f, cx - r * .10f, cy - r * .40f, modelBodyPaint)
+                    canvas.drawOval(cx + r * .10f, cy - r * 1.34f, cx + r * .52f, cy - r * .40f, modelBodyPaint)
+                }
+            }
+            MoteBodyKind.BLOOM_SPRITE -> {
+                repeat(6) { index ->
+                    val angle = index * PI.toFloat() / 3f + seconds * .12f
+                    val px = cx + cos(angle) * r * .56f
+                    val py = cy + sin(angle) * r * .56f
+                    canvas.save()
+                    canvas.rotate(angle * 180f / PI.toFloat() + 90f, px, py)
+                    canvas.drawOval(px - r * .18f, py - r * .42f, px + r * .18f, py + r * .42f, modelAccentPaint)
+                    canvas.restore()
+                }
+                canvas.drawCircle(cx, cy, r * .62f, modelBodyPaint)
+            }
+            MoteBodyKind.CRYSTAL_LIZARD, MoteBodyKind.STONE_MOLE, MoteBodyKind.DUNE_FOX,
+            MoteBodyKind.WIND_MARTEN, MoteBodyKind.TIDE_OTTER -> {
+                bodyBounds.set(cx - r * .94f, cy - r * .68f, cx + r * .94f, cy + r * .78f)
+                canvas.drawOval(bodyBounds, modelBodyPaint)
+                bodyPath.reset()
+                bodyPath.moveTo(cx + r * .44f, cy - r * .20f)
+                bodyPath.lineTo(cx + r * 1.28f, cy)
+                bodyPath.lineTo(cx + r * .44f, cy + r * .22f)
+                bodyPath.close()
+                canvas.drawPath(bodyPath, modelBodyPaint)
+                canvas.drawCircle(cx - r * .36f, cy - r * .42f, r * .10f, modelAccentPaint)
+            }
+            else -> {
+                canvas.drawCircle(cx, cy, r * .9f, modelBodyPaint)
+                val orbitAngle = seconds * 2.4f * visual.motionScale
+                canvas.drawCircle(cx + cos(orbitAngle) * r * 1.25f, cy + sin(orbitAngle) * r * .55f, r * .12f, modelAccentPaint)
+            }
+        }
+        modelBodyPaint.shader = null
     }
 
     private fun drawLivingEyes(canvas: Canvas, cx: Float, cy: Float, r: Float, seconds: Float) {

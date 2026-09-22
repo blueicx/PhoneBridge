@@ -20,10 +20,22 @@ data class MoteBehaviorOutput(
     val voiceMode: String,
     val version: Int = 1,
     val profileId: String = "mote",
-    val reminderStrength: Float = 0f
+    val reminderStrength: Float = 0f,
+    val motion: String = "measured-orbit",
+    val visualPreset: String = "star-core",
+    val primaryColor: String = "#8EA7FF",
+    val secondaryColor: String = "#D8E2FF",
+    val taskAffinity: List<String> = emptyList(),
+    val ability: String? = null
 ) {
     companion object {
         fun fromWire(json: JSONObject?): MoteBehaviorOutput? = json?.let {
+            val colors = it.optJSONObject("colors")
+            val affinity = it.optJSONArray("taskAffinity")?.let { values ->
+                buildList {
+                    for (index in 0 until values.length()) values.optString(index).takeIf { value -> value.isNotBlank() }?.let(::add)
+                }
+            } ?: emptyList()
             MoteBehaviorOutput(
                 motionIntensity = it.optDouble("motionIntensity", .22).toFloat().coerceIn(.12f, 1f),
                 gaze = it.optString("gaze", "ambient"),
@@ -33,7 +45,13 @@ data class MoteBehaviorOutput(
                 voiceMode = it.optString("speechMode", it.optString("voiceMode", "理性稳重")),
                 version = it.optInt("version", 1),
                 profileId = it.optString("profileId", "mote"),
-                reminderStrength = normalizeReminderStrength(it.optDouble("reminderStrength", 0.0))
+                reminderStrength = normalizeReminderStrength(it.optDouble("reminderStrength", 0.0)),
+                motion = it.optString("motion", "measured-orbit"),
+                visualPreset = it.optString("visualPreset", "star-core"),
+                primaryColor = it.optString("primaryColor", colors?.optString("primary", "#8EA7FF") ?: "#8EA7FF"),
+                secondaryColor = it.optString("secondaryColor", colors?.optString("secondary", "#D8E2FF") ?: "#D8E2FF"),
+                taskAffinity = affinity,
+                ability = it.optString("ability").takeIf { value -> value.isNotBlank() }
             )
         }
 
@@ -64,6 +82,19 @@ object MoteBehaviorEngine {
             task == "succeeded" -> "celebratory"
             else -> profile.voice
         }
-        return MoteBehaviorOutput(intensity, gaze, if (gaze == "protective") profile.secondaryColor else profile.primaryColor, profile.particles, proactive, voiceMode)
+        return MoteBehaviorOutput(
+            motionIntensity = intensity,
+            gaze = gaze,
+            auraColor = if (gaze == "protective") profile.secondaryColor else profile.primaryColor,
+            particleType = profile.particles,
+            proactive = proactive,
+            voiceMode = voiceMode,
+            profileId = profile.id.name.lowercase(),
+            motion = profile.motion,
+            visualPreset = profile.visualPreset,
+            primaryColor = profile.primaryColor,
+            secondaryColor = profile.secondaryColor,
+            taskAffinity = profile.taskAffinity,
+        )
     }
 }

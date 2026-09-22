@@ -321,3 +321,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本批未重新取得 Xperia 实机、ARCore/GPS、正式 keystore 或两小时温度/电量证据。
 
 实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-3.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-3.md)。
+
+## 24. 全面深化计划：批次 4 已实现（2026-09-22）
+
+- 新增 `server/mote-story.js`：固定 12 个剧情事件，触发/完成/领奖分离；事件来源、完成状态、领奖状态和 revision 持久化，重复事件与重复领奖幂等，重启后可恢复。
+- 剧情已接入 Mote 激活、对话、成功任务、任务恢复、现实探索、地点/物体/光线线索、关系等级、现实增益和新形态解锁；新增 `GET /api/motes/story`、`POST /api/motes/story/:id/claim`，快照/图鉴/WS 使用同一故事投影。
+- `deriveMoteBehavior` 在保留旧 `version: 1` 的同时输出动作节奏、视觉预设、颜色、任务偏好、情绪偏置和能力；星鸦、棱光蝶、苔龟等角色对探索/健康状态产生不同注视与提醒行为。
+- Android 新增 `MoteVisualProfile`/`MoteBodyKind` 和 `MoteStoryProtocol`；20 个形态统一注册，14 个探索形态在普通舞台和现实镜头使用不同轮廓、颜色、动作速度与粒子；未知形态回退星核，图鉴显示剧情完成/待领奖摘要。
+- TDD 验证：Node 剧情/行为/工作区 API 定向测试通过；Android Mote 配置、视觉注册表、行为和剧情协议定向单测通过。完整批次验收数字、Android Debug 构建、敏感扫描和 GitHub Actions 需在提交前重新记录。
+- 本批不把 Debug 构建、Canvas 锚定或历史设备记录冒充为 ARCore 真平面、正式签名、GPS fix、完整通知/小组件和长时间运行证据；这些仍留给批次 5/6 与独立实机门禁。
+
+实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-4.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-4.md)。

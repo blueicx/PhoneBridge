@@ -41,20 +41,51 @@ function deriveMoteBehavior({ profileId = 'mote', taskState = 'idle', deviceHeal
   const profile = PROFILE_BY_ID.get(String(profileId)) || PROFILE_BY_ID.get('mote');
   const state = String(taskState).toLowerCase();
   const health = String(deviceHealth).toLowerCase();
-  const intensity = Math.max(0, Math.min(1, .28 + (state === 'running' ? .28 : 0) + (state === 'failed' ? .18 : 0) + (health === 'degraded' || health === 'error' ? .16 : 0) + (interaction === 'tap' ? .12 : 0) + (explorationActive ? .08 : 0) + Number(mood || 0) * .08));
+  const motionFactor = {
+    'rapid-bounce': 1.25,
+    'spark-hop': 1.2,
+    'wind-dash': 1.18,
+    'quick-hop': 1.14,
+    'orbiting-glide': 1.05,
+    'scan-turn': 1.02,
+    'slow-breath': .72,
+    'slow-swell': .76,
+    'soft-float': .84,
+    'shadow-drift': .82,
+    'quiet-step': .86,
+    'burrow-pulse': .88,
+  }[profile.motion] || 1;
+  const intensity = Math.max(0, Math.min(1, .28 * motionFactor + (state === 'running' ? .28 : 0) + (state === 'failed' ? .18 : 0) + (health === 'degraded' || health === 'error' ? .16 : 0) + (interaction === 'tap' ? .12 : 0) + (explorationActive ? .08 : 0) + Number(mood || 0) * .08));
   const proactive = health === 'error' || state === 'failed' ? 'high' : profile.proactive;
   const proactiveBase = profile.proactive === 'high' ? .72 : (profile.proactive === 'low' ? .24 : .48);
   const reminderStrength = Math.max(0, Math.min(1, proactiveBase + (Math.max(1, Number(relationshipLevel) || 1) - 1) * .04));
+  const gaze = health === 'error'
+    ? 'attentive'
+    : ((health === 'degraded' || health === 'warning') && (profile.id === 'moss_tortoise' || profile.proactive === 'low')
+      ? 'protective'
+    : profile.id === 'orbit_raven' && explorationActive
+      ? 'distant-scan'
+      : profile.id === 'prism_moth' && explorationActive
+        ? 'tracking'
+        : profile.id === 'moon_deer' && state === 'idle'
+          ? 'reflective'
+          : explorationActive ? 'scanning' : 'settled');
   return {
     version: 1,
     profileId: profile.id,
     motionIntensity: Number(intensity.toFixed(3)),
-    gaze: health === 'error' ? 'attentive' : (explorationActive ? 'scanning' : 'settled'),
+    gaze,
     haloColor: health === 'error' ? '#ff6b6b' : profile.colors.primary,
     particleType: profile.particles,
     proactive,
     reminderStrength: Number(reminderStrength.toFixed(3)),
     speechMode: profile.voice,
+    motion: profile.motion,
+    visualPreset: profile.visualPreset,
+    colors: clone(profile.colors),
+    taskAffinity: [...profile.taskAffinity],
+    emotionBias: clone(profile.emotionBias),
+    ability: profile.ability || null,
   };
 }
 

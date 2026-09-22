@@ -64,5 +64,20 @@ test('mote behavior is deterministic and safe for unknown profiles', () => {
   const behavior = deriveMoteBehavior({ profileId: 'ember_sprig', taskState: 'running', deviceHealth: 'degraded', interaction: 'tap', explorationActive: true, mood: 0.5 });
   assert.equal(behavior.profileId, 'ember_sprig');
   assert.ok(behavior.motionIntensity > 0.5);
+  assert.equal(behavior.motion, 'rapid-bounce');
+  assert.equal(behavior.visualPreset, 'ember-sprig');
+  assert.deepEqual(behavior.taskAffinity, ['execution', 'momentum']);
+  assert.equal(behavior.ability, null);
   assert.equal(deriveMoteBehavior({ profileId: 'unknown', taskState: 'idle' }).profileId, 'mote');
+});
+
+test('mote behavior exposes role-specific motion, gaze, and ability hints', () => {
+  const ember = deriveMoteBehavior({ profileId: 'ember_sprig', taskState: 'running' });
+  const moss = deriveMoteBehavior({ profileId: 'moss_tortoise', deviceHealth: 'warning' });
+  const raven = deriveMoteBehavior({ profileId: 'orbit_raven', explorationActive: true });
+  assert.notEqual(ember.motion, moss.motion);
+  assert.notEqual(ember.visualPreset, moss.visualPreset);
+  assert.equal(moss.gaze, 'protective');
+  assert.equal(raven.gaze, 'distant-scan');
+  assert.equal(moss.ability, null);
 });

@@ -23,6 +23,7 @@ class ExpansionProtocolTest {
         assertEquals("workspace.sync_state", WorkspaceEventTypes.SYNC_STATE)
         assertEquals("autonomy.approval", WorkspaceEventTypes.AUTONOMY_APPROVAL)
         assertEquals("mote.quest", WorkspaceEventTypes.MOTE_QUEST)
+        assertEquals("mote.story", WorkspaceEventTypes.MOTE_STORY)
     }
 
     @Test
