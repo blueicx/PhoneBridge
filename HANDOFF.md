@@ -285,3 +285,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本批 Debug 产物门禁已通过：`android/app/build/outputs/apk/debug/app-debug.apk`，`versionName=2.0.0`、`versionCode=2`，`91,718,714` bytes，SHA-256 `003D45116C9F759A66177DC3C298BEFB4229B2769E5F4A74A802E3E320B02FB1`；清单标记为 `internal-debug`，未签名。
 - 实机回归状态：本次尝试连接目标 `192.168.101.68:41253`，ADB 返回 `10061`（目标端口拒绝），5038 设备列表为空，因此没有安装/启动本批 APK，也没有把旧批次的实机证据重复计入本批。
 - 当前边界：正式签名 APK、ARCore 真平面、真实 GPS fix、长时间温度/电量和最终实机回归必须单独取得证据；本交接不把 Debug 构建或模拟器结果冒充为这些验收。
+
+## 21. 全面深化计划：批次 1 已实现（2026-09-22）
+
+- 基线为 `1a4acee`，仍在 `feature/integrated-enhancement`，未修改 `main`，没有使用子 agent。
+- `server/mote-growth.js` 已迁移到 v2：按 `Asia/Shanghai` 保存多日线索桶，生成/解析日期化 v2 事件 ID，持久化业务收据和 revision；旧 `daily`、`seenEventIds` 与旧 `reality:`/`reality-lens:` ID 保持兼容。
+- 每日每种线索只发一次；离线最多补交 7 天；重复、过期和拒绝均有明确 `businessStatus/reason`，保存异常会回滚本次奖励。
+- 新增 `GET /api/reality/progress`、`GET /api/reality/receipts/:eventId`；WebSocket ACK 增加 `businessStatus`、`businessAccepted`、`reason`、`resultRevision`，旧字段保留。
+- RealityEngine 事件 ID 日期化；`field-focus` 增益实际作用于现实 XP；装备未拥有拒绝装配；任务未达到完成条件拒绝领奖。
+- Android Room workspace 数据库升级到 v4，outbox 增加 lease/sent/business status/reason/result revision；纯逻辑 `OutboxQueue` 覆盖 claim、ACK 超时、指数退避和终态收据。
+- Android Activity 只入队并触发唯一 WorkManager，同步 worker 负责发送；现实线索奖励改为 ACK 后写入本地经验，待确认/拒绝使用 Toast 和协调器状态反馈；`0/1` 线索字段兼容。
+- 代码验证：Node `node --test server/*.test.js` **112/112**；Android outbox 定向测试、Reality 模型/探索定向测试通过。
+- 本批尚未重新执行 Android 全量构建、最新 CI、Xperia 实机、ARCore 真平面、正式 keystore、两小时运行；这些仍是后续验收项。
+
+实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-1.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-1.md)。

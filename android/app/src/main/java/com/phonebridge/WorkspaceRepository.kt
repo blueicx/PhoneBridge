@@ -126,11 +126,38 @@ class WorkspaceRepository private constructor(context: Context) {
         dao.readyOutbox(now).map { it.toEvent() }
     }
 
+    suspend fun claimOutbox(
+        eventId: String,
+        now: Long = System.currentTimeMillis(),
+        leaseMs: Long = 15_000L
+    ): Boolean = withContext(Dispatchers.IO) {
+        dao.claimOutbox(eventId, now, now + leaseMs.coerceAtLeast(1L), now) > 0
+    }
+
     suspend fun outboxEvent(eventId: String): WorkspaceEvent? = withContext(Dispatchers.IO) {
         dao.outbox(eventId)?.toEvent()
     }
 
-    suspend fun acknowledge(eventId: String) = withContext(Dispatchers.IO) { dao.acknowledge(eventId) }
+    suspend fun expireOutboxLeases(now: Long = System.currentTimeMillis()): Int = withContext(Dispatchers.IO) {
+        val expired = dao.expiredOutbox(now)
+        expired.forEach { eventId -> dao.retry(eventId, now + 1_000L) }
+        expired.size
+    }
+
+    suspend fun acknowledge(
+        eventId: String,
+        accepted: Boolean = true,
+        businessStatus: String? = null,
+        reason: String? = null,
+        resultRevision: Long? = null
+    ) = withContext(Dispatchers.IO) {
+        dao.acknowledge(
+            eventId = eventId,
+            businessStatus = businessStatus ?: if (accepted) "accepted" else "rejected",
+            businessReason = reason,
+            resultRevision = resultRevision
+        )
+    }
 
     suspend fun retry(
         eventId: String,
@@ -315,6 +342,15 @@ class WorkspaceRepository private constructor(context: Context) {
                 override fun migrate(database: SupportSQLiteDatabase) {
                     database.execSQL("ALTER TABLE `workspace_policies` ADD COLUMN `revision` INTEGER NOT NULL DEFAULT 0")
                     database.execSQL("ALTER TABLE `workspace_policies` ADD COLUMN `usesRemaining` INTEGER")
+                }
+            },
+            object : Migration(3, 4) {
+                override fun migrate(database: SupportSQLiteDatabase) {
+                    database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `leaseUntil` INTEGER")
+                    database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `lastSentAt` INTEGER")
+                    database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `businessStatus` TEXT")
+                    database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `businessReason` TEXT")
+                    database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `resultRevision` INTEGER")
                 }
             }
         )

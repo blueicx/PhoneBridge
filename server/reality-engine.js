@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { dayKey } = require('./mote-growth');
 
 const CLUE_TYPES = Object.freeze(['location', 'object', 'light']);
 const EVENT_KINDS = Object.freeze(['location', 'object', 'light', 'mote']);
@@ -72,6 +73,7 @@ class RealityEngine {
       loadout: [],
       habitat: { decorations: [], comfort: 0 },
       claimedQuestIds: [],
+      activeBoosts: [],
       xp: 0,
       level: 1,
       activeEncounter: null,
@@ -90,6 +92,7 @@ class RealityEngine {
       habitat: { ...this.state.habitat, ...(saved.habitat || {}) },
       seenEventIds: Array.isArray(saved.seenEventIds) ? saved.seenEventIds.slice(-1000) : [],
       claimedQuestIds: Array.isArray(saved.claimedQuestIds) ? saved.claimedQuestIds.slice(-500) : [],
+      activeBoosts: Array.isArray(saved.activeBoosts) ? saved.activeBoosts.slice(-12) : [],
     };
   }
 
@@ -101,6 +104,22 @@ class RealityEngine {
   snapshot() { return clone(this.state); }
   catalog() { return { items: clone(ITEMS), recipes: clone(RECIPES), decorations: clone(DECORATIONS), quests: clone(QUESTS), events: clone(EVENTS), encounters: clone(ENCOUNTERS) }; }
 
+  setBoosts(boosts = []) {
+    const at = this.now();
+    this.state.activeBoosts = (Array.isArray(boosts) ? boosts : [])
+      .filter(boost => boost && Number(boost.expiresAt) > at && Number(boost.multiplier) > 0)
+      .map(boost => ({ id: String(boost.id), multiplier: Number(boost.multiplier), expiresAt: Number(boost.expiresAt) }))
+      .slice(-12);
+    this._save();
+    return this.snapshot();
+  }
+
+  activeBoost(at = this.now()) {
+    return this.state.activeBoosts
+      .filter(boost => Number(boost.expiresAt) > Number(at))
+      .sort((left, right) => Number(right.multiplier) - Number(left.multiplier))[0] || null;
+  }
+
   eventsFor(region, at = this.now()) {
     const normalized = normalizeRegion(region);
     const bucket = Math.floor(Number(at) / 1800000);
@@ -108,7 +127,7 @@ class RealityEngine {
     return EVENTS.slice(0, 8).map((template, index) => {
       const eventSeed = hash(`${seed}:${template.templateId}`);
       return {
-        id: `reality:${normalized}:${bucket}:${template.templateId}`,
+        id: `reality:v2:${dayKey(at)}:${normalized}:${template.clueType}:${bucket}:${template.templateId}`,
         region: normalized,
         kind: template.kind,
         clueType: template.clueType,
@@ -146,11 +165,20 @@ class RealityEngine {
     this.state.seenEventIds.push(id);
     this.state.seenEventIds = this.state.seenEventIds.slice(-1000);
     this.state.inventory[itemId] = (this.state.inventory[itemId] || 0) + 1;
-    this.state.xp += event.difficulty + event.xp + bonus;
+    const baseXp = event.difficulty + event.xp + bonus;
+    const boost = this.activeBoost(at);
+    const multiplier = boost?.multiplier || 1;
+    const rewardXp = Math.max(baseXp, Math.round(baseXp * multiplier));
+    this.state.xp += rewardXp;
     this.state.level = Math.max(1, Math.floor(this.state.xp / 100) + 1);
     this.state.activeEncounter = null;
     this._save();
-    return { duplicate: false, event, reward: { itemId, amount: 1, xp: event.difficulty + event.xp + bonus }, state: this.snapshot() };
+    return {
+      duplicate: false,
+      event,
+      reward: { itemId, amount: 1, xp: rewardXp, baseXp, multiplier, boostId: boost?.id || null },
+      state: this.snapshot(),
+    };
   }
 
   craft(recipeId) {
@@ -164,7 +192,12 @@ class RealityEngine {
   }
 
   setLoadout(items = []) {
-    this.state.loadout = [...new Set((Array.isArray(items) ? items : []).map(String))].filter(id => ITEMS.some(item => item.id === id)).slice(0, 4);
+    const requested = [...new Set((Array.isArray(items) ? items : []).map(String))].slice(0, 4);
+    for (const id of requested) {
+      if (!ITEMS.some(item => item.id === id)) throw new Error(`equipment not found: ${id}`);
+      if ((this.state.inventory[id] || 0) < 1) throw new Error(`equipment not owned: ${id}`);
+    }
+    this.state.loadout = requested;
     this._save();
     return this.snapshot();
   }
@@ -183,6 +216,12 @@ class RealityEngine {
     const quest = QUESTS.find(item => item.id === String(questId));
     if (!quest) throw new Error('quest not found');
     if (this.state.claimedQuestIds.includes(String(eventId))) return { duplicate: true, quest, state: this.snapshot() };
+    const completed = quest.id === 'quest_01'
+      ? this.state.seenEventIds.length >= 1
+      : quest.id === 'quest_02'
+        ? Object.values(this.state.inventory).reduce((sum, amount) => sum + Number(amount || 0), 0) >= 2
+        : this.state.xp >= quest.rewardXp;
+    if (!completed) throw new Error('quest is not complete');
     this.state.claimedQuestIds.push(String(eventId));
     this.state.claimedQuestIds = this.state.claimedQuestIds.slice(-500);
     this.state.xp += quest.rewardXp;

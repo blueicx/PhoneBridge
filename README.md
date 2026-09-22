@@ -157,3 +157,14 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - `server/release-gates.js` 与 `scripts/verify_release_gates.ps1` 生成并校验版本、分支、commit、APK 大小和 SHA-256 清单。
 - `internal-debug` 仅表示功能分支 Debug 侧载；`release` 必须显式外部 keystore 签名。门禁拒绝主分支、token/日志/画面等敏感产物和无效 hash。
 - CI 在 Android 构建后执行发布门禁；回滚顺序和运行时备份/恢复说明见 [`docs/superpowers/phonebridge-batch-d-release.md`](docs/superpowers/phonebridge-batch-d-release.md)。
+
+## 全面深化批次 1：奖励与离线同步
+
+- Mote 成长状态按 `Asia/Shanghai` 活动日期保存，线索 ID 使用 `reality[-lens]:v2:<date>:<coarse-region>:<clue-type>`；旧事件格式继续兼容。
+- 奖励处理写入可重放收据，区分 `accepted`、`duplicate`、`rejected`，带拒绝原因和结果 revision；持久化失败会回滚本次内存奖励。
+- 新增 `GET /api/reality/progress` 与 `GET /api/reality/receipts/:eventId`；Workspace WebSocket ACK 增加业务状态字段，同时保留旧 ACK 字段。
+- 离线线索最多补交七天，每日每类只奖励一次；Android 先显示暂存，确认后才写入本地 Mote 经验。
+- Android outbox 使用单一 WorkManager 调度器、发送租约、ACK 超时、指数退避和 Room v4 恢复字段；Activity 不再与 worker 并行发送。
+- Reality 增益实际影响 XP，装备未拥有或任务未完成时不能写入奖励状态。
+
+设计与迁移记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-1.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-1.md)。

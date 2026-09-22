@@ -17,6 +17,8 @@ test('reality events are deterministic and rewards are idempotent', () => {
   const engine = new RealityEngine({ now: () => now });
   const events = engine.eventsFor('cell:1:2');
   assert.deepEqual(events, engine.eventsFor('cell:1:2'));
+  assert.match(events[0].id, /^reality:v2:\d{4}-\d{2}-\d{2}:cell:1:2:/);
+  assert.notEqual(events[0].id, engine.eventsFor('cell:1:2', now + 24 * 60 * 60 * 1000)[0].id);
   const event = events[0];
   const result = engine.resolve({ eventId: event.id, region: 'cell:1:2', clueType: event.clueType, at: now });
   assert.equal(result.duplicate, false);
@@ -46,4 +48,27 @@ test('crafting, habitat, encounters and quests persist through the engine state'
   assert.ok(resolved.reward.xp > event.xp);
   assert.equal(engine.claimQuest('quest_01', 'claim-1').duplicate, false);
   assert.equal(engine.claimQuest('quest_01', 'claim-1').duplicate, true);
+});
+
+test('active time-limited boosts modify reality rewards and expire', () => {
+  let now = 1_700_000_000_000;
+  const engine = new RealityEngine({ now: () => now });
+  engine.setBoosts([{ id: 'field-focus', multiplier: 2, expiresAt: now + 10_000 }]);
+  const event = engine.eventsFor('cell:5:6', now)[0];
+  const boosted = engine.resolve({ eventId: event.id, region: 'cell:5:6', clueType: event.clueType, at: now });
+  assert.equal(boosted.reward.baseXp, event.difficulty + event.xp);
+  assert.equal(boosted.reward.xp, boosted.reward.baseXp * 2);
+
+  now += 2 * 30 * 60 * 1000;
+  const next = engine.eventsFor('cell:5:6', now)[0];
+  const expired = engine.resolve({ eventId: next.id, region: 'cell:5:6', clueType: next.clueType, at: now });
+  assert.equal(expired.reward.xp, expired.reward.baseXp);
+});
+
+test('quest claims validate completion and loadout validates owned equipment', () => {
+  const engine = new RealityEngine({ now: () => 1_700_000_000_000 });
+  assert.throws(() => engine.claimQuest('quest_01', 'before-observation'), /not complete/i);
+  assert.throws(() => engine.setLoadout(['item_30']), /not owned/i);
+  engine.state.inventory.item_30 = 1;
+  assert.deepEqual(engine.setLoadout(['item_30']).loadout, ['item_30']);
 });

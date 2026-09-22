@@ -308,6 +308,24 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     const behavior = await request('/api/motes/behavior?taskState=running&deviceHealth=degraded');
     assert.equal(behavior.body.behavior.version, 1);
 
+    const realityEvents = await request('/api/reality/events?region=cell:7:8');
+    assert.equal(realityEvents.response.status, 200);
+    const realityEvent = realityEvents.body.events[0];
+    const realityResolved = await request(`/api/reality/events/${encodeURIComponent(realityEvent.id)}/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ region: 'cell:7:8', clueType: realityEvent.clueType, actions: ['observe'] }),
+    });
+    assert.equal(realityResolved.response.status, 201);
+    assert.equal(realityResolved.body.growth.businessStatus, 'accepted');
+    assert.equal(typeof realityResolved.body.growth.revision, 'number');
+    const progress = await request('/api/reality/progress');
+    assert.equal(progress.response.status, 200);
+    assert.equal(progress.body.progress.growth.revision, realityResolved.body.growth.revision);
+    const receipt = await request(`/api/reality/receipts/${encodeURIComponent(realityEvent.id)}`);
+    assert.equal(receipt.response.status, 200);
+    assert.equal(receipt.body.receipt.businessStatus, 'accepted');
+
     const failedTask = await request(`/api/tasks/${message.body.task.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },

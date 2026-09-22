@@ -11,7 +11,7 @@ import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 
-const val WORKSPACE_DB_VERSION = 3
+const val WORKSPACE_DB_VERSION = 4
 
 @Entity(tableName = "workspace_sessions")
 data class WorkspaceSessionEntity(
@@ -130,6 +130,11 @@ data class WorkspaceOutboxEntity(
     val ack: Boolean = false,
     val retryCount: Int = 0,
     val nextAttemptAt: Long = 0L,
+    val leaseUntil: Long? = null,
+    val lastSentAt: Long? = null,
+    val businessStatus: String? = null,
+    val businessReason: String? = null,
+    val resultRevision: Long? = null,
     val localActionId: String? = null,
     val localActionState: String? = null
 )
@@ -233,19 +238,25 @@ abstract class WorkspaceDao {
         if (items.isNotEmpty()) saveActionRuns(items)
     }
 
-    @Query("SELECT * FROM workspace_outbox WHERE ack = 0 AND nextAttemptAt <= :now ORDER BY createdAt ASC")
+    @Query("SELECT * FROM workspace_outbox WHERE ack = 0 AND nextAttemptAt <= :now AND (leaseUntil IS NULL OR leaseUntil <= :now) ORDER BY createdAt ASC")
     abstract suspend fun readyOutbox(now: Long): List<WorkspaceOutboxEntity>
 
     @Query("SELECT * FROM workspace_outbox WHERE eventId = :eventId LIMIT 1")
     abstract suspend fun outbox(eventId: String): WorkspaceOutboxEntity?
 
+    @Query("SELECT eventId FROM workspace_outbox WHERE ack = 0 AND leaseUntil IS NOT NULL AND leaseUntil <= :now")
+    abstract suspend fun expiredOutbox(now: Long): List<String>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun enqueue(event: WorkspaceOutboxEntity): Long
 
-    @Query("UPDATE workspace_outbox SET ack = 1 WHERE eventId = :eventId")
-    abstract suspend fun acknowledge(eventId: String)
+    @Query("UPDATE workspace_outbox SET leaseUntil = :leaseUntil, lastSentAt = :sentAt WHERE eventId = :eventId AND ack = 0 AND nextAttemptAt <= :now AND (leaseUntil IS NULL OR leaseUntil <= :now)")
+    abstract suspend fun claimOutbox(eventId: String, now: Long, leaseUntil: Long, sentAt: Long): Int
 
-    @Query("UPDATE workspace_outbox SET retryCount = retryCount + 1, nextAttemptAt = :nextAttemptAt, localActionState = COALESCE(:localActionState, localActionState) WHERE eventId = :eventId")
+    @Query("UPDATE workspace_outbox SET ack = 1, leaseUntil = NULL, businessStatus = :businessStatus, businessReason = :businessReason, resultRevision = :resultRevision WHERE eventId = :eventId")
+    abstract suspend fun acknowledge(eventId: String, businessStatus: String, businessReason: String?, resultRevision: Long?)
+
+    @Query("UPDATE workspace_outbox SET retryCount = retryCount + 1, nextAttemptAt = :nextAttemptAt, leaseUntil = NULL, businessStatus = NULL, businessReason = NULL, resultRevision = NULL, localActionState = COALESCE(:localActionState, localActionState) WHERE eventId = :eventId")
     abstract suspend fun retry(eventId: String, nextAttemptAt: Long, localActionState: String? = null)
 }
 

@@ -2058,33 +2058,20 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             say("这个线索正在同步，稍等一下。")
             return
         }
-        val nextDiscovered = discovered + node.id
-        saveDiscoveredRealityNodes(nextDiscovered)
         realityLensView.markDiscovered(node.id)
-        pet = pet.copy(experience = pet.experience + 4)
-        val levelUpMessage = checkLevelUp()
-        savePet()
-        renderPet()
-        sendJson(
-            JSONObject()
-                .put("type", "pet")
-                .put("action", "reality_lens")
-                .put("node", node.id)
-                .put("reward", 4)
-                .put("state", petJson())
-        )
+        val activityAt = System.currentTimeMillis()
         enqueueWorkspaceEvent(
             WorkspaceEventTypes.MOTE_EXPLORATION,
             JSONObject()
                 .put("eventId", submission.eventId)
                 .put("clueType", submission.clueType)
                 .put("region", submission.region)
+                .put("activityAt", activityAt)
+                .put("offline", submission.offline)
+                .put("nodeId", node.id)
         )
-        logAdapter.add("success", "现实线索 +4 经验：${node.title}")
-        say(buildString {
-            append("${node.title}已记录，获得 4 经验。")
-            if (levelUpMessage.isNotBlank()) append(" $levelUpMessage")
-        })
+        logAdapter.add("info", "现实线索已暂存，等待节点确认：${node.title}")
+        say("${node.title}已暂存，联网后确认奖励。")
     }
 
     private fun handleRealityPetTapped() {
@@ -2430,36 +2417,66 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         )
         appScope.launch(Dispatchers.IO) {
             workspaceRepository.enqueue(event)
-            if (BridgeLink.isOnline) withContext(Dispatchers.Main) { flushWorkspaceOutbox() }
+            withContext(Dispatchers.Main) { scheduleOutboxSync() }
         }
     }
 
     private fun flushWorkspaceOutbox() {
-        if (!BridgeLink.isOnline) return
+        scheduleOutboxSync()
+    }
+
+    override fun onWorkspaceAck(
+        eventId: String,
+        accepted: Boolean,
+        status: String?,
+        businessStatus: String?,
+        reason: String?,
+        resultRevision: Long?
+    ) {
+        if (eventId.isBlank()) return
+        val businessAccepted = accepted && businessStatus != "rejected" || status == "duplicate" || businessStatus == "duplicate"
         appScope.launch(Dispatchers.IO) {
-            val pending = workspaceRepository.readyOutbox()
-            withContext(Dispatchers.Main) {
-                pending.forEach { event ->
-                    if (!BridgeLink.sendWorkspaceEvent(event)) {
-                        appScope.launch(Dispatchers.IO) { workspaceRepository.retry(event.eventId, retryCount = 1) }
+            val event = workspaceRepository.outboxEvent(eventId)
+            workspaceRepository.acknowledge(
+                eventId = eventId,
+                accepted = businessAccepted,
+                businessStatus = businessStatus ?: if (businessAccepted) "accepted" else "rejected",
+                reason = reason ?: status,
+                resultRevision = resultRevision
+            )
+            if (event?.type == WorkspaceEventTypes.MOTE_EXPLORATION) {
+                val cluePayload = runCatching { JSONObject(event.payload) }.getOrNull()
+                val clueEventId = cluePayload?.optString("eventId").orEmpty()
+                if (clueEventId.isNotBlank()) {
+                    withContext(Dispatchers.Main) {
+                        realityExplorationCoordinator.acknowledge(clueEventId, accepted = businessAccepted)
+                        if (businessAccepted) {
+                            val nodeId = cluePayload?.optString("nodeId").orEmpty()
+                            if (nodeId.isNotBlank()) {
+                                val discovered = loadDiscoveredRealityNodes().toMutableSet()
+                                if (discovered.add(nodeId)) {
+                                    saveDiscoveredRealityNodes(discovered)
+                                    pet = pet.copy(experience = pet.experience + 4)
+                                    checkLevelUp()
+                                    savePet()
+                                    renderPet()
+                                    sendJson(
+                                        JSONObject()
+                                            .put("type", "pet")
+                                            .put("action", "reality_lens")
+                                            .put("node", nodeId)
+                                            .put("reward", 4)
+                                            .put("state", petJson())
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
-
-    override fun onWorkspaceAck(eventId: String, accepted: Boolean, status: String?) {
-        if ((!accepted && status != "duplicate") || eventId.isBlank()) return
-        appScope.launch(Dispatchers.IO) {
-            val event = workspaceRepository.outboxEvent(eventId)
-            workspaceRepository.acknowledge(eventId)
-            if (event?.type == WorkspaceEventTypes.MOTE_EXPLORATION) {
-                val clueEventId = runCatching { JSONObject(event.payload).optString("eventId") }.getOrNull().orEmpty()
-                if (clueEventId.isNotBlank()) {
-                    withContext(Dispatchers.Main) {
-                        realityExplorationCoordinator.acknowledge(clueEventId, accepted = true)
-                    }
-                }
+            withContext(Dispatchers.Main) {
+                val message = if (businessAccepted) "同步已确认" else "同步被拒绝：${reason ?: status ?: "节点未接受"}"
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -3919,7 +3936,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         val target = exploration.optString("targetId").ifBlank { "暂无" }
         val fragments = exploration.optJSONObject("fragments")
         container.addView(TextView(this).apply {
-            text = "探索目标：$target\n地点 ${if (fragments?.optBoolean("location") == true) "✓" else "·"}  物体 ${if (fragments?.optBoolean("object") == true) "✓" else "·"}  光线 ${if (fragments?.optBoolean("light") == true) "✓" else "·"}"
+            text = "探索目标：$target\n地点 ${if (RealityClueProtocol.booleanField(fragments?.opt("location"))) "✓" else "·"}  物体 ${if (RealityClueProtocol.booleanField(fragments?.opt("object"))) "✓" else "·"}  光线 ${if (RealityClueProtocol.booleanField(fragments?.opt("light"))) "✓" else "·"}"
             setTextColor(Color.parseColor("#D9F5E6"))
             setPadding(0, 0, 0, dp(8))
         })
@@ -4323,7 +4340,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 deviceHealth = deviceHealthState.overall.name,
                 interaction = when { speaking -> "chat"; pttActive -> "ptt"; else -> "ambient" },
                 explorationProgress = (moteStateJson.optJSONObject("exploration")?.optJSONObject("fragments")?.let { fragments ->
-                    listOf("location", "object", "light").count { fragments.optBoolean(it) }
+                    listOf("location", "object", "light").count { RealityClueProtocol.booleanField(fragments.opt(it)) }
                 } ?: 0),
                 relationshipLevel = moteRelationship.level,
                 emotion = pet.emotion

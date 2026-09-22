@@ -1,6 +1,8 @@
 package com.phonebridge
 
 import kotlin.math.floor
+import java.time.Instant
+import java.time.ZoneId
 
 data class RealityEvent(
     val id: String,
@@ -25,16 +27,25 @@ data class RealityProgress(
 
 object RealityClueProtocol {
     private val aliases = mapOf("place" to "location")
+    private val shanghai = ZoneId.of("Asia/Shanghai")
 
     fun canonicalType(value: String?): String {
         val normalized = value?.trim()?.lowercase() ?: ""
         return aliases[normalized] ?: normalized.takeIf { it in setOf("location", "object", "light") } ?: "location"
     }
 
-    fun eventId(nodeId: String?, coarseRegion: String? = null): String {
+    fun eventId(nodeId: String?, coarseRegion: String? = null, activityAt: Long = System.currentTimeMillis()): String {
         val clue = canonicalType(nodeId)
         val region = coarseRegion?.trim()?.takeIf { it.startsWith("cell:") } ?: "camera"
-        return "reality-lens:$region:$clue"
+        val date = Instant.ofEpochMilli(activityAt).atZone(shanghai).toLocalDate()
+        return "reality-lens:v2:$date:$region:$clue"
+    }
+
+    fun booleanField(value: Any?): Boolean = when (value) {
+        is Boolean -> value
+        is Number -> value.toInt() != 0
+        is String -> value.trim().lowercase() in setOf("1", "true", "yes", "on", "y")
+        else -> false
     }
 }
 

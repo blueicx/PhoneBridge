@@ -16,12 +16,24 @@ class RealityModelsTest {
 
     @Test
     fun clueEventIdsAreStableAndDoNotContainPreciseLocation() {
-        val first = RealityClueProtocol.eventId("place", "cell:1561:6073")
-        val second = RealityClueProtocol.eventId("place", "cell:1561:6073")
+        val activityAt = 1_767_264_000_000L
+        val first = RealityClueProtocol.eventId("place", "cell:1561:6073", activityAt)
+        val second = RealityClueProtocol.eventId("place", "cell:1561:6073", activityAt)
         assertEquals(first, second)
+        assertTrue(first.startsWith("reality-lens:v2:2026-01-01:cell:1561:6073:location"))
         assertTrue(first.contains("location"))
         assertFalse(first.contains("31.2304"))
         assertFalse(first.contains("121.4737"))
+    }
+
+    @Test
+    fun clueFlagsAcceptBooleanAndLegacyZeroOneWireValues() {
+        assertTrue(RealityClueProtocol.booleanField(true))
+        assertFalse(RealityClueProtocol.booleanField(false))
+        assertTrue(RealityClueProtocol.booleanField(1))
+        assertFalse(RealityClueProtocol.booleanField(0))
+        assertTrue(RealityClueProtocol.booleanField("1"))
+        assertFalse(RealityClueProtocol.booleanField("0"))
     }
 
     @Test

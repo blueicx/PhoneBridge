@@ -338,11 +338,21 @@ class EventDeduper {
 data class OutboxItem(
     val event: WorkspaceEvent,
     val retryCount: Int = 0,
-    val nextAttemptAt: Long = event.createdAt
+    val nextAttemptAt: Long = event.createdAt,
+    val leaseUntil: Long? = null,
+    val sentAt: Long? = null
+)
+
+data class OutboxOutcome(
+    val eventId: String,
+    val businessStatus: String,
+    val reason: String? = null,
+    val resultRevision: Long? = null
 )
 
 class OutboxQueue {
     private val items = linkedMapOf<String, OutboxItem>()
+    private val outcomes = linkedMapOf<String, OutboxOutcome>()
 
     fun enqueue(event: WorkspaceEvent): Boolean {
         val duplicate = items.values.any {
@@ -354,18 +364,67 @@ class OutboxQueue {
         return true
     }
 
-    fun ready(now: Long): List<OutboxItem> = items.values.filter { it.nextAttemptAt <= now }
+    fun ready(now: Long): List<OutboxItem> = items.values.filter {
+        it.nextAttemptAt <= now && (it.leaseUntil == null || it.leaseUntil <= now)
+    }
+
+    fun claimReady(now: Long, leaseMs: Long = 15_000L, limit: Int = 8): List<OutboxItem> =
+        ready(now).take(limit.coerceAtLeast(1)).mapNotNull { item ->
+            if (!claim(item.event.eventId, now, leaseMs)) return@mapNotNull null
+            items[item.event.eventId]
+        }
+
+    fun claim(eventId: String, now: Long, leaseMs: Long = 15_000L): Boolean {
+        val current = items[eventId] ?: return false
+        if (current.nextAttemptAt > now || (current.leaseUntil != null && current.leaseUntil > now)) return false
+        items[eventId] = current.copy(leaseUntil = now + leaseMs.coerceAtLeast(1L), sentAt = now)
+        return true
+    }
+
+    fun expireLeases(now: Long): List<String> {
+        val expired = items.values.filter { it.leaseUntil != null && it.leaseUntil <= now }.map { it.event.eventId }
+        expired.forEach { eventId ->
+            val current = items[eventId] ?: return@forEach
+            val nextRetry = current.retryCount + 1
+            val backoff = (1_000L shl (nextRetry - 1).coerceIn(0, 6)).coerceAtMost(60_000L)
+            items[eventId] = current.copy(
+                retryCount = nextRetry,
+                nextAttemptAt = now + backoff,
+                leaseUntil = null
+            )
+        }
+        return expired
+    }
 
     fun retry(eventId: String, now: Long, backoffMs: Long = 1_000L): Boolean {
         val current = items[eventId] ?: return false
         items[eventId] = current.copy(
             retryCount = current.retryCount + 1,
-            nextAttemptAt = now + backoffMs.coerceAtMost(60_000L)
+            nextAttemptAt = now + backoffMs.coerceAtMost(60_000L),
+            leaseUntil = null
         )
         return true
     }
 
-    fun acknowledge(eventId: String): Boolean = items.remove(eventId) != null
+    fun acknowledge(
+        eventId: String,
+        accepted: Boolean = true,
+        businessStatus: String? = null,
+        reason: String? = null,
+        resultRevision: Long? = null
+    ): Boolean {
+        if (items.remove(eventId) == null) return false
+        outcomes[eventId] = OutboxOutcome(
+            eventId = eventId,
+            businessStatus = businessStatus ?: if (accepted) "accepted" else "rejected",
+            reason = reason,
+            resultRevision = resultRevision
+        )
+        while (outcomes.size > 512) outcomes.remove(outcomes.keys.first())
+        return true
+    }
+
+    fun outcome(eventId: String): OutboxOutcome? = outcomes[eventId]
 
     fun size(): Int = items.size
 }

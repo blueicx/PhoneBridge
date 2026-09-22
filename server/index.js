@@ -301,6 +301,7 @@ const healthChecks = new HealthChecks({
 const memoryStore = new MemoryStore({ persistence: runtimePersistence });
 const realityEngine = new RealityEngine({ persistence: runtimePersistence });
 const moteGrowthStore = new MoteGrowthStore({ persistence: runtimePersistence });
+realityEngine.setBoosts(moteGrowthStore.snapshot().boosts);
 const pairingManager = new PairingManager();
 const proactiveState = {
   paused: false,
@@ -829,8 +830,9 @@ function applyWorkspaceEvent(event) {
     updateDeviceHealth(payload.state || payload);
   }
   if (event.type === 'mote.exploration' && payload.eventId && payload.clueType) {
-    try { applyMoteClue(payload); } catch (_) {}
+    return applyMoteClue(payload);
   }
+  return { businessStatus: 'accepted', reason: 'event_applied', resultRevision: event.revision || workspaceStore.eventRevision };
 }
 
 const taskRunner = new TaskRunner({ maxConcurrency: 1, maxRetries: 1, retryDelayMs: 250 });
@@ -901,9 +903,37 @@ function applyMoteClue(payload) {
     ? { duplicate: result.duplicate, reward: { xp: 0, dailyCompleted: false, boost: null }, state: moteGrowthStore.snapshot() }
     : result.duplicate
     ? { duplicate: true, reward: { xp: 0, dailyCompleted: false, boost: null }, state: moteGrowthStore.snapshot() }
-    : moteGrowthStore.recordClue({ eventId: payload.eventId, clueType: payload.clueType, region: payload.region || 'camera' });
+    : moteGrowthStore.recordClue({
+      eventId: payload.eventId,
+      clueType: payload.clueType,
+      region: payload.region || 'camera',
+      activityAt: payload.activityAt,
+      offline: payload.offline === true,
+    });
   if (!result.duplicate) broadcastMoteState();
+  result.businessStatus = result.growth?.businessStatus || (result.duplicate ? 'duplicate' : 'accepted');
+  result.reason = result.growth?.reason || (result.duplicate ? 'event_already_processed' : 'clue_collected');
+  result.resultRevision = result.growth?.revision || 0;
+  realityEngine.setBoosts(moteGrowthStore.snapshot().boosts);
   return result;
+}
+
+function buildRealityProgress() {
+  const reality = realityEngine.snapshot();
+  const growth = moteGrowthStore.snapshot();
+  return {
+    revision: Math.max(Number(growth.revision) || 0, Number(reality.updatedAt) || 0),
+    growth,
+    inventory: reality.inventory,
+    loadout: reality.loadout,
+    habitat: reality.habitat,
+    daily: growth.daily,
+    dailyByDate: growth.dailyByDate,
+    boosts: growth.boosts,
+    level: growth.level,
+    xp: growth.xp,
+    region: reality.region || growth.region || null,
+  };
 }
 
 function broadcastMoteState() {
@@ -1908,7 +1938,8 @@ const handleHttpRequest = async (req, res) => {
     if (parsedUrl.pathname === '/api/motes/exploration/clues' && req.method === 'POST') {
       try {
         const result = applyMoteClue(await readJson(req));
-        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
+        const status = result.businessStatus === 'rejected' ? 409 : result.duplicate || result.businessStatus === 'duplicate' ? 200 : 201;
+        return sendJson(res, status, { ok: true, ...result });
       } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
     if (parsedUrl.pathname === '/api/motes/relationship' && req.method === 'GET') {
@@ -1929,6 +1960,16 @@ const handleHttpRequest = async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/reality/state' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, state: realityEngine.snapshot() });
+    }
+    if (parsedUrl.pathname === '/api/reality/progress' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, progress: buildRealityProgress() });
+    }
+    const realityReceiptMatch = parsedUrl.pathname.match(/^\/api\/reality\/receipts\/([^/]+)$/);
+    if (realityReceiptMatch && req.method === 'GET') {
+      const eventId = decodeURIComponent(realityReceiptMatch[1]);
+      const receipt = moteGrowthStore.getReceipt(eventId);
+      if (!receipt) return sendJson(res, 404, { ok: false, error: 'receipt not found' });
+      return sendJson(res, 200, { ok: true, receipt });
     }
     if (parsedUrl.pathname === '/api/reality/events' && req.method === 'GET') {
       const region = parsedUrl.searchParams.get('region') || realityEngine.snapshot().region || '';
@@ -1959,7 +2000,10 @@ const handleHttpRequest = async (req, res) => {
           });
           broadcast({ type: 'reality.progress', result, state: realityEngine.snapshot() });
         }
-        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
+        const status = result.growth?.businessStatus === 'rejected'
+          ? 409
+          : result.duplicate || result.growth?.businessStatus === 'duplicate' ? 200 : 201;
+        return sendJson(res, status, { ok: true, ...result });
       } catch (error) { return sendJson(res, /expired|invalid|region|clue/i.test(error.message) ? 409 : 400, { ok: false, error: error.message }); }
     }
     if (parsedUrl.pathname === '/api/reality/crafting' && req.method === 'POST') {
@@ -2410,8 +2454,26 @@ wss.on('connection', (ws, req) => {
               ack: false,
             });
             const accepted = workspaceStore.acceptEvent(event);
-            if (accepted.accepted) applyWorkspaceEvent(accepted.event);
-            ws.send(JSON.stringify({ type: 'workspace.ack', eventId: event.eventId, accepted: accepted.accepted, status: accepted.status, revision: accepted.event.revision || workspaceStore.eventRevision, origin: event.origin }));
+            let business = { businessStatus: accepted.accepted ? 'accepted' : 'rejected', reason: accepted.status, resultRevision: accepted.event.revision || workspaceStore.eventRevision };
+            if (accepted.accepted) {
+              try {
+                business = applyWorkspaceEvent(accepted.event) || business;
+              } catch (error) {
+                business = { businessStatus: 'rejected', reason: error.message, resultRevision: accepted.event.revision || workspaceStore.eventRevision };
+              }
+            }
+            ws.send(JSON.stringify({
+              type: 'workspace.ack',
+              eventId: event.eventId,
+              accepted: accepted.accepted,
+              status: accepted.status,
+              businessStatus: business.businessStatus || (accepted.accepted ? 'accepted' : 'rejected'),
+              businessAccepted: business.businessStatus === 'accepted',
+              reason: business.reason || null,
+              resultRevision: business.resultRevision || accepted.event.revision || workspaceStore.eventRevision,
+              revision: accepted.event.revision || workspaceStore.eventRevision,
+              origin: event.origin,
+            }));
             if (accepted.accepted) broadcast({ type: 'workspace.event', event });
             break;
           }

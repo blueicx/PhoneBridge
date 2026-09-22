@@ -91,6 +91,32 @@ class WorkspaceProtocolTest {
     }
 
     @Test
+    fun outboxLeaseSeparatesTransportSendFromBusinessAckAndRecoversAfterTimeout() {
+        val queue = OutboxQueue()
+        val event = WorkspaceEvent(origin = "phone", sequence = 9, type = WorkspaceEventTypes.MOTE_EXPLORATION, payload = "{}", createdAt = 100L)
+        assertTrue(queue.enqueue(event))
+        val claimed = queue.claimReady(now = 100L, leaseMs = 1_000L).single()
+        assertEquals(1_100L, claimed.leaseUntil)
+        assertEquals(0, queue.ready(500L).size)
+        assertEquals(listOf(event.eventId), queue.expireLeases(now = 1_100L))
+        assertEquals(0, queue.ready(1_100L).size)
+        val afterBackoff = queue.ready(2_100L).single()
+        assertEquals(1, afterBackoff.retryCount)
+        assertTrue(queue.claim(event.eventId, now = 2_100L, leaseMs = 500L))
+        assertTrue(queue.acknowledge(
+            event.eventId,
+            accepted = false,
+            businessStatus = "rejected",
+            reason = "offline_event_expired",
+            resultRevision = 42L
+        ))
+        assertEquals(0, queue.size())
+        assertEquals("rejected", queue.outcome(event.eventId)?.businessStatus)
+        assertEquals("offline_event_expired", queue.outcome(event.eventId)?.reason)
+        assertEquals(42L, queue.outcome(event.eventId)?.resultRevision)
+    }
+
+    @Test
     fun moteExplorationEventUsesOutboxEventIdDeduplication() {
         val event = WorkspaceEvent(
             origin = "phone",
@@ -281,9 +307,10 @@ class WorkspaceProtocolTest {
 
     @Test
     fun workspaceDatabaseDeclaresV3Migration() {
-        assertEquals(3, WORKSPACE_DB_VERSION)
+        assertEquals(4, WORKSPACE_DB_VERSION)
         val migrations = WorkspaceRepository.MIGRATIONS.toList()
         assertTrue(migrations.any { it.startVersion == 1 && it.endVersion == 2 })
+        assertTrue(migrations.any { it.startVersion == 3 && it.endVersion == 4 })
         assertTrue(migrations.all { it is Migration })
     }
     @Test
