@@ -39,6 +39,9 @@ jobs:
       - name: Android debug build
         working-directory: android
         run: bash ./gradlew :app:assembleDebug --no-daemon --console=plain
+      - name: Release gate manifest
+        shell: pwsh
+        run: ./scripts/verify_release_gates.ps1 -ApkPath android/app/build/outputs/apk/debug/app-debug.apk -Channel internal-debug -AllowProtectedBranch -RequireClean
       - name: Diff whitespace
         run: git diff --check
       - name: Release worktree clean

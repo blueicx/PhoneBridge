@@ -265,3 +265,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - Web 工作台把统计、Attention、任务、审批和 Mote 图鉴拆为独立 keyed DOM 区块；相同签名跳过更新，revision 变化也只替换受影响区块，任务详情节点和当前选择保持不重建。
 - TDD 先行证据：新增 `CompanionSessionRepositoryTest`、`ImmersiveShellCoordinatorTest`，先验证 unresolved red，再实现后 targeted `:app:testDebugUnitTest` 通过。
 - 当前边界：Android 任务动作仍以 Web 任务中枢为完整操作入口，沉浸入口优先展示状态/待确认；本批不新增任意自动执行权限，也不改变服务端硬禁止策略。
+
+## 19. Mote 关系成长与现实探索批次 3（2026-09-22）
+
+- 新增 `server/mote-growth.js`：服务端持久化探索 XP、等级、每日地点/物体/光线三类线索、重复事件集合和 `field-focus` 30 分钟增益；跨日会重置当日进度但保留总成长。
+- `MoteGrowthStore.validatePayload` 与 `RealityEngine` 统一拒绝精确坐标，只接受 `camera` 或 `cell:<整数>:<整数>`；现实奖励在引擎写状态前完成验证，避免无效请求产生部分奖励。
+- 新增 `GET /api/motes/growth`；`/api/motes`、完整快照、工作区快照、`mote.roster` 和 `mote.exploration` 携带相同成长投影；伴侣摘要把成长等级、今日三类线索和当前增益同步给 Web/Android。
+- 新增 Android `RealityExplorationCoordinator`：按粗区域过滤/排序事件，过滤过期事件；线索提交使用稳定 eventId，离线进入已有 Room outbox，服务端 Mote 快照和 workspace ACK 都能恢复 pending/discovered 状态。
+- 保留旧 `api-*` Mote 图鉴事件兼容路径，但这些旧事件不计入现实成长，避免历史协议迁移时改变奖励语义。
+- 本批验收已通过：Node 全量 **106/106**；Android `CompanionSummaryTest`、`RealityExplorationCoordinatorTest` 定向测试以及 `:app:testDebugUnitTest :app:assembleDebug` 均 `BUILD SUCCESSFUL`；性能预算 `elapsedMs=4.125`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；敏感扫描、`node --check server/index.js` 和 `git diff --check` 通过。
+- 本批没有把 ARCore 真平面、真实 GPS fix 或数小时设备运行宣称为完成；仍以 Canvas/粗区域/离线安全回退为准。
+
+## 20. 发布门禁与验收收口批次 4（2026-09-22）
+
+- 新增 `server/release-gates.js`、`server/release-gates.test.js` 和 `scripts/verify_release_gates.ps1`；清单记录版本号、versionCode、分支、commit、APK 大小和 SHA-256。
+- `internal-debug` 允许未签名 Debug 侧载，`release` 强制要求外部 keystore 签名；敏感文件路径、主分支、空产物和无效 hash 会被拒绝。
+- CI 在 Android Debug 构建后执行 release gate，并保留 Node 全量测试、协议兼容、性能预算、敏感扫描、`git diff --check` 和干净工作树检查。
+- 回滚说明见 `docs/superpowers/phonebridge-batch-d-release.md`；运行时仍先用 `scripts/backup_runtime.ps1` 备份，再按需使用 `scripts/restore_runtime.ps1`，不清理用户工作。
+- 本批 Debug 产物门禁已通过：`android/app/build/outputs/apk/debug/app-debug.apk`，`versionName=2.0.0`、`versionCode=2`，`91,718,714` bytes，SHA-256 `003D45116C9F759A66177DC3C298BEFB4229B2769E5F4A74A802E3E320B02FB1`；清单标记为 `internal-debug`，未签名。
+- 实机回归状态：本次尝试连接目标 `192.168.101.68:41253`，ADB 返回 `10061`（目标端口拒绝），5038 设备列表为空，因此没有安装/启动本批 APK，也没有把旧批次的实机证据重复计入本批。
+- 当前边界：正式签名 APK、ARCore 真平面、真实 GPS fix、长时间温度/电量和最终实机回归必须单独取得证据；本交接不把 Debug 构建或模拟器结果冒充为这些验收。

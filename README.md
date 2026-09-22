@@ -144,3 +144,16 @@ App 的“节点”按钮可同时填写节点地址和访问令牌。令牌文�
 PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出相机、麦克风或位置权限；危险权限只在用户主动打开相机、语音或现实镜头时按需申请。上次停留在现实镜头且相机权限仍有效时才会恢复现实镜头，否则安全回到伙伴舞台。沉浸模式隐藏系统栏和工作台底栏，工具、退出、文本聊天和 PTT 通过舞台内的轻量控件访问；前台服务在没有相机/麦克风权限时使用 `dataSync` 类型，避免冷启动崩溃。
 
 批次 2 将 Android 的 timeline、伴侣摘要、任务、Attention、聊天、健康和自治状态汇入 `CompanionSessionRepository`，沉浸工具手柄由 `ImmersiveShellCoordinator` 管理抽屉、返回层级和 `phonebridge://task|attention|chat` 深链。离线时保留 Room 镜像，联网后继续使用 revision/eventId 幂等恢复；沉浸工具手柄显示当前任务、待确认、最近结果、Provider 和连接状态。Web 工作台将统计、提醒、任务、审批和图鉴拆成 keyed DOM 区块，只更新发生变化的区块，不重建整块工作台。
+
+### 批次 3：Mote 成长与现实探索闭环
+
+- `server/mote-growth.js` 持久化 Mote 探索 XP、等级、每日地点/物体/光线三线索进度和 `field-focus` 限时增益；重复 `eventId` 不重复奖励，旧状态可恢复。
+- Android `RealityExplorationCoordinator` 过滤过期/跨区域事件，统一 `reality-lens:<coarse-region-or-camera>:<clue>` 协议；离线线索进入已有 Room outbox，收到服务端快照或 ACK 后幂等确认。
+- 现实区域严格限制为 `camera` 或 `cell:x:y`，服务端在 RealityEngine 写入奖励前完成校验，拒绝精确坐标、伪造区域和失效事件；旧 `api-*` Mote 图鉴事件继续兼容但不产生探索成长奖励。
+- Web/Android 伴侣摘要增加探索等级、XP、今日线索和增益状态；新增 `GET /api/motes/growth`，`/api/motes` 与时间线快照携带同一成长投影。
+
+### 批次 4：发布门禁与回滚
+
+- `server/release-gates.js` 与 `scripts/verify_release_gates.ps1` 生成并校验版本、分支、commit、APK 大小和 SHA-256 清单。
+- `internal-debug` 仅表示功能分支 Debug 侧载；`release` 必须显式外部 keystore 签名。门禁拒绝主分支、token/日志/画面等敏感产物和无效 hash。
+- CI 在 Android 构建后执行发布门禁；回滚顺序和运行时备份/恢复说明见 [`docs/superpowers/phonebridge-batch-d-release.md`](docs/superpowers/phonebridge-batch-d-release.md)。
