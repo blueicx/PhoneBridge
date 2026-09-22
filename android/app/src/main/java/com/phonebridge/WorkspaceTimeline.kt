@@ -302,10 +302,10 @@ class TimelineProjection {
     private val seenEventIds = LinkedHashSet<String>()
     private val entityVersions = mutableMapOf<String, Int>()
 
-    fun applyEvent(event: TimelineEvent) {
-        if (event.eventId.isNotBlank() && !seenEventIds.add(event.eventId)) return
+    fun applyEvent(event: TimelineEvent): Boolean {
+        if (event.eventId.isNotBlank() && !seenEventIds.add(event.eventId)) return false
         val previousVersion = entityVersions[event.entityKey]
-        if (previousVersion != null && event.entityVersion < previousVersion) return
+        if (previousVersion != null && event.entityVersion < previousVersion) return false
         entityVersions[event.entityKey] = maxOf(previousVersion ?: 0, event.entityVersion)
         val payload = event.payload
         if (event.deleted || event.operation == "delete") {
@@ -314,7 +314,7 @@ class TimelineProjection {
                 "chat" -> _messages.value = _messages.value.filter { it.id != event.entityId }
                 "attention" -> _attention.value = _attention.value - event.entityId
             }
-            return
+            return true
         }
 
         when (event.entityType) {
@@ -408,15 +408,16 @@ class TimelineProjection {
                 )
             }
         }
+        return true
     }
 
     fun applySnapshot(snapshot: TimelineSnapshot) {
         _tasks.value = snapshot.tasks.associateBy { it.id }
         _messages.value = snapshot.messages
         _attention.value = snapshot.attention.associateBy { it.id }
-        if (snapshot.mote != null) _mote.value = snapshot.mote
-        if (snapshot.health != null) _health.value = snapshot.health
-        if (snapshot.autonomy != null) _autonomy.value = snapshot.autonomy
+        _mote.value = snapshot.mote
+        _health.value = snapshot.health
+        _autonomy.value = snapshot.autonomy
         entityVersions.clear()
         snapshot.tasks.forEach { entityVersions["task:${it.id}"] = it.entityVersion }
         snapshot.messages.forEach { entityVersions["chat:${it.id}"] = it.entityVersion }

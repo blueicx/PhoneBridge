@@ -142,3 +142,5 @@ App 的“节点”按钮可同时填写节点地址和访问令牌。令牌文�
 ### 当前沉浸入口
 
 PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出相机、麦克风或位置权限；危险权限只在用户主动打开相机、语音或现实镜头时按需申请。上次停留在现实镜头且相机权限仍有效时才会恢复现实镜头，否则安全回到伙伴舞台。沉浸模式隐藏系统栏和工作台底栏，工具、退出、文本聊天和 PTT 通过舞台内的轻量控件访问；前台服务在没有相机/麦克风权限时使用 `dataSync` 类型，避免冷启动崩溃。
+
+批次 2 将 Android 的 timeline、伴侣摘要、任务、Attention、聊天、健康和自治状态汇入 `CompanionSessionRepository`，沉浸工具手柄由 `ImmersiveShellCoordinator` 管理抽屉、返回层级和 `phonebridge://task|attention|chat` 深链。离线时保留 Room 镜像，联网后继续使用 revision/eventId 幂等恢复；沉浸工具手柄显示当前任务、待确认、最近结果、Provider 和连接状态。Web 工作台将统计、提醒、任务、审批和图鉴拆成 keyed DOM 区块，只更新发生变化的区块，不重建整块工作台。

@@ -161,6 +161,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var residentButton: Button
     private lateinit var focusExit: Button
     private lateinit var focusToolbar: View
+    private lateinit var focusSnapshotText: TextView
     private lateinit var focusToolScroll: HorizontalScrollView
     private lateinit var focusToolsToggle: Button
     private lateinit var focusCameraButton: Button
@@ -247,6 +248,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var companionSummary = CompanionSummary()
     private var workspaceRevision: Long = 0L
     private val timelineProjection = TimelineProjection()
+    private val companionSessionRepository = CompanionSessionRepository(timelineProjection)
+    private val immersiveShellCoordinator = ImmersiveShellCoordinator()
     private val workspaceEventGate = WorkspaceEventGate()
     private var cockpitUsesOfflineMirror = false
     private var cockpitSummaryExpanded = false
@@ -296,6 +299,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var normalHeroParams: androidx.constraintlayout.widget.ConstraintLayout.LayoutParams? = null
     private lateinit var focusBackCallback: OnBackPressedCallback
     private var pendingAutoCommand: String? = null
+    private var pendingDeepLink: String? = null
     private var streamingChatId = ""
     private val streamingText = StringBuilder()
     private var lastSpokenReply = ""
@@ -365,6 +369,15 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     return
                 }
                 if (dismissFocusKeyboard()) return
+                if (immersiveMode && immersiveShellCoordinator.onBack()) {
+                    val shellState = immersiveShellCoordinator.state.value
+                    if (realityLensActive && shellState.surface == ImmersiveSurface.COMPANION) {
+                        exitRealityLens()
+                    }
+                    focusToolsExpanded = shellState.drawerOpen
+                    renderFocusTools()
+                    return
+                }
                 if (realityLensActive) {
                     exitRealityLens()
                     return
@@ -385,6 +398,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             saveServer(url)
         }
         pendingAutoCommand = intent?.getStringExtra("auto_command")?.takeIf { it.isNotBlank() }
+        pendingDeepLink = intent?.dataString?.takeIf { it.isNotBlank() }
         intent?.getStringExtra("access_token")?.let { saveAccessToken(it) }
         val autoConnect = intent?.getStringExtra("server_url")?.isNotBlank() == true ||
                 getSharedPreferences("phonebridge", Context.MODE_PRIVATE).getBoolean("auto_connect", true)
@@ -456,6 +470,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         residentButton = findViewById(R.id.residentButton)
         focusExit = findViewById(R.id.focusExit)
         focusToolbar = findViewById(R.id.focusToolbar)
+        focusSnapshotText = findViewById(R.id.focusSnapshotText)
         focusToolScroll = findViewById(R.id.focusToolScroll)
         focusToolsToggle = findViewById(R.id.focusToolsToggle)
         focusCameraButton = findViewById(R.id.focusCameraButton)
@@ -993,12 +1008,48 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 actionRuns.forEach { run ->
                     actionRunMirror[run.id] = JSONObject(run.toJson())
                 }
+                companionSessionRepository.applyTimelineSnapshot(
+                    TimelineSnapshot(
+                        revision = workspaceRevision,
+                        tasks = tasks.map { task ->
+                            TimelineTask(
+                                id = task.id,
+                                title = task.title,
+                                state = task.state,
+                                progress = task.progress,
+                                detail = task.detail,
+                                source = task.source,
+                                recentResult = task.error,
+                                createdAt = task.createdAt,
+                                updatedAt = task.updatedAt
+                            )
+                        },
+                        attention = attention.map { item ->
+                            TimelineAttention(
+                                id = item.id,
+                                source = item.source,
+                                severity = item.severity,
+                                status = item.status,
+                                title = item.title,
+                                summary = item.summary,
+                                relatedSessionId = item.relatedSessionId,
+                                relatedTaskId = item.relatedTaskId,
+                                dedupeKey = item.dedupeKey,
+                                createdAt = item.createdAt,
+                                updatedAt = item.updatedAt
+                            )
+                        }
+                    ),
+                    workspaceRevision
+                )
+                companionSessionRepository.markOffline("使用本地镜像")
                 if (aiSelectedSessionId.isBlank()) {
                     aiSelectedSessionId = sessions.firstOrNull()?.id.orEmpty()
                 }
                 rebuildAttentionItems(attentionJson)
                 renderAttentionCenter()
                 renderCockpitSummary()
+                renderCompanionSessionSnapshot()
             }
         }
     }
@@ -1420,7 +1471,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         focusToolsToggle.setOnClickListener { view ->
             view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-            focusToolsExpanded = !focusToolsExpanded
+            immersiveShellCoordinator.toggleDrawer()
+            focusToolsExpanded = immersiveShellCoordinator.state.value.drawerOpen
             renderFocusTools()
         }
         focusCameraButton.setOnClickListener { if (cameraRunning) stopCamera() else startCameraOrReportPermissions() }
@@ -1907,6 +1959,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun enterRealityLens() {
         if (!immersiveMode || realityLensActive) return
         realityLensActive = true
+        immersiveShellCoordinator.setSurface(ImmersiveSurface.REALITY)
+        immersiveShellCoordinator.closeDrawer()
+        focusToolsExpanded = false
         saveImmersiveSurface(ImmersiveSurface.REALITY)
         realityLensRequestedCamera = !cameraRunning
 
@@ -1946,6 +2001,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun exitRealityLens() {
         if (!realityLensActive) return
         realityLensActive = false
+        immersiveShellCoordinator.setSurface(ImmersiveSurface.COMPANION)
         saveImmersiveSurface(ImmersiveSurface.COMPANION)
 
         val frame = findViewById<View>(R.id.previewFrame)
@@ -2117,8 +2173,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     override fun onBridgeOpen() {
+        companionSessionRepository.markOnline()
         runOnUiThread {
             setStatus("在线")
+            renderCompanionSessionSnapshot()
             say("链接稳定，我能看见了。")
         }
         publishSensorState(force = true)
@@ -2137,6 +2195,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     override fun onBridgeState(state: DeviceHealthState) {
         deviceHealthState = state
+        if (state.bridge == BridgePhase.ONLINE) {
+            companionSessionRepository.markOnline()
+        } else if (state.bridge == BridgePhase.DISCONNECTED || state.bridge == BridgePhase.AUTH_FAILED) {
+            companionSessionRepository.markOffline(state.lastError)
+        } else {
+            companionSessionRepository.markRecovering()
+        }
         val payload = JSONObject()
             .put("source", "android")
             .put("state", deviceHealthJson(state))
@@ -2150,6 +2215,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 BridgePhase.ONLINE -> if (!cameraRunning) setStatus("在线")
             }
             renderCockpitSummary()
+            renderCompanionSessionSnapshot()
         }
     }
 
@@ -2164,10 +2230,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     override fun onBridgeLost(reason: String) {
+        companionSessionRepository.markOffline(reason)
         runOnUiThread { stopCamera() }
         cleanupConnection(false)
         runOnUiThread {
             setStatus("重连中")
+            renderCompanionSessionSnapshot()
             logAdapter.add("warn", "节点断开：$reason")
         }
     }
@@ -2664,8 +2732,35 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
     }
 
+    private fun applyLegacyTaskToCompanion(task: JSONObject) {
+        val id = task.optString("id").trim()
+        if (id.isBlank()) return
+        val updatedAt = parseEpochMs(task.opt("updatedAt")) ?: System.currentTimeMillis()
+        companionSessionRepository.applyEvent(
+            TimelineEvent(
+                eventId = "legacy-task:$id:$updatedAt:${task.optString("state", task.optString("status"))}",
+                revision = workspaceRevision,
+                timestamp = updatedAt,
+                entityType = "task",
+                entityId = id,
+                entityVersion = task.optInt("entityVersion", 1).coerceAtLeast(1),
+                payload = mapOf(
+                    "title" to task.optString("title", "未命名任务"),
+                    "state" to task.optString("state", task.optString("status", "pending")),
+                    "progress" to task.optInt("progress", 0),
+                    "detail" to task.optString("detail"),
+                    "source" to task.optString("source", "conversation"),
+                    "relatedSessionId" to task.optString("relatedSessionId").ifBlank { null },
+                    "isPendingConfirmation" to (task.optString("state", task.optString("status")) == "needs_confirmation"),
+                    "recentResult" to task.optString("result").ifBlank { task.optString("error") }
+                )
+            )
+        )
+    }
+
     private fun handleWorkspaceTaskEvent(task: JSONObject?) {
         if (task == null || task.optString("id").isBlank()) return
+        applyLegacyTaskToCompanion(task)
         runOnUiThread {
             val taskId = task.optString("id")
             workspaceTaskMirror[taskId] = task
@@ -2673,12 +2768,34 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             rebuildAttentionItems()
             renderAttentionCenter()
             renderCockpitSummary()
+            renderCompanionSessionSnapshot()
             refreshAiTasks()
         }
     }
 
     private fun handleAttentionEvent(attention: JSONObject?) {
         if (attention == null || attention.optString("id").isBlank()) return
+        val attentionUpdatedAt = parseEpochMs(attention.opt("updatedAt")) ?: System.currentTimeMillis()
+        companionSessionRepository.applyEvent(
+            TimelineEvent(
+                eventId = "legacy-attention:${attention.optString("id")}:$attentionUpdatedAt:${attention.optString("status")}",
+                revision = workspaceRevision,
+                timestamp = attentionUpdatedAt,
+                entityType = "attention",
+                entityId = attention.optString("id"),
+                entityVersion = attention.optInt("entityVersion", 1).coerceAtLeast(1),
+                payload = mapOf(
+                    "source" to attention.optString("source", "attention"),
+                    "severity" to attention.optString("severity", "medium"),
+                    "status" to attention.optString("status", "open"),
+                    "title" to attention.optString("title", "注意力节点"),
+                    "summary" to attention.optString("summary", attention.optString("detail")),
+                    "relatedSessionId" to attention.optString("relatedSessionId").ifBlank { null },
+                    "relatedTaskId" to attention.optString("relatedTaskId").ifBlank { null },
+                    "dedupeKey" to attention.optString("dedupeKey").ifBlank { null }
+                )
+            )
+        )
         val key = attention.optString("dedupeKey").ifBlank { "attention:${attention.optString("id")}" }
         val item = CockpitAttentionItem(
             key = key,
@@ -2701,6 +2818,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 persistAttention(attention)
                 renderAttentionCenter()
                 renderCockpitSummary()
+                renderCompanionSessionSnapshot()
                 if (item.status.equals("open", true) && item.source.equals("proactive", true)) {
                     speechText.text = "Mote：${item.summary}".takeLast(220)
                     companionView.speakPulse()
@@ -3120,7 +3238,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         val payload = event.optJSONObject("payload")?.let { jsonObject ->
             jsonObject.keys().asSequence().associateWith { key -> jsonObject.opt(key) }
         } ?: emptyMap()
-        timelineProjection.applyEvent(
+        companionSessionRepository.applyEvent(
             TimelineEvent(
                 eventId = event.optString("eventId"),
                 revision = event.optLong("revision", 0L),
@@ -3133,6 +3251,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 deleted = event.optBoolean("deleted", false)
             )
         )
+        runOnUiThread { renderCompanionSessionSnapshot() }
     }
 
     private fun handleServerJson(text: String) {
@@ -3169,6 +3288,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 "snapshot" -> {
                     json.optJSONObject("companionSummary")?.let { summaryJson ->
                         companionSummary = CompanionSummaryParser.parse(summaryJson)
+                        companionSessionRepository.applySummary(companionSummary)
                     }
                     val revision = json.optLong("eventRevision", json.optJSONObject("workspace")?.optLong("eventRevision", 0L) ?: 0L)
                     if (revision > workspaceRevision) {
@@ -3186,7 +3306,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                                     .put("snapshot", timelineJson)
                                     .toString()
                             )
-                            timelineProjection.applySnapshot(model.snapshot)
+                            companionSessionRepository.applyTimelineSnapshot(model.snapshot, model.revision)
+                            runOnUiThread { renderCompanionSessionSnapshot() }
                         }
                     }
                     val tasks = json.optJSONArray("tasks") ?: JSONArray()
@@ -3944,6 +4065,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun enterFocusMode(announce: Boolean) {
         if (immersiveMode) return
         immersiveMode = true
+        immersiveShellCoordinator.setSurface(ImmersiveSurface.COMPANION)
+        immersiveShellCoordinator.closeDrawer()
         focusToolsExpanded = false
         normalHeroParams = heroPanel.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
         rootLayout.setPadding(0, 0, 0, 0)
@@ -3980,6 +4103,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun exitFocusMode() {
         if (!immersiveMode) return
         immersiveMode = false
+        immersiveShellCoordinator.setSurface(ImmersiveSurface.COMPANION)
+        immersiveShellCoordinator.closeDrawer()
         normalHeroParams?.let { params ->
             heroPanel.layoutParams = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(params)
         }
@@ -4009,6 +4134,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             cameraPermissionGranted = hasCameraPermission(),
         )
         enterFocusMode(announce = false)
+        pendingDeepLink?.let { deepLink ->
+            if (immersiveShellCoordinator.openDeepLink(deepLink)) {
+                focusToolsExpanded = true
+                renderFocusTools()
+            }
+            pendingDeepLink = null
+        }
         if (ImmersiveEntryPolicy.surfaceFor(state) == ImmersiveSurface.REALITY) {
             rootLayout.post { if (immersiveMode) enterRealityLens() }
         } else {
@@ -4054,6 +4186,28 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    private fun renderCompanionSessionSnapshot() {
+        if (!::focusSnapshotText.isInitialized) return
+        val snapshot = companionSessionRepository.snapshot.value
+        val current = snapshot.currentTask()
+        val latest = snapshot.recentResults(1).firstOrNull()
+        val connection = when {
+            snapshot.sync.recovering -> "重连中"
+            snapshot.sync.online -> "在线"
+            else -> "离线镜像"
+        }
+        val taskLine = current?.let {
+            "${it.title.ifBlank { "当前任务" }} · ${statusLabel(it.state)} ${it.progress}%"
+        } ?: "当前无进行中任务"
+        val resultLine = latest?.let { "最近：${it.title.ifBlank { "任务" }} · ${statusLabel(it.state)}" } ?: "暂无最近结果"
+        val attentionLine = if (snapshot.pendingAttention().isEmpty()) "无待确认" else "待确认 ${snapshot.pendingAttention().size}"
+        focusSnapshotText.text = listOf(
+            "$connection · ${snapshot.summary.providerName.ifBlank { snapshot.summary.providerId }}",
+            taskLine,
+            "$attentionLine · $resultLine"
+        ).joinToString("\n")
+    }
+
     private fun renderFocusTools() {
         if (!immersiveMode) return
         focusToolScroll.visibility = if (focusToolsExpanded) View.VISIBLE else View.GONE
@@ -4063,6 +4217,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusCameraButton.text = getString(if (cameraRunning) R.string.stop_camera else R.string.start_camera)
         focusListenButton.alpha = if (continuousListening || micRunning || pttActive) 1f else .68f
         focusVoiceButton.alpha = if (BridgeService.isVoiceChatRunning) 1f else .68f
+        renderCompanionSessionSnapshot()
     }
 
     private fun renderPet() {
@@ -4383,6 +4538,16 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
+        intent?.dataString?.takeIf { it.isNotBlank() }?.let { deepLink ->
+            pendingDeepLink = deepLink
+            if (immersiveMode && immersiveShellCoordinator.openDeepLink(deepLink)) {
+                focusToolsExpanded = true
+                renderFocusTools()
+                pendingDeepLink = null
+            } else if (!immersiveMode) {
+                rootLayout.post { enterAdaptiveImmersiveMode() }
+            }
+        }
         intent?.getStringExtra("auto_care")?.takeIf { it.isNotBlank() }?.let { interact(it) }
         intent?.getStringExtra("server_url")?.takeIf { it.isNotBlank() }?.let { url ->
             saveServer(url)

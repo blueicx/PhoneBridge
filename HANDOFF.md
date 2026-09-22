@@ -256,3 +256,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - Android 单元测试覆盖首次入口、现实镜头恢复、未知持久化值回退、前台服务类型选择；`android\\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain` **BUILD SUCCESSFUL**。
 - Xperia XZ2 实机（USB 序列号 `QV7017NH1F`，与 `192.168.101.68:41253` 为同一台设备）安装并冷启动通过：相机/麦克风均明确为未授权，进程存活，无 `FATAL EXCEPTION` 或权限崩溃；UIAutomator 确认沉浸退出、工具手柄和文本输入可见，`cockpitDeck` 不再出现在层级树；`dumpsys window` 确认 status bar `visible=false`。本次只验证冷启动入口，未把完整聊天、PTT、现实线索和长时间运行重新计入本批。
 - 网络 ADB `192.168.101.68:41253` 在安装期间短暂 offline，实机证据使用同机 USB 通道完成；旁边的 Samsung 设备未使用。
+
+## 18. 统一伙伴状态与任务中枢批次 2（2026-09-22）
+
+- 新增 Android `CompanionSessionRepository`：以同一 `CompanionSnapshot` 汇总 CompanionSummary、timeline 的任务/聊天/Attention/Mote/健康/自治投影和同步状态；保留服务端为真相源，客户端只做幂等投影和离线镜像。
+- 新增 `ImmersiveShellCoordinator`：管理 Companion/Reality 表面、抽屉开合、返回键层级和 `phonebridge://task|attention|chat` 深链；任务动作协议只接受 `start|pause|continue|retry|cancel|archive`，每次带 idempotency key。
+- `MainActivity` 已将 timeline 快照、旧版 workspace 事件、节点在线/离线/重连和 Room 本地任务/提醒镜像接入统一投影；沉浸工具手柄显示连接、Provider、当前任务、待确认和最近结果。
+- Web 工作台把统计、Attention、任务、审批和 Mote 图鉴拆为独立 keyed DOM 区块；相同签名跳过更新，revision 变化也只替换受影响区块，任务详情节点和当前选择保持不重建。
+- TDD 先行证据：新增 `CompanionSessionRepositoryTest`、`ImmersiveShellCoordinatorTest`，先验证 unresolved red，再实现后 targeted `:app:testDebugUnitTest` 通过。
+- 当前边界：Android 任务动作仍以 Web 任务中枢为完整操作入口，沉浸入口优先展示状态/待确认；本批不新增任意自动执行权限，也不改变服务端硬禁止策略。

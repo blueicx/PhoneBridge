@@ -1551,15 +1551,27 @@ async function refreshWorkspaceNow(){try{
   const approvalsHtml=(w.approvals||[]).filter(a=>a.state==='needs_confirmation'||a.state==='approved').map(a=>'<div class=item>待批准：<b>'+esc(a.toolId)+'</b> · '+esc(a.state)+' <button class=primary onclick="approveApproval(\''+esc(a.id)+'\')">批准并执行</button></div>').join('');
   const roster=(s.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote(\''+esc(m.id)+'\')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
   const revision=String(w.eventRevision||s.revision||'');
-  if(moteRoster.dataset.revision!==revision || moteRoster.dataset.filter!==filter || moteRoster.dataset.viewMode!==viewMode){
-    moteRoster.innerHTML=statsHtml+attentionHtml+tasksHtml+approvalsHtml+'<div style="width:100%;margin-top:8px">'+roster+'</div><div id="taskDetail" style="margin-top:8px;padding:8px;background:#101E18;font-size:12px;white-space:pre-wrap"></div>';
-    moteRoster.dataset.revision=revision;
-    moteRoster.dataset.filter=filter;
-    moteRoster.dataset.viewMode=viewMode;
-    if(window.taskFilter) taskFilter.value = filter;
-    if(window.taskViewSelect) taskViewSelect.value = viewMode;
-    if(window.selectedTaskId) selectTask(window.selectedTaskId);
+  if(!moteRoster.querySelector('[data-workspace-shell]')){
+    moteRoster.innerHTML='<div data-workspace-shell style="width:100%"><div data-workspace-stats></div><div data-workspace-attention></div><div data-workspace-tasks></div><div data-workspace-approvals></div><div data-workspace-roster style="width:100%;margin-top:8px"></div><div id="taskDetail" style="margin-top:8px;padding:8px;background:#101E18;font-size:12px;white-space:pre-wrap"></div></div>';
   }
+  const section=(selector)=>moteRoster.querySelector(selector);
+  const updateSection=(selector, html, signature)=>{
+    const node=section(selector);
+    if(!node || node.dataset.signature===signature) return;
+    node.innerHTML=html;
+    node.dataset.signature=signature;
+  };
+  updateSection('[data-workspace-stats]', statsHtml, statsHtml);
+  updateSection('[data-workspace-attention]', attentionHtml, attentionHtml);
+  updateSection('[data-workspace-tasks]', tasksHtml, tasksHtml);
+  updateSection('[data-workspace-approvals]', approvalsHtml, approvalsHtml);
+  updateSection('[data-workspace-roster]', roster, roster);
+  moteRoster.dataset.revision=revision;
+  moteRoster.dataset.filter=filter;
+  moteRoster.dataset.viewMode=viewMode;
+  if(window.taskFilter) taskFilter.value = filter;
+  if(window.taskViewSelect) taskViewSelect.value = viewMode;
+  if(window.selectedTaskId) selectTask(window.selectedTaskId);
 }catch(e){workspaceSummary.textContent='工作台数据不可用'}}
 
 function onAttentionClick(taskId) {
