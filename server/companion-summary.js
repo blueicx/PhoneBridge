@@ -34,6 +34,10 @@ function buildCompanionSummary({
   const roster = list(moteRoot.roster);
   const relationship = object(moteRoot.relationship);
   const behavior = object(moteRoot.behavior);
+  const growth = object(moteRoot.growth);
+  const growthDaily = object(growth.daily);
+  const growthClues = object(growthDaily.clues);
+  const activeBoost = list(growth.boosts).find(item => number(item?.expiresAt) > number(generatedAt)) || null;
   const health = object(root.deviceHealth || root.health);
   const autonomy = object(root.autonomy);
   const aiState = object(ai);
@@ -85,6 +89,20 @@ function buildCompanionSummary({
       xp: Math.max(0, number(relationship.xp, number(moteState.xp))),
       gaze: String(behavior.gaze || 'ambient'),
       reminderStrength: Math.max(0, Math.min(1, number(behavior.reminderStrength))),
+      growth: {
+        level: Math.max(1, number(growth.level, 1)),
+        xp: Math.max(0, number(growth.xp)),
+        daily: {
+          date: String(growthDaily.date || ''),
+          clues: {
+            location: Math.min(1, Math.max(0, number(growthClues.location))),
+            object: Math.min(1, Math.max(0, number(growthClues.object))),
+            light: Math.min(1, Math.max(0, number(growthClues.light))),
+          },
+          completed: growthDaily.completed === true,
+        },
+        activeBoostId: activeBoost ? String(activeBoost.id || '') : null,
+      },
     },
     reality: {
       region: String(realityRoot.region || realityState.region || ''),

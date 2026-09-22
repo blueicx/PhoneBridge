@@ -293,6 +293,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var realityLensActive = false
     private var realityLensRequestedCamera = false
     private val realityLocationSampler by lazy { RealityLocationSampler(this) }
+    private val realityExplorationCoordinator = RealityExplorationCoordinator()
     private var realityRegion: String? = null
     private var normalPreviewParams: androidx.constraintlayout.widget.ConstraintLayout.LayoutParams? = null
     private var focusToolsExpanded = false
@@ -1835,6 +1836,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun updateRealityLocation() {
         val decision = realityLocationSampler.sample()
         realityRegion = decision.region
+        realityExplorationCoordinator.setRegion(decision.region)
         realityLensView.setCoarseRegion(decision.region)
         val message = when (decision.mode) {
             RealityLocationMode.COARSE_REGION -> "现实区域已切换到 ${decision.region}"
@@ -1846,7 +1848,23 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             workspaceRequest(
                 "/api/reality/events?region=${android.net.Uri.encode(decision.region)}",
                 onSuccess = { json ->
-                    val count = json.optJSONArray("events")?.length() ?: 0
+                    val events = mutableListOf<RealityEvent>()
+                    val rawEvents = json.optJSONArray("events") ?: JSONArray()
+                    for (index in 0 until rawEvents.length()) {
+                        val item = rawEvents.optJSONObject(index) ?: continue
+                        events += RealityEvent(
+                            id = item.optString("id"),
+                            region = item.optString("region", decision.region),
+                            kind = item.optString("kind", "mote"),
+                            clueType = RealityClueProtocol.canonicalType(item.optString("clueType")),
+                            bearing = RealityRegion.normalizeBearing(item.optInt("bearing", 0)),
+                            distanceBand = item.optString("distanceBand", "mid"),
+                            expiresAt = item.optLong("expiresAt", 0L),
+                            seed = item.optString("seed")
+                        )
+                    }
+                    realityExplorationCoordinator.replaceEvents(events)
+                    val count = events.size
                     logAdapter.add("info", "附近现实事件已刷新：$count 个（仅粗区域）")
                 }
             )
@@ -2035,8 +2053,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             return
         }
 
+        val submission = realityExplorationCoordinator.submitClue(node.id, online = BridgeLink.isOnline)
+        if (submission.duplicate) {
+            say("这个线索正在同步，稍等一下。")
+            return
+        }
         val nextDiscovered = discovered + node.id
-        val clueType = RealityClueProtocol.canonicalType(node.id)
         saveDiscoveredRealityNodes(nextDiscovered)
         realityLensView.markDiscovered(node.id)
         pet = pet.copy(experience = pet.experience + 4)
@@ -2054,9 +2076,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         enqueueWorkspaceEvent(
             WorkspaceEventTypes.MOTE_EXPLORATION,
             JSONObject()
-                .put("eventId", RealityClueProtocol.eventId(node.id, realityRegion))
-                .put("clueType", clueType)
-                .put("region", realityRegion)
+                .put("eventId", submission.eventId)
+                .put("clueType", submission.clueType)
+                .put("region", submission.region)
         )
         logAdapter.add("success", "现实线索 +4 经验：${node.title}")
         say(buildString {
@@ -2428,7 +2450,18 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     override fun onWorkspaceAck(eventId: String, accepted: Boolean, status: String?) {
         if ((!accepted && status != "duplicate") || eventId.isBlank()) return
-        appScope.launch(Dispatchers.IO) { workspaceRepository.acknowledge(eventId) }
+        appScope.launch(Dispatchers.IO) {
+            val event = workspaceRepository.outboxEvent(eventId)
+            workspaceRepository.acknowledge(eventId)
+            if (event?.type == WorkspaceEventTypes.MOTE_EXPLORATION) {
+                val clueEventId = runCatching { JSONObject(event.payload).optString("eventId") }.getOrNull().orEmpty()
+                if (clueEventId.isNotBlank()) {
+                    withContext(Dispatchers.Main) {
+                        realityExplorationCoordinator.acknowledge(clueEventId, accepted = true)
+                    }
+                }
+            }
+        }
     }
 
     private fun openAiSpace() {
@@ -2868,6 +2901,23 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         moteRosterJson = JSONArray((snapshot.optJSONArray("roster") ?: JSONArray()).toString())
         moteStateJson = JSONObject((snapshot.optJSONObject("state") ?: JSONObject()).toString())
+        val confirmedEventIds = linkedSetOf<String>()
+        val stateSeen = moteStateJson.optJSONObject("exploration")?.optJSONArray("seenEventIds")
+        if (stateSeen != null) {
+            for (index in 0 until stateSeen.length()) {
+                stateSeen.optString(index).takeIf { it.isNotBlank() }?.let(confirmedEventIds::add)
+            }
+        }
+        val growthSeen = snapshot.optJSONObject("growth")?.optJSONArray("seenEventIds")
+        if (growthSeen != null) {
+            for (index in 0 until growthSeen.length()) {
+                growthSeen.optString(index).takeIf { it.isNotBlank() }?.let(confirmedEventIds::add)
+            }
+        }
+        if (confirmedEventIds.isNotEmpty()) {
+            realityExplorationCoordinator.restoreDiscovered(confirmedEventIds)
+            confirmedEventIds.forEach { realityExplorationCoordinator.acknowledge(it, accepted = true) }
+        }
         getSharedPreferences("mote_roster", Context.MODE_PRIVATE).edit()
             .putString("roster", moteRosterJson.toString())
             .putString("state", moteStateJson.toString())
@@ -2886,8 +2936,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
     }
 
-    private fun handleMoteRosterEvent(roster: JSONArray?, state: JSONObject?) {
-        handleMoteSnapshot(JSONObject().put("roster", roster ?: moteRosterJson).put("state", state ?: moteStateJson))
+    private fun handleMoteRosterEvent(roster: JSONArray?, state: JSONObject?, growth: JSONObject? = null) {
+        handleMoteSnapshot(
+            JSONObject()
+                .put("roster", roster ?: moteRosterJson)
+                .put("state", state ?: moteStateJson)
+                .apply { growth?.let { put("growth", it) } }
+        )
     }
 
     private fun handleEmergencyStopEvent(state: JSONObject?) {
@@ -3511,11 +3566,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 "workspace.policy" -> handlePolicyEvent(json.optJSONObject("policy"))
                 "autonomy.approval" -> handleAutonomyApprovalEvent(json.optJSONObject("approval"))
                 "workspace.emergency_stop" -> handleEmergencyStopEvent(json.optJSONObject("state"))
-                "mote.roster" -> handleMoteRosterEvent(json.optJSONArray("roster"), json.optJSONObject("state"))
+                "mote.roster" -> handleMoteRosterEvent(json.optJSONArray("roster"), json.optJSONObject("state"), json.optJSONObject("growth"))
                 "mote.profile" -> json.optJSONObject("profile")?.let { profile ->
                     handleMoteRosterEvent(null, JSONObject().put("activeId", profile.optString("id")))
                 }
-                "mote.exploration" -> handleMoteRosterEvent(null, json.optJSONObject("state"))
+                "mote.exploration" -> handleMoteRosterEvent(null, json.optJSONObject("state"), json.optJSONObject("growth"))
                 "mote.relationship" -> json.optJSONObject("relationship")?.let { handleMoteRelationshipEvent(it) }
                 "mote.quest" -> runOnUiThread { speechText.text = "Mote：有新的陪伴任务" }
                 "mote.behavior" -> MoteBehaviorOutput.fromWire(json.optJSONObject("behavior"))?.let { behavior ->

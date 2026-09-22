@@ -18,6 +18,7 @@ const { createStructuredLogger } = require('./structured-log');
 const { DeviceSimulator } = require('./device-simulator');
 const { MemoryStore } = require('./ai-memory');
 const { RealityEngine } = require('./reality-engine');
+const { MoteGrowthStore } = require('./mote-growth');
 const { PairingManager } = require('./pairing');
 const { prepareConversation } = require('./session-context');
 const { buildCompanionSummary } = require('./companion-summary');
@@ -299,6 +300,7 @@ const healthChecks = new HealthChecks({
 });
 const memoryStore = new MemoryStore({ persistence: runtimePersistence });
 const realityEngine = new RealityEngine({ persistence: runtimePersistence });
+const moteGrowthStore = new MoteGrowthStore({ persistence: runtimePersistence });
 const pairingManager = new PairingManager();
 const proactiveState = {
   paused: false,
@@ -332,7 +334,7 @@ const snapshotCache = new RevisionSnapshotCache({
           tasks: payload.workspace.tasks.slice(0, 12),
           approvals: payload.approvals.slice(0, 6),
         },
-        motes: { state: payload.motes.state, roster: payload.motes.roster, behavior: payload.motes.behavior, relationship: payload.motes.relationship },
+        motes: { state: payload.motes.state, roster: payload.motes.roster, behavior: payload.motes.behavior, relationship: payload.motes.relationship, growth: payload.motes.growth },
         autonomy: payload.autonomy,
         companionSummary: payload.companionSummary,
       }),
@@ -890,16 +892,26 @@ taskRunner.setExecutor(async ({ task, signal, report, waitIfPaused }) => {
 });
 
 function applyMoteClue(payload) {
+  const growthEligible = Boolean(payload?.region)
+    || String(payload?.eventId || '').startsWith('reality:')
+    || String(payload?.eventId || '').startsWith('reality-lens:');
+  if (growthEligible) MoteGrowthStore.validatePayload({ ...payload, region: payload.region || 'camera' });
   const result = moteStore.collectClue({ eventId: payload.eventId, clueType: payload.clueType });
+  result.growth = !growthEligible
+    ? { duplicate: result.duplicate, reward: { xp: 0, dailyCompleted: false, boost: null }, state: moteGrowthStore.snapshot() }
+    : result.duplicate
+    ? { duplicate: true, reward: { xp: 0, dailyCompleted: false, boost: null }, state: moteGrowthStore.snapshot() }
+    : moteGrowthStore.recordClue({ eventId: payload.eventId, clueType: payload.clueType, region: payload.region || 'camera' });
   if (!result.duplicate) broadcastMoteState();
   return result;
 }
 
 function broadcastMoteState() {
   const state = moteStore.getState();
-  broadcast({ type: 'mote.roster', roster: moteStore.roster(), state });
+  const growth = moteGrowthStore.snapshot();
+  broadcast({ type: 'mote.roster', roster: moteStore.roster(), state, growth });
   broadcast({ type: 'mote.profile', profile: moteStore.roster().find(item => item.active) || null });
-  broadcast({ type: 'mote.exploration', exploration: state.exploration, state });
+  broadcast({ type: 'mote.exploration', exploration: state.exploration, state, growth });
 }
 
 function markInteraction() {
@@ -1218,7 +1230,7 @@ function buildSnapshotPayload() {
     chat: chatHistory.slice(-50),
     deviceHealth: deviceHealthStore.snapshot(),
     workspace: workspaceSnapshot(),
-    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId, relationshipLevel: moteRelationshipStore.snapshot().level }), relationship: moteRelationshipStore.snapshot(), quests: moteQuestStore.list() },
+    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId, relationshipLevel: moteRelationshipStore.snapshot().level }), relationship: moteRelationshipStore.snapshot(), growth: moteGrowthStore.snapshot(), quests: moteQuestStore.list() },
     autonomy: workspaceStore.getAutonomyPolicy(),
     approvals: workspaceStore.listToolApprovals().slice(0, 100),
   };
@@ -1292,7 +1304,7 @@ function workspaceSnapshot() {
     autonomy: workspaceStore.getAutonomyPolicy(),
     moteRelationship: moteRelationshipStore.snapshot(),
     moteQuests: moteQuestStore.list(),
-    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId, relationshipLevel: moteRelationshipStore.snapshot().level }), relationship: moteRelationshipStore.snapshot(), quests: moteQuestStore.list() },
+    motes: { state: moteStore.getState(), roster: moteStore.roster(), behavior: deriveMoteBehavior({ profileId: moteStore.getState().activeId, relationshipLevel: moteRelationshipStore.snapshot().level }), relationship: moteRelationshipStore.snapshot(), growth: moteGrowthStore.snapshot(), quests: moteQuestStore.list() },
     timeline: workspaceTimeline.getSnapshot(),
   };
 }
@@ -1480,7 +1492,11 @@ async function refreshCompanionSummary(){
     const signature=JSON.stringify(s);
     if(companionSummaryRevision!==signature){
       companionSummaryRevision=signature;
-      companionSummary.textContent=(s.mote.name||'Mote')+' Lv.'+s.mote.level+' · '+(s.connection.online?'在线':'离线')+' · 任务 '+s.tasks.running+'/'+s.tasks.total+' · 待确认 '+s.tasks.needsConfirmation+' · 提醒 '+s.attention.open+' · 现实 '+s.reality.eventCount+' · AI '+s.ai.providerName+' · 记忆 '+s.ai.memoryCount+' · '+(s.safety.emergencyStop?'急停中':'自治 '+s.safety.autonomyLevel);
+      const growth=s.mote.growth||{};
+      const daily=growth.daily||{};
+      const clues=daily.clues||{};
+      const clueCount=Number(clues.location||0)+Number(clues.object||0)+Number(clues.light||0);
+      companionSummary.textContent=(s.mote.name||'Mote')+' Lv.'+s.mote.level+' · 探索 Lv.'+(growth.level||1)+' · 今日线索 '+clueCount+'/3 · '+(s.connection.online?'在线':'离线')+' · 任务 '+s.tasks.running+'/'+s.tasks.total+' · 待确认 '+s.tasks.needsConfirmation+' · 提醒 '+s.attention.open+' · 现实 '+s.reality.eventCount+' · AI '+s.ai.providerName+' · 记忆 '+s.ai.memoryCount+' · '+(s.safety.emergencyStop?'急停中':'自治 '+s.safety.autonomyLevel);
     }
     const providers=await api('/api/ai/providers');
     const providerSignature=JSON.stringify(providers.providers||[]);
@@ -1873,7 +1889,7 @@ const handleHttpRequest = async (req, res) => {
       } catch (error) { return sendJson(res, /expired|confirmation|consumed|blocked|policy/i.test(error.message) ? 403 : 400, { ok: false, error: error.message }); }
     }
     if (parsedUrl.pathname === '/api/motes' && req.method === 'GET') {
-      return sendJson(res, 200, { ok: true, state: moteStore.getState(), roster: moteStore.roster() });
+      return sendJson(res, 200, { ok: true, state: moteStore.getState(), roster: moteStore.roster(), growth: moteGrowthStore.snapshot() });
     }
     if (parsedUrl.pathname === '/api/motes/active' && req.method === 'PATCH') {
       try {
@@ -1905,6 +1921,9 @@ const handleHttpRequest = async (req, res) => {
         return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
       } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
+    if (parsedUrl.pathname === '/api/motes/growth' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, growth: moteGrowthStore.snapshot() });
+    }
     if (parsedUrl.pathname === '/api/reality/catalog' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, catalog: realityEngine.catalog() });
     }
@@ -1921,11 +1940,23 @@ const handleHttpRequest = async (req, res) => {
       try {
         const payload = await readJson(req);
         const eventId = decodeURIComponent(realityEventMatch[1]);
+        if (realityEventMatch[2] === 'resolve') {
+          MoteGrowthStore.validatePayload({
+            eventId,
+            clueType: payload.clueType,
+            region: payload.region,
+          });
+        }
         const result = realityEventMatch[2] === 'start'
           ? realityEngine.startEncounter({ eventId, region: payload.region })
           : realityEngine.resolve({ eventId, region: payload.region, clueType: payload.clueType, actions: payload.actions });
         if (realityEventMatch[2] === 'resolve' && !result.duplicate) {
           moteRelationshipStore.recordInteraction({ eventId: `reality:${eventId}`, kind: 'reality', amount: result.reward?.xp || 1 });
+          result.growth = moteGrowthStore.recordClue({
+            eventId,
+            clueType: payload.clueType || result.event.clueType,
+            region: payload.region,
+          });
           broadcast({ type: 'reality.progress', result, state: realityEngine.snapshot() });
         }
         return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });

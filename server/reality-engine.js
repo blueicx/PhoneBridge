@@ -54,6 +54,11 @@ function hash(value) { return crypto.createHash('sha256').update(String(value)).
 function regionSeed(region, bucket) { return hash(`${region}:${bucket}`); }
 function bearingFrom(seed) { return parseInt(seed.slice(0, 4), 16) % 360; }
 function distanceFrom(seed) { return ['near', 'mid', 'far'][parseInt(seed.slice(4, 6), 16) % 3]; }
+function normalizeRegion(value) {
+  const region = String(value || '').trim();
+  if (region === 'camera' || /^cell:-?\d+:-?\d+$/.test(region)) return region;
+  throw new Error('coarse region is required');
+}
 
 class RealityEngine {
   constructor({ persistence = null, now = () => Date.now() } = {}) {
@@ -97,8 +102,7 @@ class RealityEngine {
   catalog() { return { items: clone(ITEMS), recipes: clone(RECIPES), decorations: clone(DECORATIONS), quests: clone(QUESTS), events: clone(EVENTS), encounters: clone(ENCOUNTERS) }; }
 
   eventsFor(region, at = this.now()) {
-    const normalized = String(region || '').trim();
-    if (!normalized || normalized.length > 80) throw new Error('coarse region is required');
+    const normalized = normalizeRegion(region);
     const bucket = Math.floor(Number(at) / 1800000);
     const seed = regionSeed(normalized, bucket);
     return EVENTS.slice(0, 8).map((template, index) => {

@@ -126,6 +126,10 @@ class WorkspaceRepository private constructor(context: Context) {
         dao.readyOutbox(now).map { it.toEvent() }
     }
 
+    suspend fun outboxEvent(eventId: String): WorkspaceEvent? = withContext(Dispatchers.IO) {
+        dao.outbox(eventId)?.toEvent()
+    }
+
     suspend fun acknowledge(eventId: String) = withContext(Dispatchers.IO) { dao.acknowledge(eventId) }
 
     suspend fun retry(

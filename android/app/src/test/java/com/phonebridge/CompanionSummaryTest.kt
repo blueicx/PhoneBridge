@@ -14,7 +14,15 @@ class CompanionSummaryTest {
             "connection" to mapOf("online" to true, "battery" to 76, "temperature" to 32.5),
             "tasks" to mapOf("total" to 4, "running" to 1, "needsConfirmation" to 1, "activeId" to "task_1"),
             "attention" to mapOf("open" to 2, "highestSeverity" to "high"),
-            "mote" to mapOf("id" to "ember_sprig", "name" to "焰芽", "level" to 3, "xp" to 18, "gaze" to "focused", "reminderStrength" to 0.7),
+            "mote" to mapOf(
+                "id" to "ember_sprig", "name" to "焰芽", "level" to 3, "xp" to 18,
+                "gaze" to "focused", "reminderStrength" to 0.7,
+                "growth" to mapOf(
+                    "level" to 2, "xp" to 14,
+                    "daily" to mapOf("date" to "2026-09-22", "clues" to mapOf("location" to 1, "object" to 0, "light" to 1), "completed" to false),
+                    "activeBoostId" to "field-focus",
+                ),
+            ),
             "reality" to mapOf("region" to "cell:1:2", "eventCount" to 8, "level" to 2, "xp" to 33, "inventoryCount" to 2, "seenEventCount" to 1),
             "ai" to mapOf("providerId" to "local", "providerName" to "本地离线规则", "status" to "ready", "budgetRemaining" to 1200, "degradationCount" to 2, "memoryCount" to 7, "memoryRevision" to 4),
             "safety" to mapOf("autonomyLevel" to "whitelist", "emergencyStop" to false)
@@ -22,6 +30,10 @@ class CompanionSummaryTest {
 
         assertEquals("ember_sprig", summary.moteId)
         assertEquals(3, summary.moteLevel)
+        assertEquals(2, summary.growthLevel)
+        assertEquals(14, summary.growthXp)
+        assertEquals(false, summary.growthDailyClues["object"])
+        assertEquals("field-focus", summary.growthActiveBoostId)
         assertEquals(1, summary.runningTasks)
         assertEquals(2, summary.openAttention)
         assertEquals(8, summary.realityEvents)

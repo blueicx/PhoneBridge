@@ -20,6 +20,12 @@ test('companion summary projects task, attention, mote, health and AI state with
         roster: [{ id: 'ember_sprig', name: '焰芽', active: true, unlocked: true }],
         relationship: { level: 3, xp: 18 },
         behavior: { gaze: 'focused', reminderStrength: 0.7 },
+        growth: {
+          level: 2,
+          xp: 14,
+          daily: { date: '2026-09-22', clues: { location: 1, object: 0, light: 1 }, completed: false },
+          boosts: [{ id: 'field-focus', expiresAt: 9999999999999 }],
+        },
       },
       deviceHealth: { connected: true, battery: 76, temperature: 32.5 },
       autonomy: { level: 'whitelist', emergencyStop: { active: false } },
@@ -45,7 +51,14 @@ test('companion summary projects task, attention, mote, health and AI state with
     connection: { online: true, battery: 76, temperature: 32.5 },
     tasks: { total: 4, pending: 0, running: 1, needsConfirmation: 1, completed: 1, failed: 1, activeId: 't1' },
     attention: { open: 1, highestSeverity: 'high' },
-    mote: { id: 'ember_sprig', name: '焰芽', level: 3, xp: 18, gaze: 'focused', reminderStrength: 0.7 },
+    mote: {
+      id: 'ember_sprig', name: '焰芽', level: 3, xp: 18, gaze: 'focused', reminderStrength: 0.7,
+      growth: {
+        level: 2, xp: 14,
+        daily: { date: '2026-09-22', clues: { location: 1, object: 0, light: 1 }, completed: false },
+        activeBoostId: 'field-focus',
+      },
+    },
     reality: { region: 'cell:1:2', eventCount: 2, level: 2, xp: 33, inventoryCount: 2, seenEventCount: 1 },
     ai: { providerId: 'local', providerName: '本地离线规则', status: 'ready', budgetRemaining: 1200, degradationCount: 2, memoryCount: 7, memoryRevision: 4 },
     safety: { autonomyLevel: 'whitelist', emergencyStop: false },

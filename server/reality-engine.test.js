@@ -24,6 +24,13 @@ test('reality events are deterministic and rewards are idempotent', () => {
   assert.throws(() => engine.resolve({ eventId: events[1].id, region: 'cell:9:9', clueType: events[1].clueType, at: now }), /invalid/);
 });
 
+test('reality events accept only coarse cell or camera regions', () => {
+  const engine = new RealityEngine({ now: () => 1700000000000 });
+  assert.throws(() => engine.eventsFor('31.2304,121.4737'), /coarse region/i);
+  assert.throws(() => engine.eventsFor('cell:1:2:precise'), /coarse region/i);
+  assert.equal(engine.eventsFor('camera').length, 8);
+});
+
 test('crafting, habitat, encounters and quests persist through the engine state', () => {
   const engine = new RealityEngine({ persistence: { load: () => null, save: () => {} } });
   engine.state.inventory.item_01 = 1;

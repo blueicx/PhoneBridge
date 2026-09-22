@@ -18,6 +18,12 @@ data class CompanionSummary(
     val moteName: String = "利姆鲁",
     val moteLevel: Int = 1,
     val moteXp: Int = 0,
+    val growthLevel: Int = 1,
+    val growthXp: Int = 0,
+    val growthDailyDate: String = "",
+    val growthDailyClues: Map<String, Boolean> = emptyMap(),
+    val growthDailyCompleted: Boolean = false,
+    val growthActiveBoostId: String? = null,
     val gaze: String = "ambient",
     val reminderStrength: Float = 0f,
     val realityRegion: String = "",
@@ -60,6 +66,9 @@ object CompanionSummaryParser {
         val tasks = root.map("tasks")
         val attention = root.map("attention")
         val mote = root.map("mote")
+        val growth = mote.map("growth")
+        val daily = growth.map("daily")
+        val clues = daily.map("clues")
         val reality = root.map("reality")
         val ai = root.map("ai")
         val safety = root.map("safety")
@@ -79,6 +88,12 @@ object CompanionSummaryParser {
             moteName = mote.string("name", "利姆鲁").ifBlank { "利姆鲁" },
             moteLevel = mote.int("level", 1).coerceAtLeast(1),
             moteXp = mote.int("xp", 0).coerceAtLeast(0),
+            growthLevel = growth.int("level", 1).coerceAtLeast(1),
+            growthXp = growth.int("xp", 0).coerceAtLeast(0),
+            growthDailyDate = daily.string("date"),
+            growthDailyClues = listOf("location", "object", "light").associateWith { clues.boolean(it, false) },
+            growthDailyCompleted = daily.boolean("completed", false),
+            growthActiveBoostId = growth.string("activeBoostId").takeIf { it.isNotBlank() },
             gaze = mote.string("gaze", "ambient").ifBlank { "ambient" },
             reminderStrength = mote.double("reminderStrength", 0.0).toFloat().coerceIn(0f, 1f),
             realityRegion = reality.string("region"),
