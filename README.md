@@ -168,3 +168,12 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - Reality 增益实际影响 XP，装备未拥有或任务未完成时不能写入奖励状态。
 
 设计与迁移记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-1.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-1.md)。
+
+## 全面深化批次 2：模块拆分与加载性能
+
+- 新增 `server/reality-coordinator.js`，把现实线索奖励、成长收据、增益同步和统一进度投影从 `server/index.js` 下沉为可单测模块；旧 API 和 WebSocket ACK 保持兼容。
+- `RevisionSnapshotCache` 支持独立轻量摘要构建。首屏 `GET /api/state?view=summary` 不触发完整快照构建；完整快照和摘要的构建次数进入 `/api/diagnostics` 的 `snapshotCache` 指标。
+- Android 时间线突发事件在 `CompanionSessionRepository` 内批量合并，WebSocket 一批事件只发布一次公共快照和一次 UI 重绘；旧单事件协议继续可用。
+- Node 全量测试 **115/115**；Android `:app:testDebugUnitTest :app:assembleDebug` **BUILD SUCCESSFUL**；`git diff --check` 通过。
+
+实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-2.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-2.md)。实体机、GPS/ARCore 和正式签名仍按独立验收边界处理。

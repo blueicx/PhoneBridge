@@ -3304,25 +3304,33 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         logAdapter.add("info", "正在应用模型：${modelLabels[index]}")
     }
 
-    private fun applyTimelineEvent(event: JSONObject) {
+    private fun timelineEventFromJson(event: JSONObject): TimelineEvent {
         val createdAt = event.optString("createdAt").ifBlank { event.optString("timestamp") }
         val timestamp = createdAt.toLongOrNull() ?: runCatching { Instant.parse(createdAt).toEpochMilli() }.getOrDefault(0L)
         val payload = event.optJSONObject("payload")?.let { jsonObject ->
             jsonObject.keys().asSequence().associateWith { key -> jsonObject.opt(key) }
         } ?: emptyMap()
-        companionSessionRepository.applyEvent(
-            TimelineEvent(
-                eventId = event.optString("eventId"),
-                revision = event.optLong("revision", 0L),
-                timestamp = timestamp,
-                entityType = event.optString("entity").ifBlank { event.optString("entityType") },
-                entityId = event.optString("entityId"),
-                entityVersion = event.optInt("entityVersion", 1).coerceAtLeast(1),
-                operation = event.optString("operation", "update"),
-                payload = payload,
-                deleted = event.optBoolean("deleted", false)
-            )
+        return TimelineEvent(
+            eventId = event.optString("eventId"),
+            revision = event.optLong("revision", 0L),
+            timestamp = timestamp,
+            entityType = event.optString("entity").ifBlank { event.optString("entityType") },
+            entityId = event.optString("entityId"),
+            entityVersion = event.optInt("entityVersion", 1).coerceAtLeast(1),
+            operation = event.optString("operation", "update"),
+            payload = payload,
+            deleted = RealityClueProtocol.booleanField(event.opt("deleted"))
         )
+    }
+
+    private fun applyTimelineEvent(event: JSONObject) {
+        companionSessionRepository.applyEvent(timelineEventFromJson(event))
+        runOnUiThread { renderCompanionSessionSnapshot() }
+    }
+
+    private fun applyTimelineEvents(events: List<JSONObject>) {
+        if (events.isEmpty()) return
+        companionSessionRepository.applyEvents(events.map(::timelineEventFromJson))
         runOnUiThread { renderCompanionSessionSnapshot() }
     }
 
@@ -3537,12 +3545,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 "workspace.events" -> {
                     val revision = json.optLong("revision", 0L)
                     val events = json.optJSONArray("events") ?: JSONArray()
+                    val timelineEvents = mutableListOf<JSONObject>()
                     for (index in 0 until events.length()) {
                         val event = events.optJSONObject(index) ?: continue
                         val eventRevision = event.optLong("revision", revision)
                         if (workspaceEventGate.accept(eventRevision, event.optString("eventId"))) {
                             if (event.optString("entity").isNotBlank() || event.optString("entityType").isNotBlank()) {
-                                applyTimelineEvent(event)
+                                timelineEvents += event
                             } else {
                                 val payload = event.optJSONObject("payload") ?: JSONObject()
                                 payload.put("type", event.optString("type"))
@@ -3550,6 +3559,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                             }
                         }
                     }
+                    applyTimelineEvents(timelineEvents)
                     if (workspaceEventGate.consumeGap()) {
                         sendJson(JSONObject().put("type", "snapshot").put("since", workspaceRevision))
                     } else if (workspaceEventGate.revision > workspaceRevision) {

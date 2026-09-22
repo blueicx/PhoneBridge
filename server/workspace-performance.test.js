@@ -18,6 +18,35 @@ test('RevisionSnapshotCache serializes each revision once and separates summary 
   assert.equal(builds, 2);
 });
 
+test('RevisionSnapshotCache can build the lightweight summary without materializing the full snapshot', () => {
+  let revision = 1;
+  let fullBuilds = 0;
+  let summaryBuilds = 0;
+  const cache = new RevisionSnapshotCache({
+    getRevision: () => revision,
+    build: () => {
+      fullBuilds += 1;
+      return { full: JSON.stringify({ view: 'full', revision }) };
+    },
+    buildSummary: () => {
+      summaryBuilds += 1;
+      return JSON.stringify({ view: 'summary', revision });
+    },
+  });
+  assert.equal(JSON.parse(cache.get('summary')).view, 'summary');
+  assert.equal(fullBuilds, 0);
+  assert.equal(summaryBuilds, 1);
+  assert.equal(JSON.parse(cache.get('summary')).revision, 1);
+  assert.equal(summaryBuilds, 1);
+  assert.equal(JSON.parse(cache.get('full')).view, 'full');
+  assert.equal(fullBuilds, 1);
+  assert.deepEqual(cache.stats().viewBuilds, { full: 1, summary: 1 });
+  revision = 2;
+  assert.equal(JSON.parse(cache.get('summary')).revision, 2);
+  assert.equal(summaryBuilds, 2);
+  assert.equal(fullBuilds, 1);
+});
+
 test('BroadcastCoalescer emits only the newest payload in a burst', async () => {
   const sent = [];
   const coalescer = new BroadcastCoalescer({ send: payload => sent.push(payload), delayMs: 5 });

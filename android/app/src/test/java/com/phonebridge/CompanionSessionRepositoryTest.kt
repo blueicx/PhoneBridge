@@ -99,4 +99,21 @@ class CompanionSessionRepositoryTest {
         assertTrue(repository.snapshot.value.sync.online)
         assertEquals(null, repository.snapshot.value.sync.lastError)
     }
+
+    @Test
+    fun burstTimelineEventsAreMergedBeforeThePublicSnapshotRebuild() {
+        val repository = CompanionSessionRepository()
+        val events = listOf(
+            TimelineEvent("evt-1", 1L, 100L, "task", "task-1", payload = mapOf("title" to "第一步", "state" to "running")),
+            TimelineEvent("evt-2", 2L, 110L, "task", "task-1", entityVersion = 2, payload = mapOf("progress" to 50)),
+            TimelineEvent("evt-3", 3L, 120L, "attention", "attention-1", payload = mapOf("title" to "需要确认", "relatedTaskId" to "task-1"))
+        )
+
+        assertEquals(3, repository.applyEvents(events))
+        assertEquals(3L, repository.snapshot.value.revision)
+        assertEquals("第一步", repository.snapshot.value.tasks.single().title)
+        assertEquals(50, repository.snapshot.value.tasks.single().progress)
+        assertEquals("attention-1", repository.snapshot.value.attention.single().id)
+        assertEquals(0, repository.applyEvents(events))
+    }
 }

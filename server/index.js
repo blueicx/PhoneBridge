@@ -19,6 +19,7 @@ const { DeviceSimulator } = require('./device-simulator');
 const { MemoryStore } = require('./ai-memory');
 const { RealityEngine } = require('./reality-engine');
 const { MoteGrowthStore } = require('./mote-growth');
+const { createRealityCoordinator } = require('./reality-coordinator');
 const { PairingManager } = require('./pairing');
 const { prepareConversation } = require('./session-context');
 const { buildCompanionSummary } = require('./companion-summary');
@@ -301,7 +302,14 @@ const healthChecks = new HealthChecks({
 const memoryStore = new MemoryStore({ persistence: runtimePersistence });
 const realityEngine = new RealityEngine({ persistence: runtimePersistence });
 const moteGrowthStore = new MoteGrowthStore({ persistence: runtimePersistence });
-realityEngine.setBoosts(moteGrowthStore.snapshot().boosts);
+const realityCoordinator = createRealityCoordinator({
+  moteStore,
+  moteGrowthStore,
+  realityEngine,
+  broadcastMoteState: () => broadcastMoteState(),
+});
+const { applyMoteClue, buildProgress: buildRealityProgress } = realityCoordinator;
+realityCoordinator.syncBoosts();
 const pairingManager = new PairingManager();
 const proactiveState = {
   paused: false,
@@ -316,31 +324,8 @@ const proactiveState = {
 let snapshotRevision = 0;
 const snapshotCache = new RevisionSnapshotCache({
   getRevision: () => `${workspaceStore.eventRevision}:${snapshotRevision}`,
-  build: () => {
-    const payload = buildSnapshotPayload();
-    return {
-      full: JSON.stringify(payload),
-      summary: JSON.stringify({
-        ok: true,
-        view: 'summary',
-        revision: workspaceStore.eventRevision,
-        stats: payload.stats,
-        tasks: payload.tasks.slice(0, 12),
-        deviceHealth: payload.deviceHealth,
-        workspace: {
-          eventRevision: payload.workspace.eventRevision,
-          emergencyStop: payload.workspace.emergencyStop,
-          taskCount: payload.workspace.tasks.length,
-          attentionCount: payload.workspace.attention.length,
-          tasks: payload.workspace.tasks.slice(0, 12),
-          approvals: payload.approvals.slice(0, 6),
-        },
-        motes: { state: payload.motes.state, roster: payload.motes.roster, behavior: payload.motes.behavior, relationship: payload.motes.relationship, growth: payload.motes.growth },
-        autonomy: payload.autonomy,
-        companionSummary: payload.companionSummary,
-      }),
-    };
-  },
+  buildFull: () => JSON.stringify(buildSnapshotPayload()),
+  buildSummary: () => JSON.stringify(buildSummaryPayload()),
 });
 
 function nowTime() {
@@ -893,49 +878,6 @@ taskRunner.setExecutor(async ({ task, signal, report, waitIfPaused }) => {
   return { assistantId: assistant.id };
 });
 
-function applyMoteClue(payload) {
-  const growthEligible = Boolean(payload?.region)
-    || String(payload?.eventId || '').startsWith('reality:')
-    || String(payload?.eventId || '').startsWith('reality-lens:');
-  if (growthEligible) MoteGrowthStore.validatePayload({ ...payload, region: payload.region || 'camera' });
-  const result = moteStore.collectClue({ eventId: payload.eventId, clueType: payload.clueType });
-  result.growth = !growthEligible
-    ? { duplicate: result.duplicate, reward: { xp: 0, dailyCompleted: false, boost: null }, state: moteGrowthStore.snapshot() }
-    : result.duplicate
-    ? { duplicate: true, reward: { xp: 0, dailyCompleted: false, boost: null }, state: moteGrowthStore.snapshot() }
-    : moteGrowthStore.recordClue({
-      eventId: payload.eventId,
-      clueType: payload.clueType,
-      region: payload.region || 'camera',
-      activityAt: payload.activityAt,
-      offline: payload.offline === true,
-    });
-  if (!result.duplicate) broadcastMoteState();
-  result.businessStatus = result.growth?.businessStatus || (result.duplicate ? 'duplicate' : 'accepted');
-  result.reason = result.growth?.reason || (result.duplicate ? 'event_already_processed' : 'clue_collected');
-  result.resultRevision = result.growth?.revision || 0;
-  realityEngine.setBoosts(moteGrowthStore.snapshot().boosts);
-  return result;
-}
-
-function buildRealityProgress() {
-  const reality = realityEngine.snapshot();
-  const growth = moteGrowthStore.snapshot();
-  return {
-    revision: Math.max(Number(growth.revision) || 0, Number(reality.updatedAt) || 0),
-    growth,
-    inventory: reality.inventory,
-    loadout: reality.loadout,
-    habitat: reality.habitat,
-    daily: growth.daily,
-    dailyByDate: growth.dailyByDate,
-    boosts: growth.boosts,
-    level: growth.level,
-    xp: growth.xp,
-    region: reality.region || growth.region || null,
-  };
-}
-
 function broadcastMoteState() {
   const state = moteStore.getState();
   const growth = moteGrowthStore.snapshot();
@@ -1272,6 +1214,59 @@ function buildSnapshotPayload() {
     reality: { state: realityEngine.snapshot() },
   });
   return payload;
+}
+
+function buildSummaryPayload() {
+  const tasks = publicTasks();
+  const workspaceTasks = workspaceStore.listTasks();
+  const attention = workspaceStore.listAttentionItems().slice(0, 100);
+  const approvals = workspaceStore.listToolApprovals().slice(0, 100);
+  const moteState = moteStore.getState();
+  const moteRoster = moteStore.roster();
+  const relationship = moteRelationshipStore.snapshot();
+  const motes = {
+    state: moteState,
+    roster: moteRoster,
+    behavior: deriveMoteBehavior({ profileId: moteState.activeId, relationshipLevel: relationship.level }),
+    relationship,
+    growth: moteGrowthStore.snapshot(),
+  };
+  const autonomy = workspaceStore.getAutonomyPolicy();
+  const workspace = {
+    eventRevision: workspaceStore.eventRevision,
+    emergencyStop: workspaceStore.emergencyStopState(),
+    taskCount: workspaceTasks.length,
+    attentionCount: attention.length,
+    tasks: workspaceTasks.slice(0, 12),
+    attention,
+    approvals: approvals.slice(0, 6),
+  };
+  const summaryInput = {
+    tasks,
+    attention,
+    deviceHealth: deviceHealthStore.snapshot(),
+    workspace,
+    motes,
+    autonomy,
+  };
+  return {
+    ok: true,
+    view: 'summary',
+    revision: workspaceStore.eventRevision,
+    stats: statsSnapshot(),
+    tasks: tasks.slice(0, 12),
+    deviceHealth: summaryInput.deviceHealth,
+    workspace,
+    motes,
+    autonomy,
+    companionSummary: buildCompanionSummary({
+      generatedAt: Date.now(),
+      snapshot: summaryInput,
+      ai: aiProviderManager.getSettings(),
+      memory: memoryStore.snapshot(),
+      reality: { state: realityEngine.snapshot() },
+    }),
+  };
 }
 
 function snapshotPayload() {
@@ -1784,7 +1779,7 @@ const handleHttpRequest = async (req, res) => {
     if (parsedUrl.pathname === '/api/diagnostics' && req.method === 'GET') {
       diagnosticsCollector.updateTelemetry(phoneTelemetry);
       diagnosticsCollector.setEventBacklog(taskRunner.list().filter(r => r.state === 'queued' || r.state === 'running').length);
-      return sendJson(res, 200, { ...diagnosticsCollector.snapshot(), persistence: runtimePersistence.snapshot() });
+      return sendJson(res, 200, { ...diagnosticsCollector.snapshot(), persistence: runtimePersistence.snapshot(), snapshotCache: snapshotCache.stats() });
     }
     if (parsedUrl.pathname === '/api/diagnostics/export' && req.method === 'GET') {
       diagnosticsCollector.updateTelemetry(phoneTelemetry);
@@ -1796,6 +1791,7 @@ const handleHttpRequest = async (req, res) => {
         readiness: healthChecks.readiness(),
         diagnostics: diagnosticsCollector.snapshot(),
         persistence: runtimePersistence.snapshot(),
+        snapshotCache: snapshotCache.stats(),
         companionSummary: JSON.parse(summaryPayload()).companionSummary,
       });
     }

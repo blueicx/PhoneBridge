@@ -91,6 +91,23 @@ class CompanionSessionRepository(
         return true
     }
 
+    /** Applies a websocket burst and publishes one public snapshot update. */
+    fun applyEvents(events: Iterable<TimelineEvent>): Int {
+        var acceptedCount = 0
+        var newestRevision = revision
+        events.forEach { event ->
+            if (projection.applyEvent(event)) {
+                acceptedCount++
+                newestRevision = maxOf(newestRevision, event.revision)
+            }
+        }
+        if (acceptedCount > 0) {
+            revision = newestRevision
+            rebuild()
+        }
+        return acceptedCount
+    }
+
     fun markOnline() {
         sync = sync.copy(online = true, lastError = null, recovering = false)
         rebuild()

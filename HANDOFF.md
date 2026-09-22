@@ -299,3 +299,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本批尚未重新执行 Android 全量构建、最新 CI、Xperia 实机、ARCore 真平面、正式 keystore、两小时运行；这些仍是后续验收项。
 
 实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-1.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-1.md)。
+
+## 22. 全面深化计划：批次 2 已实现（2026-09-22）
+
+- 基线仍为 `1a4acee`，批次 1 已由提交 `5ed5f6a` 推送；本批继续在 `feature/integrated-enhancement`，未修改 `main`，不使用子 agent。
+- 新增 `server/reality-coordinator.js` 和单测，统一现实奖励、Mote 成长收据、现实增益同步与 `/api/reality/progress` 投影；`server/index.js` 只负责接线，精确区域仍在状态变更前拒绝。
+- `RevisionSnapshotCache` 增加独立摘要构建器。首屏摘要请求不物化完整快照；`/api/diagnostics` 与诊断导出新增 `snapshotCache.viewBuilds`，可观测摘要/完整快照是否被重复构建。
+- Android `CompanionSessionRepository.applyEvents` 批量合并 timeline，`MainActivity` 对一个 `workspace.events` 批次只发布一次投影/UI 更新；旧单事件和 `0/1` 删除字段兼容保留。
+- 验证：Node `node --test server/*.test.js` **115/115**；Android `:app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain` **BUILD SUCCESSFUL**；`git diff --check` 通过。
+- 本批未重新宣称 Xperia 实机、真实 GPS fix、ARCore 真平面、PTT/通知完整回归、正式签名 APK 或两小时运行完成；这些仍需独立证据。
+
+实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-2.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-2.md)。

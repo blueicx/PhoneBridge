@@ -1,25 +1,53 @@
 class RevisionSnapshotCache {
-  constructor({ getRevision, build } = {}) {
+  constructor({ getRevision, build, buildFull, buildSummary } = {}) {
     if (typeof getRevision !== 'function') throw new TypeError('getRevision must be a function');
-    if (typeof build !== 'function') throw new TypeError('build must be a function');
+    const fullBuilder = buildFull || build;
+    if (typeof fullBuilder !== 'function') throw new TypeError('build or buildFull must be a function');
     this.getRevision = getRevision;
-    this.build = build;
+    this.build = fullBuilder;
+    this.buildSummary = typeof buildSummary === 'function' ? buildSummary : null;
     this.revision = null;
     this.values = null;
+    this.generationCounted = false;
     this.builds = 0;
     this.hits = 0;
+    this.viewBuilds = { full: 0, summary: 0 };
   }
   get(view = 'full') {
     const revision = this.getRevision();
     if (this.values === null || this.revision !== revision) {
-      const values = this.build(revision) || {};
-      this.values = { full: values.full ?? '', summary: values.summary ?? values.full ?? '' };
+      this.values = {};
       this.revision = revision;
-      this.builds += 1;
+      this.generationCounted = false;
+    }
+    const requestedView = view === 'summary' ? 'summary' : 'full';
+    if (this.values[requestedView] === undefined) {
+      if (requestedView === 'summary' && this.buildSummary) {
+        this.values.summary = this.buildSummary(revision) ?? '';
+      } else {
+        const values = this.build(revision) || {};
+        if (typeof values === 'string') this.values.full = values;
+        else {
+          this.values.full = values.full ?? '';
+          if (!this.buildSummary) this.values.summary = values.summary ?? this.values.full;
+          else if (values.summary !== undefined) this.values.summary = values.summary;
+        }
+      }
+      this.viewBuilds[requestedView] += 1;
+      if (!this.generationCounted) {
+        // Keep the historical counter meaning: one cache generation per revision,
+        // even when the first request only needs the lightweight summary.
+        this.builds += 1;
+        this.generationCounted = true;
+      }
     } else this.hits += 1;
-    return this.values[view] ?? this.values.full;
+    return this.values[requestedView] ?? this.values.full ?? '';
   }
-  stats() { return { revision: this.revision, builds: this.builds, hits: this.hits }; }
+  stats() {
+    const stats = { revision: this.revision, builds: this.builds, hits: this.hits };
+    if (this.buildSummary) stats.viewBuilds = { ...this.viewBuilds };
+    return stats;
+  }
 }
 
 class BroadcastCoalescer {

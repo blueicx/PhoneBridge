@@ -89,6 +89,10 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.equal(summary.response.status, 200);
     assert.equal(summary.body.view, 'summary');
     assert.ok(summary.response.headers.get('etag'));
+    const diagnostics = await request('/api/diagnostics');
+    assert.equal(diagnostics.response.status, 200);
+    assert.ok(diagnostics.body.snapshotCache.viewBuilds.summary >= 1);
+    assert.equal(diagnostics.body.snapshotCache.viewBuilds.full, 0);
     const cachedSummary = await fetch(`${BASE}/api/state?view=summary`, {
       headers: { 'x-phonebridge-token': TOKEN, 'if-none-match': summary.response.headers.get('etag') },
     });
