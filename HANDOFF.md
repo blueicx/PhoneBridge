@@ -310,3 +310,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本批未重新宣称 Xperia 实机、真实 GPS fix、ARCore 真平面、PTT/通知完整回归、正式签名 APK 或两小时运行完成；这些仍需独立证据。
 
 实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-2.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-2.md)。
+
+## 23. 全面深化计划：批次 3 已实现（2026-09-22）
+
+- 新增 `server/proactive-policy.js`，默认主动提醒额度为每小时 1 次、每天 6 次；23:00–07:00 静默，支持专注态、即时静音、重复键去重、持久化和 `/api/proactive/explain` 原因说明。抑制的提醒只进入收件箱，不实时广播/朗读。
+- `MemoryStore` 增加 `candidate/confirmed` 状态、候选确认、状态过滤和本轮 `remember=false`；自动候选不再自动进入 AI 上下文，旧记忆状态迁移为 confirmed。
+- 工作区会话任务记录记忆选择；Android 普通聊天和 AI 空间都有本轮记忆开关。AI 空间增加开始/暂停/继续/重试/取消/归档按钮，复用 `/api/tasks/:id/actions` 和 provider cancel，带幂等键。
+- Android 语音前台状态的准备/监听/处理中/播报阶段映射到音频指标，已有播放打断逻辑未改变。
+- 验证：Node `node --test server/*.test.js` **120/120**；Android `:app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain` **BUILD SUCCESSFUL**；此前第二批摘要懒构建和协调器测试仍纳入全量回归。
+- 本批未重新取得 Xperia 实机、ARCore/GPS、正式 keystore 或两小时温度/电量证据。
+
+实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-3.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-3.md)。

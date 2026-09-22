@@ -190,6 +190,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var codexTaskSpinner: android.widget.Spinner
     private lateinit var modelSpinner: android.widget.Spinner
     private lateinit var chatInput: EditText
+    private lateinit var chatRememberSwitch: SwitchMaterial
     private lateinit var codexDetail: TextView
     private lateinit var selectedTaskDetail: TextView
     private lateinit var selectedTaskTitle: TextView
@@ -205,6 +206,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var aiAuthorizationStatus: TextView
     private lateinit var aiConversationText: TextView
     private lateinit var aiTaskText: TextView
+    private lateinit var aiTaskStart: Button
+    private lateinit var aiTaskPause: Button
+    private lateinit var aiTaskContinue: Button
+    private lateinit var aiTaskRetry: Button
+    private lateinit var aiTaskCancel: Button
+    private lateinit var aiTaskArchive: Button
     private lateinit var aiPolicyStatus: TextView
     private lateinit var aiPolicyDetail: TextView
     private lateinit var aiPolicyLevelButton: Button
@@ -215,6 +222,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var aiProviderInput: EditText
     private lateinit var aiModelInput: EditText
     private lateinit var aiInput: EditText
+    private lateinit var aiRememberSwitch: SwitchMaterial
     private lateinit var aiAuthorize: Button
     private lateinit var attentionStateChip: TextView
     private lateinit var attentionList: android.widget.LinearLayout
@@ -328,7 +336,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             renderVoiceState(
                 running = intent.getBooleanExtra(BridgeService.EXTRA_VOICE_RUNNING, false),
                 listening = intent.getBooleanExtra(BridgeService.EXTRA_VOICE_LISTENING, false),
-                speaking = intent.getBooleanExtra(BridgeService.EXTRA_VOICE_SPEAKING, false)
+                speaking = intent.getBooleanExtra(BridgeService.EXTRA_VOICE_SPEAKING, false),
+                status = intent.getStringExtra(BridgeService.EXTRA_VOICE_STATUS).orEmpty()
             )
         }
     }
@@ -497,6 +506,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         codexTaskSpinner = findViewById(R.id.codexTaskSpinner)
         modelSpinner = findViewById(R.id.modelSpinner)
         chatInput = findViewById(R.id.chatInput)
+        chatRememberSwitch = findViewById(R.id.chatRememberSwitch)
         codexDetail = findViewById(R.id.codexDetail)
         selectedTaskDetail = findViewById(R.id.selectedTaskDetail)
         selectedTaskTitle = findViewById(R.id.selectedTaskTitle)
@@ -509,6 +519,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         aiAuthorizationStatus = findViewById(R.id.aiAuthorizationStatus)
         aiConversationText = findViewById(R.id.aiConversationText)
         aiTaskText = findViewById(R.id.aiTaskText)
+        aiTaskStart = findViewById(R.id.aiTaskStart)
+        aiTaskPause = findViewById(R.id.aiTaskPause)
+        aiTaskContinue = findViewById(R.id.aiTaskContinue)
+        aiTaskRetry = findViewById(R.id.aiTaskRetry)
+        aiTaskCancel = findViewById(R.id.aiTaskCancel)
+        aiTaskArchive = findViewById(R.id.aiTaskArchive)
         aiPolicyStatus = findViewById(R.id.aiPolicyStatus)
         aiPolicyDetail = findViewById(R.id.aiPolicyDetail)
         aiPolicyLevelButton = findViewById(R.id.aiPolicyLevelButton)
@@ -519,6 +535,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         aiProviderInput = findViewById(R.id.aiProviderInput)
         aiModelInput = findViewById(R.id.aiModelInput)
         aiInput = findViewById(R.id.aiInput)
+        aiRememberSwitch = findViewById(R.id.aiRememberSwitch)
         aiAuthorize = findViewById(R.id.aiAuthorize)
         attentionStateChip = findViewById(R.id.attentionStateChip)
         attentionList = findViewById(R.id.attentionList)
@@ -1448,6 +1465,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         findViewById<Button>(R.id.aiSpaceClose).setOnClickListener { closeAiSpace() }
         findViewById<Button>(R.id.aiNewSession).setOnClickListener { createAiSession() }
         findViewById<Button>(R.id.aiSend).setOnClickListener { submitAiMessage() }
+        aiTaskStart.setOnClickListener { performAiTaskAction("start") }
+        aiTaskPause.setOnClickListener { performAiTaskAction("pause") }
+        aiTaskContinue.setOnClickListener { performAiTaskAction("continue") }
+        aiTaskRetry.setOnClickListener { performAiTaskAction("retry") }
+        aiTaskCancel.setOnClickListener { performAiTaskAction("cancel") }
+        aiTaskArchive.setOnClickListener { performAiTaskAction("archive") }
         findViewById<Button>(R.id.aiEmergencyStop).setOnClickListener { emergencyStopAiTools() }
         aiAuthorize.setOnClickListener { toggleAiAuthorization() }
         aiPolicyLevelButton.setOnClickListener { showPolicyLevelChooser() }
@@ -2695,6 +2718,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 )
             )
         }
+        val remember = aiRememberSwitch.isChecked
         enqueueWorkspaceEvent(
             "workspace.message",
             JSONObject().put("sessionId", aiSelectedSessionId).put("messageId", messageId).put("role", "user").put("text", text)
@@ -2702,7 +2726,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         saveAiSessionConfig()
         workspaceRequest(
             "/api/workspace/sessions/${android.net.Uri.encode(aiSelectedSessionId)}/messages", "POST",
-            JSONObject().put("id", messageId).put("role", "user").put("text", text).put("runModel", true),
+            JSONObject().put("id", messageId).put("role", "user").put("text", text).put("runModel", true).put("remember", remember).put("memories", if (remember) JSONArray() else JSONArray()),
             onSuccess = { json ->
                 val task = json.optJSONObject("task")
                 if (task != null) aiTaskText.text = "任务：${task.optString("title")} · ${task.optString("state", "pending")}"
@@ -2756,6 +2780,45 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         )
     }
 
+    private fun performAiTaskAction(action: String) {
+        val taskId = aiHighlightedTaskId.trim()
+        val request = CompanionTaskActionProtocol.create(
+            taskId = taskId,
+            action = action,
+            idempotencyKey = WorkspaceRepository.newId("task-action")
+        )
+        if (request == null) {
+            aiSpaceStatus.text = "先选择一个任务"
+            return
+        }
+        if (!BridgeLink.isOnline) {
+            aiSpaceStatus.text = "节点离线，任务操作未发送"
+            return
+        }
+        aiSpaceStatus.text = "正在${actionLabel(action)}任务…"
+        workspaceRequest(
+            request.path,
+            "POST",
+            JSONObject().put("action", request.action).put("actor", "android").put("idempotencyKey", request.idempotencyKey),
+            onSuccess = {
+                aiSpaceStatus.text = "任务已${actionLabel(action)}"
+                refreshAiTasks()
+                refreshCockpitSnapshot()
+            },
+            onError = { error -> aiSpaceStatus.text = "任务${actionLabel(action)}失败：$error" }
+        )
+    }
+
+    private fun actionLabel(action: String): String = when (action.lowercase(Locale.ROOT)) {
+        "start" -> "开始"
+        "pause" -> "暂停"
+        "continue", "resume" -> "继续"
+        "retry" -> "重试"
+        "cancel" -> "取消"
+        "archive" -> "归档"
+        else -> action
+    }
+
     private fun renderAiTaskSummary(tasks: List<JSONObject>, offline: Boolean) {
         val filtered = tasks
             .filter { task ->
@@ -2780,6 +2843,25 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             offline -> "${lines.joinToString("\n")} · 离线镜像"
             else -> lines.joinToString("\n")
         }
+        val selected = filtered.firstOrNull { it.optString("id") == aiHighlightedTaskId } ?: filtered.firstOrNull()
+        if (selected == null) {
+            aiTaskStart.isEnabled = false
+            aiTaskPause.isEnabled = false
+            aiTaskContinue.isEnabled = false
+            aiTaskRetry.isEnabled = false
+            aiTaskCancel.isEnabled = false
+            aiTaskArchive.isEnabled = false
+            return
+        }
+        aiHighlightedTaskId = selected.optString("id")
+        val state = selected.optString("state", selected.optString("status", "pending")).lowercase(Locale.ROOT)
+        val active = state in setOf("pending", "queued", "running", "paused", "needs_confirmation")
+        aiTaskStart.isEnabled = state in setOf("pending", "queued")
+        aiTaskPause.isEnabled = state == "running"
+        aiTaskContinue.isEnabled = state == "paused"
+        aiTaskRetry.isEnabled = state in setOf("failed", "cancelled", "error")
+        aiTaskCancel.isEnabled = active
+        aiTaskArchive.isEnabled = state in setOf("succeeded", "failed", "cancelled")
     }
 
     private fun applyLegacyTaskToCompanion(task: JSONObject) {
@@ -3066,8 +3148,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             say("我记住了。")
             return
         }
-        val relevantMemories = MoteMemory.relevant(this, clean, 12)
-        MoteMemory.touch(this, relevantMemories)
+        val remember = chatRememberSwitch.isChecked
+        val relevantMemories = if (remember) MoteMemory.relevant(this, clean, 12) else emptyList()
+        if (remember) MoteMemory.touch(this, relevantMemories)
         if (!BridgeLink.isOnline) {
             appendChat("user", clean)
             logAdapter.add("info", "你：$text")
@@ -3084,6 +3167,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     .put("type", "chat")
                     .put("text", clean)
                     .put("memories", memoryArray)
+                    .put("remember", remember)
             )
         ) {
             logAdapter.add("warn", "节点连接不可用，切换离线接口。")
@@ -3264,11 +3348,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         renderVoiceState(running = !BridgeService.isVoiceChatRunning, listening = false, speaking = false)
     }
 
-    private fun renderVoiceState(running: Boolean, listening: Boolean, speaking: Boolean = false) {
+    private fun renderVoiceState(running: Boolean, listening: Boolean, speaking: Boolean = false, status: String = "") {
         companionView.setVoiceState(listening, speaking)
         voiceButton.text = if (running) "停止" else getString(R.string.action_voice)
         voiceButton.alpha = if (running) 1f else .78f
         audioMetric.text = when {
+            status.isNotBlank() && running -> "音频 $status"
             listening -> "音频 语音对话"
             pttActive -> "音频 对讲"
             continuousListening -> "音频 监听"

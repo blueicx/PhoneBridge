@@ -21,3 +21,23 @@ test('memory persistence restores only valid entries and caps input', () => {
   assert.equal(store.snapshot().count, 1);
   assert.equal(store.add({ text: 'x'.repeat(4000) }).entry.text.length, 2000);
 });
+
+test('memory store separates auto candidates from confirmed memories', () => {
+  const store = new MemoryStore({ now: () => 1700000000000 });
+  const candidate = store.add({ id: 'candidate-1', text: '可能喜欢低亮度', source: 'auto_extract', status: 'candidate' });
+  const confirmed = store.add({ id: 'confirmed-1', text: '明确喜欢安静', source: 'user', explicit: true });
+  assert.equal(candidate.entry.status, 'candidate');
+  assert.equal(confirmed.entry.status, 'confirmed');
+  assert.equal(store.list({ status: 'candidate' }).length, 1);
+  assert.equal(store.list({ status: 'confirmed' }).length, 1);
+  assert.equal(store.confirm('candidate-1').entry.status, 'confirmed');
+  assert.equal(store.snapshot().candidateCount, 0);
+  assert.equal(store.snapshot().confirmedCount, 2);
+});
+
+test('memory store supports a per-request no-memory selection without changing saved entries', () => {
+  const store = new MemoryStore({ now: () => 1700000000000 });
+  store.add({ id: 'm1', text: '长期偏好', source: 'user' });
+  assert.deepEqual(store.selectForConversation({ remember: false, query: '偏好' }), []);
+  assert.equal(store.selectForConversation({ remember: true, query: '偏好' })[0].id, 'm1');
+});

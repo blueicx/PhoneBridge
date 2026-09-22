@@ -177,3 +177,13 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - Node 全量测试 **115/115**；Android `:app:testDebugUnitTest :app:assembleDebug` **BUILD SUCCESSFUL**；`git diff --check` 通过。
 
 实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-2.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-2.md)。实体机、GPS/ARCore 和正式签名仍按独立验收边界处理。
+
+## 全面深化批次 3：伙伴与任务空间
+
+- 主动提醒策略独立为 `server/proactive-policy.js`：默认每小时 1 次、每天 6 次，23:00–07:00 静默；支持专注态、立即静音、持久化和 `/api/proactive/explain` 原因查询。
+- 记忆支持候选/确认状态、来源、编辑、删除和 `/api/memories/:id/confirm`；`remember=false` 的本轮请求不会读取或写入长期记忆。
+- Android AI 空间增加任务开始、暂停、继续、重试、取消、归档和幂等键；流式生成的取消/重试直接复用服务端任务状态与 provider cancel 链路。普通聊天和 AI 空间都可关闭本轮记忆。
+- Android 语音状态显示准备、监听、处理中和播报阶段；原有打断播放逻辑继续保留。
+- Node 全量 **120/120**；Android `:app:testDebugUnitTest :app:assembleDebug` **BUILD SUCCESSFUL**。
+
+实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-3.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-3.md)。实体机、GPS/ARCore 和正式签名仍按独立验收边界处理。

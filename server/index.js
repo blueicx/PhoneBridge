@@ -20,6 +20,7 @@ const { MemoryStore } = require('./ai-memory');
 const { RealityEngine } = require('./reality-engine');
 const { MoteGrowthStore } = require('./mote-growth');
 const { createRealityCoordinator } = require('./reality-coordinator');
+const { ProactivePolicy } = require('./proactive-policy');
 const { PairingManager } = require('./pairing');
 const { prepareConversation } = require('./session-context');
 const { buildCompanionSummary } = require('./companion-summary');
@@ -311,15 +312,7 @@ const realityCoordinator = createRealityCoordinator({
 const { applyMoteClue, buildProgress: buildRealityProgress } = realityCoordinator;
 realityCoordinator.syncBoosts();
 const pairingManager = new PairingManager();
-const proactiveState = {
-  paused: false,
-  quietStart: 23,
-  quietEnd: 7,
-  maxPerHour: 6,
-  dedupeMinutes: 15,
-  recent: [],
-  byKey: new Map(),
-};
+const proactivePolicy = new ProactivePolicy({ persistence: runtimePersistence });
 
 let snapshotRevision = 0;
 const snapshotCache = new RevisionSnapshotCache({
@@ -730,16 +723,18 @@ function registerWorkspaceTools() {
   });
 }
 
-function inQuietHours() {
-  const hour = new Date().getHours();
-  return proactiveState.quietStart > proactiveState.quietEnd
-    ? hour >= proactiveState.quietStart || hour < proactiveState.quietEnd
-    : hour >= proactiveState.quietStart && hour < proactiveState.quietEnd;
-}
-
 function emitProactive(message, key = message) {
   const now = Date.now();
-  const payload = { type: 'proactive', key, message: String(message).slice(0, 500), createdAt: new Date(now).toISOString() };
+  const decision = proactivePolicy.attempt(key, now);
+  const payload = {
+    type: 'proactive',
+    key,
+    message: String(message).slice(0, 500),
+    createdAt: new Date(now).toISOString(),
+    delivery: decision.allowed ? 'sent' : 'suppressed',
+    reason: decision.reason,
+    explanation: decision.message,
+  };
   const attention = workspaceStore.upsertAttentionItem({
     source: 'proactive',
     severity: 'medium',
@@ -747,14 +742,10 @@ function emitProactive(message, key = message) {
     summary: payload.message,
     dedupeKey: String(key),
   });
+  // Suppressed reminders stay in the inbox for inspection, but are not pushed
+  // to the phone as a live notification or spoken cue.
+  if (!decision.allowed) return false;
   broadcastAttention(attention);
-  if (proactiveState.paused || inQuietHours()) return false;
-  proactiveState.recent = proactiveState.recent.filter(timestamp => now - timestamp < 60 * 60 * 1000);
-  if (proactiveState.recent.length >= proactiveState.maxPerHour) return false;
-  const last = proactiveState.byKey.get(key) || 0;
-  if (now - last < proactiveState.dedupeMinutes * 60 * 1000) return false;
-  proactiveState.byKey.set(key, now);
-  proactiveState.recent.push(now);
   broadcast(payload);
   addLog('info', `Mote 主动提醒：${payload.message}`);
   return true;
@@ -860,15 +851,18 @@ taskRunner.setExecutor(async ({ task, signal, report, waitIfPaused }) => {
   const requestId = String(task.metadata?.requestId || `ai_${task.id}`);
   const cancelOnAbort = () => aiProviderManager.cancel(requestId);
   signal.addEventListener('abort', cancelOnAbort, { once: true });
-  const configuredMemories = Array.isArray(task.metadata?.memories) && task.metadata.memories.length
-    ? task.metadata.memories
-    : memoryStore.list({ limit: 20 }).map(item => item.text);
+  const configuredMemories = task.metadata?.remember === false
+    ? []
+    : Array.isArray(task.metadata?.memories) && task.metadata.memories.length
+      ? task.metadata.memories
+      : memoryStore.selectForConversation({ remember: true, limit: 20 }).map(item => item.text);
   const result = await chatWithModel(String(task.metadata?.text || task.detail || ''), configuredMemories, {
     model: session.model,
     providerId: session.providerId,
     requestId,
     sessionId,
     history: session.messages,
+    remember: task.metadata?.remember !== false,
   });
   signal.removeEventListener('abort', cancelOnAbort);
   if (signal.aborted) throw new Error('cancelled');
@@ -1152,7 +1146,10 @@ async function rawChatWithModel(text, memories = [], options = {}) {
 }
 
 async function chatWithModel(text, memories = [], options = {}) {
-  const context = prepareConversation({ history: options.history, memories });
+  const context = prepareConversation({
+    history: options.history || chatHistory.slice(-16),
+    memories: options.remember === false ? [] : memories,
+  });
   memoryStore.markUsed(context.memories.map(value => memoryStore.list({ query: value, limit: 1 })[0]?.id).filter(Boolean));
   const result = await aiProviderManager.chat({
     prompt: String(text || ''),
@@ -1173,13 +1170,17 @@ async function chatWithModel(text, memories = [], options = {}) {
   };
 }
 
-async function handleChat(text, memories = []) {
+async function handleChat(text, memories = [], options = {}) {
   const clean = String(text || '').trim().slice(0, 2000);
   if (!clean) throw new Error('empty');
-  chatHistory.push({ role: 'user', text: clean, time: nowTime() });
-  const result = await chatWithModel(clean, memories);
+  const remember = options.remember !== false;
+  if (remember) chatHistory.push({ role: 'user', text: clean, time: nowTime() });
+  const result = await chatWithModel(clean, remember ? memories : [], {
+    remember,
+    history: remember ? chatHistory : chatHistory.slice(-16),
+  });
   const reply = result.reply;
-  chatHistory.push({ role: 'assistant', text: reply, time: nowTime() });
+  if (remember) chatHistory.push({ role: 'assistant', text: reply, time: nowTime() });
   broadcast({ type: 'chat', role: 'assistant', text: reply, time: nowTime() });
   addLog('success', `Mote 对话回复：${reply.slice(0, 100)}`);
   return { ok: true, reply };
@@ -1354,10 +1355,10 @@ workspaceTimeline.seedSnapshot({
   }
 });
 
-async function runWorkspaceMessage(sessionId, message, taskId, memories) {
+async function runWorkspaceMessage(sessionId, message, taskId, memories, remember = true) {
   const task = workspaceStore.getTask(taskId);
   if (!task) throw new Error('task not found');
-  taskRunner.enqueue({ ...task, metadata: { ...task.metadata, sessionId, text: message.text, memories } });
+  taskRunner.enqueue({ ...task, metadata: { ...task.metadata, sessionId, text: message.text, memories, remember } });
   return taskRunner.get(taskId);
 }
 
@@ -1833,7 +1834,7 @@ const handleHttpRequest = async (req, res) => {
       return sendJson(res, cancelled ? 200 : 404, { ok: cancelled, cancelled });
     }
     if (parsedUrl.pathname === '/api/memories' && req.method === 'GET') {
-      return sendJson(res, 200, { ok: true, ...memoryStore.snapshot(), memories: memoryStore.list({ query: parsedUrl.searchParams.get('query') || '', limit: parsedUrl.searchParams.get('limit') || 50, sensitivity: parsedUrl.searchParams.get('sensitivity') || null }) });
+      return sendJson(res, 200, { ok: true, ...memoryStore.snapshot(), memories: memoryStore.list({ query: parsedUrl.searchParams.get('query') || '', limit: parsedUrl.searchParams.get('limit') || 50, sensitivity: parsedUrl.searchParams.get('sensitivity') || null, status: parsedUrl.searchParams.get('status') || null }) });
     }
     if (parsedUrl.pathname === '/api/memories' && req.method === 'POST') {
       try {
@@ -1846,6 +1847,11 @@ const handleHttpRequest = async (req, res) => {
       return sendJson(res, 200, { ok: true, memories: memoryStore.export({ includeSensitive: parsedUrl.searchParams.get('includeSensitive') === 'true' }) });
     }
     const memoryMatch = parsedUrl.pathname.match(/^\/api\/memories\/([^/]+)$/);
+    const memoryConfirmMatch = parsedUrl.pathname.match(/^\/api\/memories\/([^/]+)\/confirm$/);
+    if (memoryConfirmMatch && req.method === 'POST') {
+      try { return sendJson(res, 200, { ok: true, ...memoryStore.confirm(decodeURIComponent(memoryConfirmMatch[1])) }); }
+      catch (error) { return sendJson(res, 404, { ok: false, error: error.message }); }
+    }
     if (memoryMatch && req.method === 'PATCH') {
       try { return sendJson(res, 200, { ok: true, ...memoryStore.update(decodeURIComponent(memoryMatch[1]), await readJson(req)) }); }
       catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
@@ -1867,16 +1873,32 @@ const handleHttpRequest = async (req, res) => {
       return sendJson(res, 200, { ok: true, health: deviceHealthStore.snapshot() });
     }
     if (parsedUrl.pathname === '/api/proactive' && req.method === 'GET') {
-      return sendJson(res, 200, { ok: true, paused: proactiveState.paused, quietStart: proactiveState.quietStart, quietEnd: proactiveState.quietEnd, maxPerHour: proactiveState.maxPerHour, dedupeMinutes: proactiveState.dedupeMinutes });
+      const policy = proactivePolicy.snapshot();
+      return sendJson(res, 200, { ok: true, policy, ...policy });
+    }
+    if (parsedUrl.pathname === '/api/proactive/explain' && req.method === 'GET') {
+      const key = parsedUrl.searchParams.get('key') || '';
+      return sendJson(res, 200, { ok: true, explanation: proactivePolicy.explain(key) });
+    }
+    if (parsedUrl.pathname === '/api/proactive/mute' && req.method === 'POST') {
+      try {
+        const payload = await readJson(req);
+        const policy = proactivePolicy.mute(Number(payload.minutes || 60) * 60 * 1000);
+        return sendJson(res, 200, { ok: true, policy, ...policy });
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: error.message });
+      }
     }
     if (parsedUrl.pathname === '/api/proactive' && req.method === 'PATCH') {
       const payload = await readJson(req);
-      if (payload.paused !== undefined) proactiveState.paused = Boolean(payload.paused);
-      if (payload.quietStart !== undefined) proactiveState.quietStart = Math.max(0, Math.min(23, Math.round(Number(payload.quietStart))));
-      if (payload.quietEnd !== undefined) proactiveState.quietEnd = Math.max(0, Math.min(23, Math.round(Number(payload.quietEnd))));
-      if (payload.maxPerHour !== undefined) proactiveState.maxPerHour = Math.max(0, Math.min(60, Math.round(Number(payload.maxPerHour))));
-      if (payload.dedupeMinutes !== undefined) proactiveState.dedupeMinutes = Math.max(0, Math.min(1440, Math.round(Number(payload.dedupeMinutes))));
-      return sendJson(res, 200, { ok: true, paused: proactiveState.paused, quietStart: proactiveState.quietStart, quietEnd: proactiveState.quietEnd, maxPerHour: proactiveState.maxPerHour, dedupeMinutes: proactiveState.dedupeMinutes });
+      const patch = { ...payload };
+      if (patch.focus !== undefined && patch.focusActive === undefined) patch.focusActive = patch.focus;
+      const policy = proactivePolicy.update(patch);
+      if (payload.muteMinutes !== undefined) {
+        const muted = proactivePolicy.mute(Number(payload.muteMinutes) * 60 * 1000);
+        return sendJson(res, 200, { ok: true, policy: muted, ...muted });
+      }
+      return sendJson(res, 200, { ok: true, policy, ...policy });
     }
     if (parsedUrl.pathname === '/api/autonomy' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, policy: workspaceStore.getAutonomyPolicy(), emergencyStop: workspaceStore.emergencyStopState() });
@@ -2069,11 +2091,12 @@ const handleHttpRequest = async (req, res) => {
         const payload = await readJson(req);
         const message = workspaceStore.appendMessage(sessionId, payload);
         const requestId = `ai_${crypto.randomUUID()}`;
-        const task = workspaceStore.createTask({ source: 'conversation', title: `会话：${String(message.text).slice(0, 36)}`, detail: message.text, metadata: { sessionId, messageId: message.id, requestId, memories: Array.isArray(payload.memories) ? payload.memories : [] } });
+        const remember = payload.remember !== false;
+        const task = workspaceStore.createTask({ source: 'conversation', title: `会话：${String(message.text).slice(0, 36)}`, detail: message.text, metadata: { sessionId, messageId: message.id, requestId, remember, memories: remember && Array.isArray(payload.memories) ? payload.memories : [] } });
         broadcast({ type: 'workspace.message', sessionId, message });
         broadcast({ type: 'workspace.task', task });
         if (payload.runModel !== false && message.role === 'user') {
-          runWorkspaceMessage(sessionId, message, task.id, Array.isArray(payload.memories) ? payload.memories : []).catch(() => {});
+          runWorkspaceMessage(sessionId, message, task.id, remember && Array.isArray(payload.memories) ? payload.memories : [], remember).catch(() => {});
         }
         return sendJson(res, 202, { ok: true, message, task, requestId: task.metadata.requestId });
       }
@@ -2319,7 +2342,8 @@ const handleHttpRequest = async (req, res) => {
       const body = await readBody(req);
       const payload = JSON.parse(body || '{}');
       markInteraction();
-      handleChat(payload.text, Array.isArray(payload.memories) ? payload.memories : []).then(result=>{
+      const remember = payload.remember !== false;
+      handleChat(payload.text, remember && Array.isArray(payload.memories) ? payload.memories : [], { remember }).then(result=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(result));
       }).catch(err=>{fs.appendFileSync(path.join(__dirname,'chat_error.log'),`${new Date().toISOString()} ${err.stack}\n`);res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify({ok:false,error:err.message}))});
       return;
@@ -2505,7 +2529,7 @@ wss.on('connection', (ws, req) => {
             });
             break;
           case 'pet': petState=json.state||{}; break;
-          case 'chat': markInteraction(); handleChat(json.text, Array.isArray(json.memories) ? json.memories : []).catch(err=>addLog('error',err.message)); break;
+          case 'chat': markInteraction(); handleChat(json.text, json.remember === false ? [] : (Array.isArray(json.memories) ? json.memories : []), { remember: json.remember !== false }).catch(err=>addLog('error',err.message)); break;
           case 'handoff_sync': {
             const incoming=normalizeHandoff(json.state||{});
             const current=loadHandoff();

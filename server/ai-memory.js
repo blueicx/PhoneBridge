@@ -20,7 +20,10 @@ class MemoryStore {
     this.state = {
       version: 1,
       revision: Number(saved.revision) || 0,
-      entries: Array.isArray(saved.entries) ? saved.entries.filter(item => item && item.id && item.text) : [],
+      entries: Array.isArray(saved.entries) ? saved.entries.filter(item => item && item.id && item.text).map(item => ({
+        ...item,
+        status: item.status === 'candidate' ? 'candidate' : 'confirmed',
+      })) : [],
     };
   }
 
@@ -28,10 +31,11 @@ class MemoryStore {
     if (this.persistence && typeof this.persistence.save === 'function') this.persistence.save('ai-memory', this.state);
   }
 
-  list({ query = '', limit = 50, sensitivity = null } = {}) {
+  list({ query = '', limit = 50, sensitivity = null, status = null } = {}) {
     const needle = String(query || '').trim().toLowerCase();
     const items = this.state.entries
       .filter(item => !sensitivity || item.sensitivity === sensitivity)
+      .filter(item => !status || item.status === String(status))
       .map(item => ({ item, score: needle ? score(item, needle) : 0 }))
       .filter(({ score }) => !needle || score > 0)
       .sort((a, b) => b.score - a.score || String(b.item.updatedAt).localeCompare(String(a.item.updatedAt)))
@@ -40,7 +44,7 @@ class MemoryStore {
     return items;
   }
 
-  add({ text, source = 'user', sensitivity = 'normal', confidence = 1, id = null } = {}) {
+  add({ text, source = 'user', sensitivity = 'normal', confidence = 1, id = null, status = null, explicit = false } = {}) {
     const value = String(text || '').trim().slice(0, 2000);
     if (!value) throw new Error('memory text is required');
     const timestamp = new Date(this.now()).toISOString();
@@ -48,6 +52,7 @@ class MemoryStore {
       id: String(id || `mem_${crypto.randomUUID()}`),
       text: value,
       source: String(source).slice(0, 80),
+      status: status === 'candidate' || (!explicit && String(source).toLowerCase().includes('auto')) ? 'candidate' : 'confirmed',
       sensitivity: ['normal', 'sensitive'].includes(String(sensitivity)) ? String(sensitivity) : 'normal',
       confidence: Math.max(0, Math.min(1, Number(confidence) || 0)),
       createdAt: timestamp,
@@ -73,6 +78,11 @@ class MemoryStore {
     }
     if (patch.sensitivity !== undefined && ['normal', 'sensitive'].includes(String(patch.sensitivity))) entry.sensitivity = String(patch.sensitivity);
     if (patch.confidence !== undefined) entry.confidence = Math.max(0, Math.min(1, Number(patch.confidence) || 0));
+    if (patch.status !== undefined) {
+      const nextStatus = String(patch.status);
+      if (!['candidate', 'confirmed'].includes(nextStatus)) throw new Error('invalid memory status');
+      entry.status = nextStatus;
+    }
     entry.updatedAt = new Date(this.now()).toISOString();
     this.state.revision += 1;
     this._save();
@@ -86,6 +96,10 @@ class MemoryStore {
     this.state.revision += 1;
     this._save();
     return { removed: true, revision: this.state.revision };
+  }
+
+  confirm(id) {
+    return this.update(id, { status: 'confirmed' });
   }
 
   markUsed(ids = []) {
@@ -107,8 +121,19 @@ class MemoryStore {
       .map(clone);
   }
 
+  selectForConversation({ remember = true, query = '', limit = 20 } = {}) {
+    if (remember !== true) return [];
+    return this.list({ query, limit, status: 'confirmed' });
+  }
+
   snapshot() {
-    return { version: this.state.version, revision: this.state.revision, count: this.state.entries.length };
+    return {
+      version: this.state.version,
+      revision: this.state.revision,
+      count: this.state.entries.length,
+      candidateCount: this.state.entries.filter(item => item.status === 'candidate').length,
+      confirmedCount: this.state.entries.filter(item => item.status !== 'candidate').length,
+    };
   }
 }
 

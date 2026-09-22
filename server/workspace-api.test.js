@@ -93,11 +93,36 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.equal(diagnostics.response.status, 200);
     assert.ok(diagnostics.body.snapshotCache.viewBuilds.summary >= 1);
     assert.equal(diagnostics.body.snapshotCache.viewBuilds.full, 0);
+
     const cachedSummary = await fetch(`${BASE}/api/state?view=summary`, {
       headers: { 'x-phonebridge-token': TOKEN, 'if-none-match': summary.response.headers.get('etag') },
     });
     assert.equal(cachedSummary.status, 304);
     assert.equal(await cachedSummary.text(), '');
+
+    const proactive = await request('/api/proactive');
+    assert.equal(proactive.response.status, 200);
+    assert.equal(proactive.body.policy.maxPerHour, 1);
+    assert.equal(proactive.body.policy.maxPerDay, 6);
+    const focus = await request('/api/proactive', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ focusActive: true }),
+    });
+    assert.equal(focus.body.policy.focusActive, true);
+    const explanation = await request('/api/proactive/explain?key=workspace-test');
+    assert.equal(explanation.body.explanation.reason, 'focus_mode');
+    await request('/api/proactive', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ focusActive: false }),
+    });
+
+    const candidateMemory = await request('/api/memories', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'api-memory-candidate', text: '可能喜欢低亮度', source: 'auto_extract', status: 'candidate' }),
+    });
+    assert.equal(candidateMemory.response.status, 201);
+    assert.equal(candidateMemory.body.entry.status, 'candidate');
+    const confirmedMemory = await request('/api/memories/api-memory-candidate/confirm', { method: 'POST' });
+    assert.equal(confirmedMemory.response.status, 200);
+    assert.equal(confirmedMemory.body.entry.status, 'confirmed');
 
     const initialSummary = await request('/api/state?view=summary');
     const initialETag = initialSummary.response.headers.get('etag');

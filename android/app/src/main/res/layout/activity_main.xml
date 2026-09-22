@@ -978,6 +978,16 @@
                     android:textColorHint="#657A6E"
                     android:textSize="13sp"/>
 
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/chatRememberSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="4dp"
+                    android:checked="true"
+                    android:text="记忆"
+                    android:textColor="#A7C5B6"
+                    android:textSize="10sp"/>
+
                 <Button
                     android:id="@+id/sendChat"
                     style="@style/PetAction"
@@ -1121,8 +1131,17 @@
                 <TextView android:id="@+id/aiConversationText" android:layout_width="match_parent" android:layout_height="wrap_content" android:fontFamily="sans-serif" android:lineSpacingExtra="5dp" android:text="还没有消息。" android:textColor="#D9F2E5" android:textSize="13sp"/>
             </ScrollView>
             <TextView android:id="@+id/aiTaskText" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:maxLines="2" android:text="任务：暂无" android:textColor="#8FF0C4" android:textSize="11sp"/>
+            <LinearLayout android:id="@+id/aiTaskActionRow" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="horizontal">
+                <Button android:id="@+id/aiTaskStart" style="@style/PetAction" android:layout_width="0dp" android:layout_height="34dp" android:layout_weight="1" android:minWidth="0dp" android:text="开始" android:textSize="10sp"/>
+                <Button android:id="@+id/aiTaskPause" style="@style/PetAction" android:layout_width="0dp" android:layout_height="34dp" android:layout_weight="1" android:minWidth="0dp" android:text="暂停" android:textSize="10sp"/>
+                <Button android:id="@+id/aiTaskContinue" style="@style/PetAction" android:layout_width="0dp" android:layout_height="34dp" android:layout_weight="1" android:minWidth="0dp" android:text="继续" android:textSize="10sp"/>
+                <Button android:id="@+id/aiTaskRetry" style="@style/PetAction" android:layout_width="0dp" android:layout_height="34dp" android:layout_weight="1" android:minWidth="0dp" android:text="重试" android:textSize="10sp"/>
+                <Button android:id="@+id/aiTaskCancel" style="@style/PetAction" android:layout_width="0dp" android:layout_height="34dp" android:layout_weight="1" android:minWidth="0dp" android:text="取消" android:textSize="10sp"/>
+                <Button android:id="@+id/aiTaskArchive" style="@style/PetAction" android:layout_width="0dp" android:layout_height="34dp" android:layout_weight="1" android:minWidth="0dp" android:text="归档" android:textSize="10sp"/>
+            </LinearLayout>
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
                 <EditText android:id="@+id/aiInput" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1" android:background="@drawable/bg_input" android:hint="在 AI 空间开始一件事…" android:inputType="textLongMessage" android:maxLines="3" android:paddingHorizontal="12dp" android:textColor="#EFFAF4" android:textColorHint="#657A6E" android:textSize="13sp"/>
+                <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/aiRememberSwitch" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_marginStart="4dp" android:checked="true" android:text="记住" android:textColor="#A7C5B6" android:textSize="10sp"/>
                 <Button android:id="@+id/aiSend" style="@style/PetAction" android:layout_width="68dp" android:layout_height="48dp" android:layout_marginStart="8dp" android:text="发送"/>
             </LinearLayout>
         </LinearLayout>
