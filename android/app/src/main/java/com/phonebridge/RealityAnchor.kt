@@ -64,12 +64,25 @@ class CanvasSensorAnchorProvider : RealityAnchorProvider {
     }
 }
 
+fun interface ArCorePoseSource {
+    fun update(frame: RealityFrame): AnchorPose?
+}
+
+/**
+ * Adapter seam for a real ARCore Session. It is deliberately unavailable until
+ * an ARCore session owns the camera and can return a tracked pose; a Canvas pose
+ * is never relabeled as ARCore.
+ */
 class ArCoreAnchorProvider(
-    override val available: Boolean,
+    private val poseSource: ArCorePoseSource? = null,
 ) : RealityAnchorProvider {
+    override val available: Boolean
+        get() = poseSource != null
     private val canvasProjection = CanvasSensorAnchorProvider()
 
-    override fun update(frame: RealityFrame): AnchorPose = canvasProjection.update(frame).copy(source = "arcore")
+    override fun update(frame: RealityFrame): AnchorPose =
+        poseSource?.update(frame)?.takeIf { it.source != "canvas" }
+            ?: canvasProjection.update(frame)
 }
 
 class RealityAnchorSelector(

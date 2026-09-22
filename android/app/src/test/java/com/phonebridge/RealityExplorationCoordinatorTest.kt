@@ -40,6 +40,21 @@ class RealityExplorationCoordinatorTest {
     }
 
     @Test
+    fun onlineSubmissionUsesTheLoadedRegionEvent() {
+        val coordinator = RealityExplorationCoordinator(now = { 1_000L })
+        coordinator.setRegion("cell:1:2")
+        coordinator.replaceEvents(
+            listOf(RealityEvent("reality:v2:2026-01-01:cell:1:2:object:0:one", "cell:1:2", "object", "object", 20, "near", 2_000L, "seed"))
+        )
+
+        val submission = coordinator.submitClue("object", online = true)
+
+        assertEquals("reality:v2:2026-01-01:cell:1:2:object:0:one", submission.eventId)
+        assertEquals("cell:1:2", submission.region)
+        assertFalse(submission.offline)
+    }
+
+    @Test
     fun locationPermissionFallbackUsesCameraRegionWithoutPreciseCoordinates() {
         val coordinator = RealityExplorationCoordinator(now = { 1_000L })
         coordinator.setRegion("31.2304,121.4737")

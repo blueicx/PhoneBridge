@@ -34,3 +34,38 @@ test('reality coordinator rejects precise regions before a store can mutate', ()
   assert.throws(() => coordinator.applyMoteClue({ eventId: 'reality:31.2304,121.4737', clueType: 'location', region: '31.2304,121.4737' }), /precise|coarse/i);
   assert.equal(called, false);
 });
+
+test('reality coordinator validates generated events against region and time', () => {
+  let calls = 0;
+  const coordinator = createRealityCoordinator({
+    now: () => 1_700_000_000_000,
+    moteStore: { collectClue: () => { calls += 1; return { duplicate: false }; } },
+    moteGrowthStore: {
+      snapshot: () => ({ boosts: [] }),
+      recordClue: () => ({ businessStatus: 'accepted', reward: { xp: 1 }, state: {} }),
+    },
+    realityEngine: {
+      snapshot: () => ({}),
+      setBoosts: () => {},
+      eventsFor: () => [{
+        id: 'reality:v2:2023-11-14:cell:1:2:object:0:one',
+        clueType: 'object',
+        expiresAt: 1_700_001_800_000,
+      }],
+    },
+  });
+
+  const accepted = coordinator.applyMoteClue({
+    eventId: 'reality:v2:2023-11-14:cell:1:2:object:0:one',
+    clueType: 'object',
+    region: 'cell:1:2',
+  });
+  assert.equal(accepted.businessStatus, 'accepted');
+  assert.equal(calls, 1);
+  assert.throws(() => coordinator.applyMoteClue({
+    eventId: 'reality:v2:2023-11-14:cell:1:2:object:0:one',
+    clueType: 'light',
+    region: 'cell:1:2',
+  }), /clue type/i);
+  assert.equal(calls, 1);
+});

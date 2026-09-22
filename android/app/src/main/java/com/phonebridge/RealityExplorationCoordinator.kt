@@ -50,10 +50,27 @@ class RealityExplorationCoordinator(
         )
     }
 
+    fun eventForClue(clueType: String?, at: Long = now()): RealityEvent? {
+        val type = RealityClueProtocol.canonicalType(clueType)
+        val distanceRank = mapOf("near" to 0, "mid" to 1, "far" to 2)
+        return _state.value.events
+            .asSequence()
+            .filter { it.expiresAt > at && RealityClueProtocol.canonicalType(it.clueType) == type }
+            .sortedWith(compareBy({ distanceRank[it.distanceBand] ?: 3 }, { it.bearing }))
+            .firstOrNull()
+    }
+
     fun submitClue(nodeId: String?, online: Boolean): RealityClueSubmission {
         val clueType = RealityClueProtocol.canonicalType(nodeId)
         val region = _state.value.region ?: "camera"
-        val eventId = RealityClueProtocol.eventId(nodeId, region)
+        // A refreshed online event is authoritative. If no event was loaded,
+        // keep the legacy manual/camera ID so permission-denied and offline
+        // observation remain usable and server-compatible.
+        val eventId = if (online) {
+            eventForClue(clueType)?.id ?: RealityClueProtocol.eventId(nodeId, region, now())
+        } else {
+            RealityClueProtocol.eventId(nodeId, region, now())
+        }
         val current = _state.value
         if (eventId in current.discoveredEventIds || current.pending.any { it.eventId == eventId }) {
             return RealityClueSubmission(eventId, clueType, region, offline = !online, duplicate = true)

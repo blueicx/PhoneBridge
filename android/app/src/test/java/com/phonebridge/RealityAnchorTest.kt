@@ -33,7 +33,7 @@ class RealityAnchorTest {
     @Test
     fun selectorFallsBackWhenArCoreUnavailableOrThermalBudgetIsExceeded() {
         val fallback = CanvasSensorAnchorProvider()
-        val ar = ArCoreAnchorProvider(available = true)
+        val ar = ArCoreAnchorProvider()
         val selector = RealityAnchorSelector(ar, fallback)
         val frame = RealityFrame(1L, 0f, 0f, 0f, 20f, "mid", 800, 480, 30f, 43f)
         val pose = selector.update(frame)
@@ -41,7 +41,19 @@ class RealityAnchorTest {
         assertFalse(selector.usingArCore)
 
         val coolFrame = frame.copy(temperatureCelsius = 30f, fps = 30f)
-        assertEquals("arcore", selector.update(coolFrame).source)
+        assertEquals("canvas", selector.update(coolFrame).source)
+        assertFalse(selector.usingArCore)
+    }
+
+    @Test
+    fun selectorUsesOnlyARealArCorePoseSourceAndNeverRelabelsCanvas() {
+        val fallback = CanvasSensorAnchorProvider()
+        val ar = ArCoreAnchorProvider(ArCorePoseSource { frame ->
+            fallback.update(frame).copy(source = "arcore-session")
+        })
+        val selector = RealityAnchorSelector(ar, fallback)
+        val pose = selector.update(RealityFrame(1L, 0f, 0f, 0f, 20f, "mid", 800, 480, 30f, 30f))
+        assertEquals("arcore-session", pose.source)
         assertTrue(selector.usingArCore)
     }
 }

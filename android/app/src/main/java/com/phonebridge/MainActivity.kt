@@ -301,6 +301,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     @Volatile private var immersiveMode = false
     private var realityLensActive = false
     private var realityLensRequestedCamera = false
+    private val realityCaptureController = RealityCaptureController()
+    @Volatile private var lastLocalCueAt = 0L
     private val realityLocationSampler by lazy { RealityLocationSampler(this) }
     private val realityExplorationCoordinator = RealityExplorationCoordinator()
     private var realityRegion: String? = null
@@ -1888,6 +1890,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                         )
                     }
                     realityExplorationCoordinator.replaceEvents(events)
+                    realityLensView.setNearbyEvents(events)
                     val count = events.size
                     logAdapter.add("info", "附近现实事件已刷新：$count 个（仅粗区域）")
                 }
@@ -2005,7 +2008,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         immersiveShellCoordinator.closeDrawer()
         focusToolsExpanded = false
         saveImmersiveSurface(ImmersiveSurface.REALITY)
-        realityLensRequestedCamera = !cameraRunning
+        realityLensRequestedCamera = realityCaptureController.enterReality(cameraRunning).cameraOwned
 
         val frame = findViewById<View>(R.id.previewFrame)
         normalPreviewParams = frame.layoutParams as?
@@ -2043,6 +2046,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun exitRealityLens() {
         if (!realityLensActive) return
         realityLensActive = false
+        val captureState = realityCaptureController.exitReality()
         immersiveShellCoordinator.setSurface(ImmersiveSurface.COMPANION)
         saveImmersiveSurface(ImmersiveSurface.COMPANION)
 
@@ -2052,6 +2056,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         realityLensView.visibility = View.GONE
         realityLensView.setCoarseRegion(null)
+        realityLensView.setNearbyEvents(emptyList())
+        realityLensView.setLocalCueHints(emptySet())
         realityRegion = null
         renderCameraHeroState()
         if (immersiveMode) {
@@ -2063,7 +2069,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         renderFocusTools()
 
-        if (realityLensRequestedCamera) {
+        if (realityLensRequestedCamera && !captureState.keepCameraOnExit) {
             if (cameraRunning) stopCamera() else cameraSession.incrementAndGet()
         }
         realityLensRequestedCamera = false
@@ -2131,9 +2137,21 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun sendCameraFrame(image: ImageProxy) {
+        var bitmap: Bitmap? = null
         try {
-            if (!cameraRunning || !BridgeLink.isOnline) return
+            if (!cameraRunning) return
             val now = SystemClock.elapsedRealtime()
+            val allowRemoteUpload = getSharedPreferences("phonebridge_privacy", Context.MODE_PRIVATE)
+                .getBoolean("allow_remote_camera_upload", false)
+            val shouldAnalyzeLocally = realityLensActive && now - lastLocalCueAt >= 240L
+            if (!shouldAnalyzeLocally && (!allowRemoteUpload || !BridgeLink.isOnline)) return
+            bitmap = imageToBitmap(image)
+            if (shouldAnalyzeLocally) {
+                lastLocalCueAt = now
+                val hints = RealityCueAnalyzer.analyze(sampleBitmapSignal(bitmap!!))
+                runOnUiThread { if (realityLensActive) realityLensView.setLocalCueHints(hints.types) }
+            }
+            if (!allowRemoteUpload || !BridgeLink.isOnline) return
             val sample = latestTelemetry
             val hot = sample != null && sample.batteryTemperature >= 42f
             val veryHot = sample != null && sample.batteryTemperature >= 44f
@@ -2146,16 +2164,45 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             if (now - lastFrameAt < frameInterval) return
             lastFrameAt = now
             fpsCounter.incrementAndGet()
-            val bitmap = imageToBitmap(image)
             val output = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, if (hot || lowBattery) 46 else 58, output)
-            bitmap.recycle()
+            bitmap!!.compress(Bitmap.CompressFormat.JPEG, if (hot || lowBattery) 46 else 58, output)
             sendBinary(TYPE_FRAME, output.toByteArray())
         } catch (e: Exception) {
             Log.w(TAG, "frame failed", e)
         } finally {
+            bitmap?.recycle()
             image.close()
         }
+    }
+
+    private fun sampleBitmapSignal(bitmap: Bitmap): RealityImageSignal {
+        val step = maxOf(4, min(bitmap.width, bitmap.height) / 24)
+        var totalLuma = 0f
+        var lumaSamples = 0
+        var edgeTotal = 0f
+        var edgeSamples = 0
+        var y = 0
+        while (y < bitmap.height) {
+            var x = 0
+            while (x < bitmap.width) {
+                val pixel = bitmap.getPixel(x, y)
+                val luma = (Color.red(pixel) * .2126f + Color.green(pixel) * .7152f + Color.blue(pixel) * .0722f) / 255f
+                totalLuma += luma
+                lumaSamples += 1
+                if (x + step < bitmap.width) {
+                    val next = bitmap.getPixel(x + step, y)
+                    val nextLuma = (Color.red(next) * .2126f + Color.green(next) * .7152f + Color.blue(next) * .0722f) / 255f
+                    edgeTotal += kotlin.math.abs(luma - nextLuma)
+                    edgeSamples += 1
+                }
+                x += step
+            }
+            y += step
+        }
+        return RealityImageSignal(
+            averageLuma = if (lumaSamples == 0) .5f else totalLuma / lumaSamples,
+            edgeScore = if (edgeSamples == 0) 0f else edgeTotal / edgeSamples,
+        )
     }
 
     private fun imageToBitmap(image: ImageProxy): Bitmap {

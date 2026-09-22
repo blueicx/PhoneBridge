@@ -195,3 +195,13 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 行为提示继续兼容旧字段，同时增加 `motion`、`visualPreset`、`colors`、`taskAffinity`、`emotionBias` 和 `ability`，角色状态会改变注视、提醒倾向和动作节奏。
 - Android 通过 `MoteVisualProfile`/`MoteBodyKind` 统一驱动 20 个形态；14 个探索形态在 `CompanionView` 与 `RealityLensView` 使用各自轮廓、配色、动作和粒子，未知形态安全回退。
 - 设计与迁移记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-4.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-4.md)。实体机、ARCore 真平面、正式签名和长时间运行仍需独立验收。
+
+## 全面深化批次 5：现实探索与锚定
+
+- `server/reality-event-store.js` 负责按粗区域、Asia/Shanghai 日期和 30 分钟时间桶生成确定性现实事件；事件带 `reality:v2` ID、方向、近中远距离等级和过期时间，`RealityEngine` 保持旧接口兼容。
+- Android 在线提交优先使用已刷新且未过期的区域事件 ID；服务端校验新事件的区域、活动时间、过期时间和线索类型。无位置、无事件或离线观察保留手动/相机兼容路径，仍受每日限额和离线七天窗口约束。
+- `RealityCueAnalyzer` 在本地从低分辨率亮度/边缘信号推导地点、物体、光线提示；原图默认不上传，远程识别必须由本机显式运行时开关启用，并受温度、电量和帧率节流。
+- `RealityCaptureController` 统一 CameraX 的 Companion/Reality 所有权；`RealityLensView` 使用附近事件的方向/距离和本地观察标签驱动雷达/Canvas 表现。
+- `ArCoreAnchorProvider` 现在只接受真实会话注入的姿态，绝不把 Canvas 结果标成 ARCore；当前未引入 ARCore 依赖，默认明确回退 Canvas。因此不把平面检测、点击放置、真实锚点追踪或 ARCore 实机验收列为完成。
+
+实现与边界记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-5.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-5.md)。

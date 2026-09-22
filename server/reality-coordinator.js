@@ -7,6 +7,7 @@ function createRealityCoordinator({
   moteGrowthStore,
   realityEngine,
   broadcastMoteState = () => {},
+  now = () => Date.now(),
 } = {}) {
   if (!moteStore || !moteGrowthStore || !realityEngine) throw new TypeError('reality stores are required');
 
@@ -15,6 +16,7 @@ function createRealityCoordinator({
   }
 
   function applyMoteClue(payload = {}) {
+    validateGeneratedRealityEvent(payload);
     const growthEligible = Boolean(payload?.region)
       || String(payload?.eventId || '').startsWith('reality:')
       || String(payload?.eventId || '').startsWith('reality-lens:');
@@ -43,6 +45,19 @@ function createRealityCoordinator({
     result.resultRevision = result.growth?.revision || 0;
     syncBoosts();
     return result;
+  }
+
+  function validateGeneratedRealityEvent(payload = {}) {
+    const eventId = String(payload.eventId || '');
+    if (!eventId.startsWith('reality:v2:')) return;
+    if (typeof realityEngine.eventsFor !== 'function') throw new Error('reality event validation unavailable');
+    const activityAt = payload.offline === true ? Number(payload.activityAt) : Number(now());
+    if (!Number.isFinite(activityAt)) throw new Error('invalid activity time');
+    const event = realityEngine.eventsFor(payload.region, activityAt).find(item => item.id === eventId);
+    if (!event || Number(event.expiresAt) <= activityAt) throw new Error('reality event is expired or invalid');
+    if (String(payload.clueType || '').toLowerCase() !== String(event.clueType).toLowerCase()) {
+      throw new Error('clue type does not match event');
+    }
   }
 
   function buildProgress() {

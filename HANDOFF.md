@@ -332,3 +332,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本批不把 Debug 构建、Canvas 锚定或历史设备记录冒充为 ARCore 真平面、正式签名、GPS fix、完整通知/小组件和长时间运行证据；这些仍留给批次 5/6 与独立实机门禁。
 
 实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-4.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-4.md)。
+
+## 25. 全面深化计划：批次 5 已实现（2026-09-22）
+
+- 新增 `server/reality-event-store.js`，按粗区域、Asia/Shanghai 日期、30 分钟时间桶和模板种子生成确定性 `reality:v2` 事件；事件包含方向、距离等级、过期时间和奖励预览，`RealityEngine` 旧接口保持兼容。
+- Android 在线提交优先使用已经刷新且未过期的真实区域事件 ID；无事件、无位置或离线观察保留兼容手动 ID。服务端对 `reality:v2` 事件校验区域、活动时间、过期和线索类型；旧 `reality-lens` 手动路径仍由成长收据处理。
+- 新增 `RealityCueAnalyzer`：本地亮度/边缘启发式生成观察提示；默认不上传原图，远程上传只有本机运行时显式开关开启才会发生，并继续受在线、温度、电量和帧率节流。
+- 新增 `RealityCaptureController`，由单一协调器决定 Companion/Reality 的相机所有权；`RealityLensView` 消费附近事件方向/距离和本地观察标签，位置权限拒绝时仍可手动观察。
+- `ArCoreAnchorProvider` 移除旧的 Canvas→`arcore` 假标记，改成真实会话姿态的注入适配缝；当前未引入 ARCore 依赖，默认使用 Canvas 回退，未宣称平面检测、点击放置、真实锚点追踪或 ARCore 实机验收。
+- TDD 定向验证：Node 现实事件/协调器测试 **4/4**；Android Reality 相关测试 `BUILD SUCCESSFUL`。提交前还需完成 Node 全量、Android 全量单测/Debug 构建、性能预算、敏感扫描和差异检查，并记录本批提交哈希。
+
+实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-5.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-5.md)。

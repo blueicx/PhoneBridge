@@ -82,7 +82,7 @@ class RealityLensView @JvmOverloads constructor(
     private val rotationMatrix = FloatArray(9)
     private val orientationAngles = FloatArray(3)
     private val canvasAnchorProvider = CanvasSensorAnchorProvider()
-    private val arCoreAnchorProvider = ArCoreAnchorProvider(available = false)
+    private val arCoreAnchorProvider = ArCoreAnchorProvider()
     private val anchorSelector = RealityAnchorSelector(arCoreAnchorProvider, canvasAnchorProvider)
 
     // Orientation tracking & calibration
@@ -110,6 +110,8 @@ class RealityLensView @JvmOverloads constructor(
     private var frameFps = 30f
     private var frameTemperatureCelsius = 25f
     private var coarseRegion: String? = null
+    private var nearbyEvents: List<RealityEvent> = emptyList()
+    private var localCueHints: Set<String> = emptySet()
 
     // Runtime rendered coordinates: id -> Triple(cx, cy, inView)
     private val renderedPositions = mutableMapOf<String, Triple<Float, Float, Boolean>>()
@@ -271,6 +273,16 @@ class RealityLensView @JvmOverloads constructor(
         invalidate()
     }
 
+    fun setNearbyEvents(events: List<RealityEvent>) {
+        nearbyEvents = events.filter { it.expiresAt > System.currentTimeMillis() }.distinctBy { it.id }
+        invalidate()
+    }
+
+    fun setLocalCueHints(types: Set<String>) {
+        localCueHints = types.map { RealityClueProtocol.canonicalType(it) }.toSet()
+        invalidate()
+    }
+
     private fun anchorFrame(targetBearing: Float, targetPitch: Float, distanceBand: String): RealityFrame = RealityFrame(
         timestampMs = System.currentTimeMillis(),
         bearingDegrees = if (calibrated) currentAzimuth - baseAzimuth else 0f,
@@ -315,16 +327,24 @@ class RealityLensView @JvmOverloads constructor(
         coarseRegion?.let { region ->
             drawChip(canvas, "粗区域 · $region", width * .5f, margin + 34f, 0xCC081410.toInt(), 0xFFB8D9FF.toInt())
         }
+        if (localCueHints.isNotEmpty()) {
+            drawChip(canvas, "本地观察 · ${localCueHints.joinToString("/")}", width * .5f, margin + 76f, 0xCC081410.toInt(), 0xFF8FF0C4.toInt())
+        }
 
         // 1. Draw In-World Clue Relics
         nodes.forEach { node ->
             val cx: Float
             val cy: Float
             val inView: Boolean
+            val event = nearbyEvents
+                .filter { RealityClueProtocol.canonicalType(it.clueType) == RealityClueProtocol.canonicalType(node.id) }
+                .minWithOrNull(compareBy<RealityEvent>({ distanceRank(it.distanceBand) }, { it.bearing }))
+            val targetBearing = event?.bearing?.toFloat() ?: node.azimuthDeg
+            val targetDistance = event?.distanceBand ?: "mid"
 
             if (calibrated) {
-                val pose = anchorSelector.update(anchorFrame(node.azimuthDeg, node.pitchDeg, "mid"))
-                val deltaAzimuth = ((node.azimuthDeg - (currentAzimuth - baseAzimuth) + 540f) % 360f) - 180f
+                val pose = anchorSelector.update(anchorFrame(targetBearing, node.pitchDeg, targetDistance))
+                val deltaAzimuth = ((targetBearing - (currentAzimuth - baseAzimuth) + 540f) % 360f) - 180f
                 inView = pose.visible
 
                 if (inView) {
@@ -354,6 +374,13 @@ class RealityLensView @JvmOverloads constructor(
         renderLivingCompanionModel(canvas, seconds, pulse, margin)
 
         postInvalidateDelayed(32)
+    }
+
+    private fun distanceRank(value: String): Int = when (value.lowercase()) {
+        "near" -> 0
+        "mid" -> 1
+        "far" -> 2
+        else -> 3
     }
 
     /**

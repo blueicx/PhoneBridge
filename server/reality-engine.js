@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { dayKey } = require('./mote-growth');
+const { RealityEventStore } = require('./reality-event-store');
 
 const CLUE_TYPES = Object.freeze(['location', 'object', 'light']);
 const EVENT_KINDS = Object.freeze(['location', 'object', 'light', 'mote']);
@@ -52,9 +52,6 @@ const ENCOUNTERS = Object.freeze(Array.from({ length: 20 }, (_, index) => ({
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 function hash(value) { return crypto.createHash('sha256').update(String(value)).digest('hex'); }
-function regionSeed(region, bucket) { return hash(`${region}:${bucket}`); }
-function bearingFrom(seed) { return parseInt(seed.slice(0, 4), 16) % 360; }
-function distanceFrom(seed) { return ['near', 'mid', 'far'][parseInt(seed.slice(4, 6), 16) % 3]; }
 function normalizeRegion(value) {
   const region = String(value || '').trim();
   if (region === 'camera' || /^cell:-?\d+:-?\d+$/.test(region)) return region;
@@ -65,6 +62,7 @@ class RealityEngine {
   constructor({ persistence = null, now = () => Date.now() } = {}) {
     this.persistence = persistence;
     this.now = now;
+    this.eventStore = new RealityEventStore({ templates: EVENTS, now });
     this.state = {
       version: 2,
       region: null,
@@ -121,25 +119,7 @@ class RealityEngine {
   }
 
   eventsFor(region, at = this.now()) {
-    const normalized = normalizeRegion(region);
-    const bucket = Math.floor(Number(at) / 1800000);
-    const seed = regionSeed(normalized, bucket);
-    return EVENTS.slice(0, 8).map((template, index) => {
-      const eventSeed = hash(`${seed}:${template.templateId}`);
-      return {
-        id: `reality:v2:${dayKey(at)}:${normalized}:${template.clueType}:${bucket}:${template.templateId}`,
-        region: normalized,
-        kind: template.kind,
-        clueType: template.clueType,
-        difficulty: template.difficulty,
-        xp: template.xp,
-        bearing: (bearingFrom(eventSeed) + index * 17) % 360,
-        distanceBand: distanceFrom(eventSeed),
-        seed: eventSeed.slice(0, 16),
-        expiresAt: (bucket + 1) * 1800000,
-        rewardPreview: template.rewardItem,
-      };
-    });
+    return this.eventStore.eventsFor(region, at);
   }
 
   startEncounter({ eventId, region, at = this.now() } = {}) {
