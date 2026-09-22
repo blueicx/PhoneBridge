@@ -28,4 +28,22 @@ function pairingTransport({ tls = false, host = '127.0.0.1', port = 9501, finger
   return result;
 }
 
-module.exports = { certificateFingerprint, loadTlsOptions, pairingTransport };
+function buildPairingQrPayload({ pairingId, code, nonce, expiresAt, transport } = {}) {
+  const safeTransport = transport && typeof transport === 'object' ? transport : {};
+  const endpoint = String(safeTransport.url || '').trim();
+  if (!String(pairingId || '').trim() || !/^\d{6}$/.test(String(code || '')) || !String(nonce || '').trim() || !endpoint) {
+    throw new Error('pairing QR payload is incomplete');
+  }
+  return JSON.stringify({
+    version: 1,
+    pairingId: String(pairingId),
+    code: String(code),
+    nonce: String(nonce),
+    expiresAt: Number(expiresAt),
+    endpoint,
+    scheme: String(safeTransport.scheme || '').toLowerCase(),
+    fingerprint: safeTransport.fingerprint ? String(safeTransport.fingerprint) : null,
+  });
+}
+
+module.exports = { certificateFingerprint, loadTlsOptions, pairingTransport, buildPairingQrPayload };

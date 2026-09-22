@@ -21,7 +21,8 @@ function validateReleaseManifest(manifest = {}) {
   const commit = String(manifest.commit || '').trim();
   const artifact = manifest.artifact && typeof manifest.artifact === 'object' ? manifest.artifact : null;
 
-  if (Number(manifest.schemaVersion) !== 1) errors.push('schemaVersion must be 1');
+  const schemaVersion = Number(manifest.schemaVersion);
+  if (![1, 2].includes(schemaVersion)) errors.push('schemaVersion must be 1 or 2');
   if (!VERSION.test(versionName)) errors.push('versionName must be semver-like');
   if (!Number.isInteger(versionCode) || versionCode < 1) errors.push('versionCode must be a positive integer');
   if (!channel || !['internal-debug', 'release'].includes(channel)) errors.push('channel must be internal-debug or release');
@@ -36,6 +37,12 @@ function validateReleaseManifest(manifest = {}) {
     if (String(artifact.kind || '').toLowerCase() !== 'apk') errors.push('artifact kind must be apk');
     if (!Number.isInteger(number(artifact.bytes, 0)) || number(artifact.bytes, 0) <= 0) errors.push('artifact bytes must be positive');
     if (!SHA256.test(String(artifact.sha256 || ''))) errors.push('artifact sha256 must be 64 hex characters');
+    if (schemaVersion >= 2) {
+      if (String(artifact.packageName || '') !== 'com.phonebridge') errors.push('artifact package name must be com.phonebridge');
+      if (String(artifact.versionName || '') !== versionName) errors.push('artifact versionName does not match Gradle metadata');
+      if (number(artifact.versionCode, 0) !== versionCode) errors.push('artifact versionCode does not match Gradle metadata');
+      if (artifact.signatureVerified !== true) errors.push('artifact signature was not verified');
+    }
   }
   if (channel === 'release' && manifest.signed !== true) errors.push('release artifacts must be signed');
   if (channel === 'internal-debug' && manifest.signed === true && manifest.signingKeySource === 'missing') errors.push('signing key source is inconsistent');
@@ -55,10 +62,14 @@ function buildReleaseManifest({
   artifactPath,
   artifactBytes,
   artifactSha256,
+  artifactPackageName = 'com.phonebridge',
+  artifactVersionName = versionName,
+  artifactVersionCode = versionCode,
+  artifactSignatureVerified = channel === 'internal-debug' || signed,
   generatedAt = new Date().toISOString(),
 } = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt,
     channel,
     versionName,
@@ -73,6 +84,10 @@ function buildReleaseManifest({
       path: artifactPath,
       bytes: artifactBytes,
       sha256: artifactSha256,
+      packageName: artifactPackageName,
+      versionName: artifactVersionName,
+      versionCode: artifactVersionCode,
+      signatureVerified: artifactSignatureVerified,
     },
     exclusions: ['access.token', 'runtime logs', 'camera frames', 'screenshots', 'signing keys'],
     rollback: {

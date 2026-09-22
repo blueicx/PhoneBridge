@@ -15,6 +15,11 @@ server/workspace-timeline*.json
 server/mote-state*.json
 server/mote-relationship*.json
 server/mote-quests*.json
+server/mote-growth*.json
+server/mote-story*.json
+server/reality-state*.json
+server/proactive-policy*.json
+server/ai-memory*.json
 server/provider-settings*.json
 server/*.json.bak.*
 server/*.json.corrupt-*

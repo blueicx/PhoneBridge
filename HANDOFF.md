@@ -343,3 +343,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - TDD 定向验证：Node 现实事件/协调器测试 **4/4**；Android Reality 相关测试 `BUILD SUCCESSFUL`。提交前还需完成 Node 全量、Android 全量单测/Debug 构建、性能预算、敏感扫描和差异检查，并记录本批提交哈希。
 
 实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-5.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-5.md)。
+
+## 26. 全面深化计划：批次 6 已实现（2026-09-22）
+
+- Android 版本提升到 `2.1.0` / `versionCode 3`。Release signing 通过四个 `PHONEBRIDGE_RELEASE_*` 外部值成组注入；缺少正式 keystore 时只保留 Debug/内部侧载路径，不宣称正式发布。
+- `scripts/verify_release_gates.ps1` 改为读取实际 APK：`aapt dump badging` 校验包名 `com.phonebridge`、APK 内部 versionName/versionCode；`apksigner verify --verbose --print-certs` 校验证书和签名；manifest schema v2 记录 APK 大小、SHA-256、内部版本、证书 DN/指纹和签名方案，支持输出到 CI 临时路径。`release` 必须显式传 `-Signed`、提供 `PHONEBRIDGE_RELEASE_CERT_SHA256` 并拒绝 Android Debug 证书。
+- `server/release-gates.js` 拒绝内部包名/版本不一致、未验证签名和 release 未签名产物；GitHub Actions 在 Debug 门禁后上传 APK 与临时 manifest artifact，APK 不进 Git。
+- `/api/pairing/start` 现在返回版本化 `qrPayload`；服务端仍只保留 pairing code/nonce 哈希，claim 一次性消费后立即轮换访问令牌。Android 增加二维码解析、claim 字段、指纹格式和 OkHttp pin 转换；BridgeLink 在传入指纹时启用 WSS certificate pin，重连继续使用相同目标配置。
+- 诊断导出加入隐私排除声明；`backup_runtime.ps1`/`restore_runtime.ps1` 覆盖新增 `ai-memory`、`mote-growth`、`mote-story`、`reality-state`、`proactive-policy` 等状态，并为备份写入文件级 SHA-256 manifest，不复制令牌、日志、原图、APK、精确位置或签名材料。
+- 最终回归已转绿：Node 全量 `129/129`，Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 均 `BUILD SUCCESSFUL`，敏感扫描通过，`git diff --check` 通过；新 `2.1.0` Debug APK 的实际 `aapt`/`apksigner --print-certs` 门禁返回 `{"ok":true,"errors":[]}`，release 伪装 Debug 证书按预期以 exit 1 拒绝。GitHub Actions 仍需在推送后由远端执行。
+
+实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md)。当前未取得正式 keystore、真实 WSS/二维码扫描、目标设备 `192.168.101.68:41253` 或 ARCore 实机证据。

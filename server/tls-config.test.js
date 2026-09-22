@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { certificateFingerprint, loadTlsOptions, pairingTransport } = require('./tls-config');
+const { certificateFingerprint, loadTlsOptions, pairingTransport, buildPairingQrPayload } = require('./tls-config');
 
 test('certificate fingerprint is deterministic and normalized', () => {
   const expected = crypto.createHash('sha256').update('certificate-bytes').digest('hex');
@@ -25,4 +25,24 @@ test('TLS configuration requires both key and certificate and returns a derived 
 test('pairing transport advertises secure websocket only when TLS is enabled', () => {
   assert.deepEqual(pairingTransport({ tls: false, host: '127.0.0.1', port: 9501 }), { scheme: 'ws', url: 'ws://127.0.0.1:9501' });
   assert.deepEqual(pairingTransport({ tls: true, host: '192.168.1.9', port: 9503, fingerprint: 'sha256:abc' }), { scheme: 'wss', url: 'wss://192.168.1.9:9503', fingerprint: 'sha256:abc' });
+});
+
+test('pairing QR payload is versioned and contains only claim material', () => {
+  const payload = JSON.parse(buildPairingQrPayload({
+    pairingId: 'pair_1',
+    code: '123456',
+    nonce: 'nonce',
+    expiresAt: 2_000,
+    transport: { scheme: 'wss', url: 'wss://192.168.1.9:9503', fingerprint: 'sha256:abc' },
+  }));
+  assert.deepEqual(payload, {
+    version: 1,
+    pairingId: 'pair_1',
+    code: '123456',
+    nonce: 'nonce',
+    expiresAt: 2_000,
+    endpoint: 'wss://192.168.1.9:9503',
+    scheme: 'wss',
+    fingerprint: 'sha256:abc',
+  });
 });

@@ -25,7 +25,7 @@ const { ProactivePolicy } = require('./proactive-policy');
 const { PairingManager } = require('./pairing');
 const { prepareConversation } = require('./session-context');
 const { buildCompanionSummary } = require('./companion-summary');
-const { loadTlsOptions, pairingTransport } = require('./tls-config');
+const { loadTlsOptions, pairingTransport, buildPairingQrPayload } = require('./tls-config');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1797,7 +1797,8 @@ const handleHttpRequest = async (req, res) => {
       if (!loopback && !TLS_ENABLED) return sendJson(res, 409, { ok: false, error: 'remote pairing requires TLS' });
       const transport = pairingTransport({ tls: TLS_ENABLED, host: PAIRING_HOST, port: PORT, fingerprint: TLS_CONFIG.fingerprint });
       const offer = pairingManager.start({ host: PAIRING_HOST, port: PORT, fingerprint: TLS_CONFIG.fingerprint });
-      return sendJson(res, 201, { ok: true, offer: { ...offer, ...transport } });
+      const qrPayload = buildPairingQrPayload({ ...offer, transport });
+      return sendJson(res, 201, { ok: true, offer: { ...offer, ...transport, qrPayload } });
     }
 
     if (deviceSimulator && parsedUrl.pathname === '/api/dev/simulator' && req.method === 'GET') {
@@ -1856,6 +1857,12 @@ const handleHttpRequest = async (req, res) => {
         persistence: runtimePersistence.snapshot(),
         snapshotCache: snapshotCache.stats(),
         companionSummary: JSON.parse(summaryPayload()).companionSummary,
+        privacy: {
+          secrets: false,
+          originalFrames: false,
+          preciseLocation: false,
+          continuousTrack: false,
+        },
       });
     }
     if (parsedUrl.pathname === '/api/companion/summary' && req.method === 'GET') {

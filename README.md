@@ -63,7 +63,7 @@
 - 运行时持久化已升级到 schema v3，兼容迁移 v2 信封和旧裸 JSON；会话上下文会裁剪长历史并生成确定性摘要。
 - 批次 A 新增统一脱敏伴侣摘要：`GET /api/companion/summary`，支持 ETag/304；Web 工作台展示 Mote、任务、提醒、现实探索、Provider、记忆和自治状态，现实事件可直接发起遭遇或收集。
 - Android 新增 `CompanionSummary` 协议模型，主界面和 Mote 小组件读取同一份摘要字段，断线时继续使用本地镜像。
-- Android 当前版本为 `2.0.0`（`versionCode 2`）；批次 B 已加入可选 HTTPS/WSS、证书指纹配对和脱敏诊断导出，正式签名仍需外部 keystore。
+- Android 当前版本为 `2.1.0`（`versionCode 3`）；已加入可选 HTTPS/WSS、版本化二维码配对载荷、证书指纹 pin、实际 APK 版本/签名门禁和脱敏诊断导出，正式签名仍需外部 keystore。
 
 上述 2.0 能力已加入统一双端摘要入口；Wi-Fi TLS 配对与正式签名发布仍需外部证书/keystore，实机结果按能力逐项记录，不把 Canvas 回退扩大为 ARCore 真平面证据。
 
@@ -121,6 +121,7 @@ F:\CodexApps\PhoneBridge\cloudflared.exe tunnel --url http://127.0.0.1:9503 --no
 - 可插拔 AI 适配器与设置：`GET /api/ai/providers`、`GET /api/ai/settings`、`PATCH /api/ai/settings`、`POST /api/ai/providers/:id/probe`。
 - 统一伴侣摘要：`GET /api/companion/summary`；现实探索事件动作：`POST /api/reality/events/:id/start|resolve`。
 - 脱敏诊断导出：`GET /api/diagnostics/export`；TLS 配置使用 `PHONEBRIDGE_TLS_KEY`、`PHONEBRIDGE_TLS_CERT` 和可选 `PHONEBRIDGE_PAIRING_HOST`。
+- 配对：认证 Web 调用 `POST /api/pairing/start` 获取五分钟一次性 `qrPayload`；手机向其 endpoint 的 `POST /api/pairing/claim` 提交 `id/code/nonce`，远程配对必须使用 WSS/TLS 和证书指纹。
 
 App 的“节点”按钮可同时填写节点地址和访问令牌。令牌文件位于 `server/access.token`，请勿把公网地址和令牌一起公开。
 - 浏览器令牌失效时会重新提示输入；取消提示不会造成无限弹窗。WebSocket、API、画面和音频都校验同一个令牌。
@@ -205,3 +206,13 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - `ArCoreAnchorProvider` 现在只接受真实会话注入的姿态，绝不把 Canvas 结果标成 ARCore；当前未引入 ARCore 依赖，默认明确回退 Canvas。因此不把平面检测、点击放置、真实锚点追踪或 ARCore 实机验收列为完成。
 
 实现与边界记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-5.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-5.md)。
+
+## 全面深化批次 6：配对、签名与可恢复交付
+
+- Android 版本为 `2.1.0` / `versionCode 3`；Release signing 只接受四个 `PHONEBRIDGE_RELEASE_*` 外部环境变量成组注入，缺 keystore 时不冒充正式发布。
+- `scripts/verify_release_gates.ps1` 使用实际 APK 的 `aapt dump badging` 和 `apksigner verify --verbose --print-certs`，校验包名 `com.phonebridge`、APK 内部版本、字节数、SHA-256、证书指纹和签名状态；schema v2 manifest 可按需输出到 CI 临时目录。`release` 还必须显式传 `-Signed` 并提供 `PHONEBRIDGE_RELEASE_CERT_SHA256`，不能使用 Android Debug 证书。
+- GitHub Actions 上传 Debug APK 与发布 manifest 作为构建产物，源码历史不包含 APK、运行时状态、令牌或签名材料。
+- `/api/pairing/start` 返回版本化 `qrPayload`；Android `PairingProtocol` 可解析二维码、生成 claim 字段并转换证书指纹，BridgeLink 在显式指纹下使用 OkHttp certificate pinning，断线重连保留地址/令牌/指纹。
+- `/api/diagnostics/export` 明确声明不含 secrets、原图、精确位置和连续轨迹；备份/恢复覆盖所有新增 RuntimePersistence 状态并生成备份文件哈希清单。
+
+本批实现记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md)。正式 keystore、真实 WSS/二维码扫描和 Xperia 实机验收仍待独立证据。

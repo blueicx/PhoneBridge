@@ -755,7 +755,8 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         BridgeLink.connect(
             prefs.getString("server", "ws://127.0.0.1:9503") ?: "ws://127.0.0.1:9503",
             SecureTokenStore(this).migrateLegacy(prefs),
-            null
+            null,
+            prefs.getString("server_fingerprint", null)
         )
     }
 

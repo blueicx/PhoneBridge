@@ -1,6 +1,8 @@
 package com.phonebridge
 
+import android.net.Uri
 import android.util.Log
+import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -36,10 +38,17 @@ object BridgeLink {
         fun onProactive(message: String, key: String) {}
     }
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(6L, TimeUnit.SECONDS)
-        .pingInterval(20L, TimeUnit.SECONDS)
-        .build()
+    private fun newClient(url: String): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+            .connectTimeout(6L, TimeUnit.SECONDS)
+            .pingInterval(20L, TimeUnit.SECONDS)
+        val pin = PairingProtocol.certificatePin(expectedFingerprint)
+        val host = Uri.parse(url).host
+        if (url.startsWith("wss://", ignoreCase = true) && host != null && pin != null) {
+            builder.certificatePinner(CertificatePinner.Builder().add(host, pin).build())
+        }
+        return builder.build()
+    }
     private var webSocket: WebSocket? = null
     private var listenerRef: WeakReference<Listener>? = null
     private var deviceListener: DeviceListener? = null
@@ -47,6 +56,7 @@ object BridgeLink {
 
     @Volatile private var targetUrl: String? = null
     @Volatile private var accessToken: String = ""
+    @Volatile private var expectedFingerprint: String? = null
     @Volatile private var autoReconnect = false
     @Volatile private var healthState = DeviceHealthState()
 
@@ -61,7 +71,7 @@ object BridgeLink {
         deviceListener = listener
     }
 
-    fun connect(rawUrl: String, token: String, listener: Listener?) {
+    fun connect(rawUrl: String, token: String, listener: Listener?, fingerprint: String? = null) {
         val url = when {
             rawUrl.startsWith("ws://") || rawUrl.startsWith("wss://") -> rawUrl
             rawUrl.contains(":") -> "ws://$rawUrl"
@@ -69,6 +79,7 @@ object BridgeLink {
         }
         targetUrl = url
         accessToken = token
+        expectedFingerprint = fingerprint?.trim()?.ifBlank { null }
         autoReconnect = true
         // The resident service can reconnect before/after MainActivity. A null
         // listener must not erase the Activity's command receiver.
@@ -81,6 +92,7 @@ object BridgeLink {
         if (permanent) {
             autoReconnect = false
             targetUrl = null
+            expectedFingerprint = null
         }
         webSocket?.close(1000, "bye")
         webSocket = null
@@ -126,7 +138,7 @@ object BridgeLink {
             .url(authorizedUrl(url))
             .header("x-phonebridge-token", accessToken)
             .build()
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+        webSocket = newClient(url).newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 emitHealth(DeviceHealthEvent.Opened(System.currentTimeMillis()))
                 listener()?.onBridgeOpen()

@@ -2249,7 +2249,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         desiredServerUrl = url
         autoReconnect = true
         setStatus("寻找节点")
-        BridgeLink.connect(url, savedAccessToken(), this)
+        BridgeLink.connect(
+            url,
+            savedAccessToken(),
+            this,
+            getSharedPreferences("phonebridge", Context.MODE_PRIVATE).getString("server_fingerprint", null)
+        )
     }
 
     override fun onBridgeOpen() {

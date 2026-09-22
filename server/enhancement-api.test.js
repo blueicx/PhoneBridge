@@ -86,6 +86,8 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     assert.equal(exportRes.body.formatVersion, 1);
     assert.ok(exportRes.body.readiness);
     assert.ok(exportRes.body.companionSummary);
+    assert.equal(exportRes.body.privacy.preciseLocation, false);
+    assert.equal(exportRes.body.privacy.originalFrames, false);
     assert.equal(JSON.stringify(exportRes.body).includes(TOKEN), false);
 
     // 2b. Test the compact cross-client companion summary and conditional cache

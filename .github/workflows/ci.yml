@@ -41,7 +41,15 @@ jobs:
         run: bash ./gradlew :app:assembleDebug --no-daemon --console=plain
       - name: Release gate manifest
         shell: pwsh
-        run: ./scripts/verify_release_gates.ps1 -ApkPath android/app/build/outputs/apk/debug/app-debug.apk -Channel internal-debug -AllowProtectedBranch -RequireClean
+        run: ./scripts/verify_release_gates.ps1 -ApkPath android/app/build/outputs/apk/debug/app-debug.apk -Channel internal-debug -AllowProtectedBranch -RequireClean -ManifestPath "$env:RUNNER_TEMP/phonebridge-release-manifest.json"
+      - name: Upload debug APK and manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: phonebridge-debug-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            ${{ runner.temp }}/phonebridge-release-manifest.json
       - name: Diff whitespace
         run: git diff --check
       - name: Release worktree clean

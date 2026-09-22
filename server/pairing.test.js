@@ -19,3 +19,11 @@ test('wrong nonce or code never consumes a valid pairing', () => {
   assert.throws(() => manager.claim({ id: request.id, code: '000000', nonce: request.nonce }), /invalid/);
   assert.equal(manager.claim({ id: request.id, code: request.code, nonce: request.nonce }).paired, true);
 });
+
+test('pairing offer keeps one-time claims bounded and does not persist plaintext state', () => {
+  const manager = new PairingManager({ now: () => 1000 });
+  const offer = manager.start({ host: '192.168.1.9', port: 9503, fingerprint: 'sha256:test' });
+  assert.equal(manager.pending.get(offer.id).code, undefined);
+  assert.equal(manager.pending.get(offer.id).nonce, undefined);
+  assert.equal(offer.fingerprint, 'sha256:test');
+});
