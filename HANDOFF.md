@@ -247,3 +247,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 实机稳定性：相机连续观测约 30 秒采样 3 次，进程 PID 保持 `16962`，电池温度 `39.5°C`、电量 `50%` 稳定；服务端 frame 计数达到 `5036`、camera=true、bridge=online；停止后 UI 回到 `CAM OFF / 0fps`，未发现 `FATAL EXCEPTION`。
 - 当前仍未宣称：ARCore 真平面锚定（设备走 Canvas 回退）、真实 GPS fix（本轮无可用最近位置样本，已验证安全回退）、正式签名 APK、完整小组件桌面视觉布局和长时间数小时运行。
 - 本轮收尾验证：Node `node --check server/index.js` 与 `node --test server/*.test.js` **98/98**；性能预算 `elapsedMs=1.149`、`fullBytes=1694`、`summaryBytes=48`、`snapshotCacheHits=10000`、`broadcastsAfterBurst=1`；敏感扫描通过；Android `android\\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain` 返回 `BUILD SUCCESSFUL`；`git diff --check` 通过。Git 的 LF/CRLF 提示不属于差异错误。
+
+## 17. 沉浸式入口批次 1（2026-09-22）
+
+- 新增 `ImmersiveEntryPolicy`：首次启动默认进入 Companion 舞台；只有上次停留在 Reality 且相机权限仍有效时才恢复现实镜头；启动不主动申请危险权限。
+- `MainActivity` 进入沉浸模式时隐藏系统栏、工作台面板和 `cockpitDeck` 底栏，仅保留 Mote 舞台、退出、轻量工具手柄、文本输入和 PTT；退出后恢复工作台和系统栏。
+- `BridgeService` 使用 `ForegroundServiceTypePolicy` 按实际相机/麦克风状态选择 `dataSync`、`camera`、`microphone` 类型；Manifest 补充 `FOREGROUND_SERVICE_DATA_SYNC`，无权限冷启动不再把相机/麦克风类型硬编码到前台服务。
+- Android 单元测试覆盖首次入口、现实镜头恢复、未知持久化值回退、前台服务类型选择；`android\\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain` **BUILD SUCCESSFUL**。
+- Xperia XZ2 实机（USB 序列号 `QV7017NH1F`，与 `192.168.101.68:41253` 为同一台设备）安装并冷启动通过：相机/麦克风均明确为未授权，进程存活，无 `FATAL EXCEPTION` 或权限崩溃；UIAutomator 确认沉浸退出、工具手柄和文本输入可见，`cockpitDeck` 不再出现在层级树；`dumpsys window` 确认 status bar `visible=false`。本次只验证冷启动入口，未把完整聊天、PTT、现实线索和长时间运行重新计入本批。
+- 网络 ADB `192.168.101.68:41253` 在安装期间短暂 offline，实机证据使用同机 USB 通道完成；旁边的 Samsung 设备未使用。

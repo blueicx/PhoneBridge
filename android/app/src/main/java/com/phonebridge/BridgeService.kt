@@ -733,11 +733,14 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
     private fun startForegroundCompat() {
         val notification = buildNotification(VoiceForegroundFormatter.present(currentForegroundState()))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val foregroundType = ForegroundServiceTypePolicy.typeFor(
+                cameraActive = false,
+                microphoneActive = isVoiceChatRunning || voiceCaptureRunning,
+            )
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                foregroundType
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)

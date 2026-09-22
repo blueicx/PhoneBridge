@@ -93,8 +93,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     companion object {
         private const val TAG = "PhoneBridge"
-        private const val REQUEST_PERMISSIONS = 71
+        private const val REQUEST_CAMERA_PERMISSION = 71
         private const val REQUEST_LOCATION_PERMISSION = 72
+        private const val REQUEST_AUDIO_PERMISSION = 73
         private const val TYPE_FRAME = 1
         private const val TYPE_AUDIO = 2
         private const val TYPE_SPEAK = 5
@@ -389,22 +390,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 getSharedPreferences("phonebridge", Context.MODE_PRIVATE).getBoolean("auto_connect", true)
 
         DeviceCommandBus.setReceiver { action -> runOnUiThread { applyDeviceCommand(action) } }
-        if (hasPermissions()) {
-            startResident()
-            if (autoConnect) connectSavedServer()
-        } else {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(android.Manifest.permission.CAMERA, android.Manifest.permission.RECORD_AUDIO),
-                REQUEST_PERMISSIONS
-            )
-            startResident()
-        }
+        startResident()
+        if (autoConnect) connectSavedServer()
         renderPet()
         startTelemetryLoop()
         pendingAutoCare?.let { kind -> interact(kind) }
         pendingAutoCare = null
-        // 首屏固定为伙伴驾驶舱；沉浸模式由用户通过明确按钮或手势进入。
+        rootLayout.post { enterAdaptiveImmersiveMode() }
     }
 
     private fun bindViews() {
@@ -1737,32 +1729,55 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             updateRealityLocation()
             return
         }
-        if (requestCode != REQUEST_PERMISSIONS) return
-        if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-            connectSavedServer()
-            setStatus("权限已准备，按需打开相机或麦克风")
-            renderCameraHeroState()
-        } else {
-            setStatus("权限不足，Mote 看不见也听不见")
-            say("我需要摄像头和耳朵。")
+        if (requestCode == REQUEST_CAMERA_PERMISSION) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                setStatus("相机权限已准备")
+                startCamera()
+            } else {
+                setStatus("相机保持关闭")
+                say("需要看见时，再把镜头交给我。")
+            }
+            return
+        }
+        if (requestCode == REQUEST_AUDIO_PERMISSION) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                setStatus("麦克风权限已准备")
+                if (continuousListening || pttActive) startMicrophone()
+            } else {
+                setStatus("麦克风保持关闭")
+                pttActive = false
+                continuousListening = false
+                say("不打开麦克风也可以继续文字陪伴。")
+            }
         }
     }
 
-    private fun hasPermissions(): Boolean = arrayOf(
-        android.Manifest.permission.CAMERA,
-        android.Manifest.permission.RECORD_AUDIO
-    ).all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+    private fun hasCameraPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     private fun startCameraOrReportPermissions() {
-        if (!hasPermissions()) {
+        if (!hasCameraPermission()) {
             ActivityCompat.requestPermissions(
                 this,
-                arrayOf(android.Manifest.permission.CAMERA, android.Manifest.permission.RECORD_AUDIO),
-                REQUEST_PERMISSIONS
+                arrayOf(android.Manifest.permission.CAMERA),
+                REQUEST_CAMERA_PERMISSION
             )
             return
         }
         startCamera()
+    }
+
+    private fun requestAudioPermissionIfNeeded(): Boolean {
+        if (hasAudioPermission()) return true
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(android.Manifest.permission.RECORD_AUDIO),
+            REQUEST_AUDIO_PERMISSION
+        )
+        return false
     }
 
     private fun updateRealityLocation() {
@@ -1892,6 +1907,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun enterRealityLens() {
         if (!immersiveMode || realityLensActive) return
         realityLensActive = true
+        saveImmersiveSurface(ImmersiveSurface.REALITY)
         realityLensRequestedCamera = !cameraRunning
 
         val frame = findViewById<View>(R.id.previewFrame)
@@ -1930,6 +1946,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun exitRealityLens() {
         if (!realityLensActive) return
         realityLensActive = false
+        saveImmersiveSurface(ImmersiveSurface.COMPANION)
 
         val frame = findViewById<View>(R.id.previewFrame)
         normalPreviewParams?.let {
@@ -3439,6 +3456,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun setPtt(active: Boolean) {
         Log.i(TAG, "PTT $active websocket=$BridgeLink.isOnline micRunning=$micRunning")
+        if (active && !requestAudioPermissionIfNeeded()) {
+            say("需要麦克风权限才能按住说话。")
+            return
+        }
         val online = BridgeLink.isOnline
         pttButton.text = when {
             active && online -> getString(R.string.ptt_listening)
@@ -3492,6 +3513,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun toggleListening() {
+        if (!continuousListening && !requestAudioPermissionIfNeeded()) return
         continuousListening = !continuousListening
         listenButton.text = getString(if (continuousListening) R.string.continuous_listen else R.string.continuous_listen)
         listenButton.alpha = if (continuousListening) 1f else .68f
@@ -3507,7 +3529,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     @SuppressLint("MissingPermission")
     private fun startMicrophone() {
-        if (!hasPermissions() || !BridgeLink.isOnline || micRunning) return
+        if (!hasAudioPermission() || !BridgeLink.isOnline || micRunning) return
         val minBuffer = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val record = AudioRecord(
             MediaRecorder.AudioSource.VOICE_COMMUNICATION,
@@ -3916,14 +3938,19 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun enterFocusMode() {
+        enterFocusMode(announce = true)
+    }
+
+    private fun enterFocusMode(announce: Boolean) {
         if (immersiveMode) return
         immersiveMode = true
+        focusToolsExpanded = false
         normalHeroParams = heroPanel.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
         rootLayout.setPadding(0, 0, 0, 0)
         listOf(
             R.id.titleText, R.id.subtitleText, R.id.statusChip, R.id.themeSwitcher,
             R.id.appearanceRow, R.id.metricRow, R.id.actionScroll, R.id.pttButton,
-            R.id.panelTabs, R.id.panelHost, R.id.speechText
+            R.id.panelTabs, R.id.panelHost, R.id.speechText, R.id.cockpitDeck
         ).forEach { id -> findViewById<View>(id).visibility = View.GONE }
 
         val params = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
@@ -3946,9 +3973,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         renderFocusTools()
         focusSpeechLayer.post { layoutFocusSpeechOverlay() }
         focusBackCallback.isEnabled = true
-        WindowCompat.getInsetsController(window, heroPanel)
-            .show(WindowInsetsCompat.Type.systemBars())
-        say("进入沉浸模式。")
+        hideSystemBars()
+        if (announce) say("进入沉浸模式。")
     }
 
     private fun exitFocusMode() {
@@ -3961,7 +3987,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         listOf(
             R.id.titleText, R.id.subtitleText, R.id.statusChip, R.id.themeSwitcher,
             R.id.appearanceRow, R.id.metricRow, R.id.actionScroll, R.id.pttButton,
-            R.id.panelTabs, R.id.panelHost
+            R.id.panelTabs, R.id.panelHost, R.id.cockpitDeck
         ).forEach { id -> findViewById<View>(id).visibility = View.VISIBLE }
         focusExit.visibility = View.GONE
         focusToolbar.visibility = View.GONE
@@ -3970,9 +3996,44 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusSpeechStack.removeAllViews()
         findViewById<View>(R.id.focusInputRow).visibility = View.GONE
         focusBackCallback.isEnabled = false
-        WindowCompat.getInsetsController(window, heroPanel)
-            .show(WindowInsetsCompat.Type.systemBars())
+        saveImmersiveSurface(ImmersiveSurface.COMPANION)
+        showSystemBars()
         say("回到工作台。")
+    }
+
+    private fun enterAdaptiveImmersiveMode() {
+        if (isFinishing || immersiveMode) return
+        val preferences = getSharedPreferences("immersive_entry", Context.MODE_PRIVATE)
+        val state = ImmersiveEntryState(
+            lastSurface = ImmersiveSurface.fromPersisted(preferences.getString("last_surface", null)),
+            cameraPermissionGranted = hasCameraPermission(),
+        )
+        enterFocusMode(announce = false)
+        if (ImmersiveEntryPolicy.surfaceFor(state) == ImmersiveSurface.REALITY) {
+            rootLayout.post { if (immersiveMode) enterRealityLens() }
+        } else {
+            setStatus(if (BridgeLink.isOnline) "在线 · Mote 已准备" else "离线 · Mote 已准备")
+        }
+    }
+
+    private fun saveImmersiveSurface(surface: ImmersiveSurface) {
+        getSharedPreferences("immersive_entry", Context.MODE_PRIVATE)
+            .edit()
+            .putString("last_surface", surface.persistedValue)
+            .apply()
+    }
+
+    private fun hideSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowCompat.getInsetsController(window, rootLayout).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    private fun showSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowCompat.getInsetsController(window, rootLayout).show(WindowInsetsCompat.Type.systemBars())
     }
 
     private fun dismissFocusKeyboard(): Boolean {
@@ -4296,6 +4357,18 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         // screen is off. Keep only the remote analysis stream in that state.
         cameraPreview?.let { preview -> runCatching { cameraProvider?.unbind(preview) } }
         cameraPreview = null
+    }
+
+    override fun onStop() {
+        if (immersiveMode) {
+            saveImmersiveSurface(if (realityLensActive) ImmersiveSurface.REALITY else ImmersiveSurface.COMPANION)
+        }
+        super.onStop()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && immersiveMode) hideSystemBars()
     }
 
     override fun onResume() {
