@@ -23,7 +23,7 @@ jobs:
         run: npm ci --prefix server
       - name: Node tests
         shell: bash
-        run: node --test $(find server -name '*.test.js' -print)
+        run: node --test server/*.test.js
       - name: Secret scan
         shell: pwsh
         run: ./scripts/scan_secrets.ps1

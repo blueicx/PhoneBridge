@@ -364,3 +364,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 恢复支持 v2/v3 清单、哈希与路径白名单校验、旧状态迁移、`-VerifyOnly` 只读验证、拒绝空备份、必须明确确认节点已停止、替换失败自动回滚；临时目录仅在 runtime 目录内创建。
 - 验证：Node 全量 **134/134**，运行时备份/恢复 PowerShell 集成故障注入通过，Android `:app:testDebugUnitTest :app:assembleDebug` **BUILD SUCCESSFUL**，`git diff --check` 通过。`lintDebug` 在线任务等待 lint 分析器依赖下载超过 5 分钟；离线复验确认 `intellij-core-31.5.2.jar` 与 `kotlin-compiler-31.5.2.jar` 未缓存，因此 Lint 未通过/未完成（不是代码诊断通过）。
 - 本轮 ADB 5038 设备列表为空，未完成真实二维码扫描、无线 claim 或配对后重连；正式 keystore/2.2.0 Release、20 个角色专属事件、真实 ARCore 平面锚定与两小时设备运行仍待后续执行/验收。
+- 提交 2ffadf7 已推送，但对应 GitHub Actions Node 测试因递归 find server 把 node_modules/dijkstrajs/test/dijkstra.test.js 也纳入发现，缺其包内开发依赖 expect.js 而失败；PhoneBridge 自身 134 项全部通过。CI 已改为只发现 server/*.test.js，本地同命令 134/134；修复提交推送后需确认最新 Actions。

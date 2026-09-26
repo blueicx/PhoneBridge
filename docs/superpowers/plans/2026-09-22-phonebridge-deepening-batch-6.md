@@ -22,6 +22,8 @@
 - 当前没有外部正式 keystore，因此未生成或宣称正式签名 APK，也未上传商店。
 - 目标手机 `192.168.101.68:41253`、真实局域网 WSS 配对、二维码相机扫描、ARCore、GPS fix 和长时间运行仍需设备可用后的独立验收。
 
+CI 复核：提交 2ffadf7 的 GitHub Actions 因递归测试发现运行到 node_modules/dijkstrajs/test/dijkstra.test.js，该依赖测试要求其未安装的 expect.js 而失败；应用自身 134 项全部通过。工作流现限定为 server/*.test.js，本地复验 134/134；此修复推送后的最新 Actions 仍需确认。
+
 ## 后续续作记录（2026-09-26）
 
 以 `1d0f52b` 为续作基线：完成 Android CameraX/ZXing 本机扫码、v2 二维码 claim、HTTPS/TLS DER 指纹校验和失败保留旧配置；服务端配对前置条件与一次性 claim 已接通。运行时备份/恢复加入完整清单验证、JSON 状态净化和迁移、空备份保护、只读验证及失败回滚；新增认证 flush API，并确保 WorkspaceStore debounce 写入先落盘。聊天历史作为可恢复用户状态保留；令牌、日志、原始媒体和精确坐标继续排除。
