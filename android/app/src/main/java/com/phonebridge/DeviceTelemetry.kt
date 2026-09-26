@@ -1,6 +1,8 @@
 package com.phonebridge
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.SystemClock
 import java.io.File
@@ -89,6 +91,17 @@ object DeviceTelemetry {
         // Some Sony builds expose temperature only through the sticky intent; use the stable sysfs fallback.
         val temp = readText("/sys/class/power_supply/battery/temp").toFloatOrNull() ?: 280f
         return percent to temp / 10f
+    }
+
+    fun currentBatteryTemperatureCelsius(context: Context): Float? {
+        val tenths = runCatching {
+            context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                ?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1)
+        }.getOrNull()?.takeIf { it > 0 }
+        if (tenths != null) return tenths / 10f
+        return readText("/sys/class/power_supply/battery/temp").toFloatOrNull()
+            ?.div(10f)
+            ?.takeIf { it.isFinite() && it in 0f..100f }
     }
 
     private fun readNetwork(): Pair<Long, Long> {

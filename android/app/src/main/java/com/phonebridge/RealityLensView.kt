@@ -40,6 +40,7 @@ class RealityLensView @JvmOverloads constructor(
     interface Listener {
         fun onNodeTapped(node: LensNode)
         fun onPetTapped(pet: PetState) {}
+        fun onBlankAreaTapped(x: Float, y: Float) {}
     }
 
     private val nodes = listOf(
@@ -94,6 +95,8 @@ class RealityLensView @JvmOverloads constructor(
 
     // Pet Companion State & AR World Positioning
     private var petState: PetState = PetState()
+    @Volatile private var realityTrackingSnapshot = RealityTrackingSnapshot(RealityTrackingStatus.STOPPED)
+    private var pendingPlacementDown: Pair<Float, Float>? = null
     private val moteAzimuthDeg = 0f
     private val motePitchDeg = -14f // Anchored on the floor/desk about 1.5m in front of camera
     private var renderedMoteX = 0f
@@ -172,6 +175,11 @@ class RealityLensView @JvmOverloads constructor(
 
     fun setPetState(state: PetState) {
         petState = state
+        invalidate()
+    }
+
+    fun setRealityTrackingSnapshot(snapshot: RealityTrackingSnapshot) {
+        realityTrackingSnapshot = snapshot
         invalidate()
     }
 
@@ -330,6 +338,18 @@ class RealityLensView @JvmOverloads constructor(
         if (localCueHints.isNotEmpty()) {
             drawChip(canvas, "本地观察 · ${localCueHints.joinToString("/")}", width * .5f, margin + 76f, 0xCC081410.toInt(), 0xFF8FF0C4.toInt())
         }
+        val realityStatus = when (realityTrackingSnapshot.status) {
+            RealityTrackingStatus.CHECKING -> "正在检查 AR 能力"
+            RealityTrackingStatus.INSTALLING -> "等待系统安装确认"
+            RealityTrackingStatus.STARTING -> "正在启动现实镜头"
+            RealityTrackingStatus.SEARCHING -> "移动设备寻找平面"
+            RealityTrackingStatus.TRACKING -> if (realityTrackingSnapshot.anchorPlaced) "Mote 已锚定 · 轻触伙伴互动" else "找到平面后轻触空白处放置 Mote"
+            RealityTrackingStatus.FALLBACK -> realityTrackingSnapshot.fallbackReason
+            RealityTrackingStatus.STOPPED -> null
+        }
+        realityStatus?.takeIf { it.isNotBlank() }?.let {
+            drawChip(canvas, it, width * .5f, height - margin, 0xDD081410.toInt(), 0xFFB8D9FF.toInt())
+        }
 
         // 1. Draw In-World Clue Relics
         nodes.forEach { node ->
@@ -399,7 +419,22 @@ class RealityLensView @JvmOverloads constructor(
         val projY: Float
         val deltaAzimuth: Float
 
-        if (calibrated) {
+        val trackedSnapshot = realityTrackingSnapshot
+        val hasTrackedAnchor = trackedSnapshot.anchorPlaced
+        val trackedPose = trackedSnapshot.motePose?.takeIf { it.visible }
+        if (hasTrackedAnchor) {
+            if (!trackedSnapshot.isTracking || trackedPose == null) {
+                isMoteInView = false
+                renderedMoteX = 0f
+                renderedMoteY = 0f
+                renderedMoteRadius = 0f
+                return
+            }
+            deltaAzimuth = 0f
+            projX = trackedPose.x
+            projY = trackedPose.y - jumpOffset - floatSway
+            isMoteInView = true
+        } else if (calibrated) {
             deltaAzimuth = ((moteAzimuthDeg - (currentAzimuth - baseAzimuth) + 540f) % 360f) - 180f
             val pose = anchorSelector.update(anchorFrame(moteAzimuthDeg, motePitchDeg, "near"))
             projX = pose.x
@@ -414,10 +449,10 @@ class RealityLensView @JvmOverloads constructor(
 
         renderedMoteX = projX
         renderedMoteY = projY
-        renderedMoteRadius = moteBaseRadius
+        renderedMoteRadius = moteBaseRadius * (trackedPose?.scale ?: 1f)
 
         if (isMoteInView) {
-            draw3DCompanionEntity(canvas, projX, projY, moteBaseRadius, breath, jumpOffset, seconds)
+            draw3DCompanionEntity(canvas, projX, projY, renderedMoteRadius, breath, jumpOffset, seconds)
         } else {
             // Draw Pokemon-GO style radar arrow for Mote when player turns away
             val angle = atan2(projY - height * 0.5f, projX - width * 0.5f)
@@ -838,7 +873,28 @@ class RealityLensView @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_UP) {
+            val down = pendingPlacementDown
+            pendingPlacementDown = null
+            if (down != null) {
+                val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+                val dx = event.x - down.first
+                val dy = event.y - down.second
+                if (dx * dx + dy * dy <= slop * slop) {
+                    performClick()
+                    listener?.onBlankAreaTapped(event.x, event.y)
+                    return true
+                }
+                return true
+            }
+            return super.onTouchEvent(event)
+        }
+        if (event.action == MotionEvent.ACTION_CANCEL) {
+            pendingPlacementDown = null
+            return super.onTouchEvent(event)
+        }
         if (event.action != MotionEvent.ACTION_DOWN) return super.onTouchEvent(event)
+        pendingPlacementDown = null
 
         // 1. Check if user tapped Mote companion directly in physical AR space!
         if (isMoteInView && renderedMoteRadius > 0f) {
@@ -879,6 +935,11 @@ class RealityLensView @JvmOverloads constructor(
             performClick()
             triggerHaptic(35)
             listener?.onNodeTapped(node)
+            return true
+        }
+
+        if (realityTrackingSnapshot.isTracking && !realityTrackingSnapshot.anchorPlaced) {
+            pendingPlacementDown = event.x to event.y
             return true
         }
 

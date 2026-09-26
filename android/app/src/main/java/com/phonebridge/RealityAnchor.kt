@@ -93,12 +93,85 @@ class RealityAnchorSelector(
 ) : RealityAnchorProvider {
     var usingArCore: Boolean = false
         private set
+    private var windowStartedAtMs: Long? = null
+    private var windowFrameRateTotal = 0f
+    private var windowSampleCount = 0
+    private var consecutiveLowFrameWindows = 0
+    private var frameRateFallback = false
+    private var thermalFallback = false
+    var fallbackReason: String? = null
+        private set
 
     override val available: Boolean
         get() = canvas.available || arCore.available
 
     override fun update(frame: RealityFrame): AnchorPose {
-        usingArCore = arCore.available && frame.temperatureCelsius <= maxTemperatureCelsius && frame.fps >= minFps
+        if (frame.temperatureCelsius >= maxTemperatureCelsius) {
+            thermalFallback = true
+            fallbackReason = "thermal"
+            usingArCore = false
+            windowStartedAtMs = frame.timestampMs
+            windowFrameRateTotal = 0f
+            windowSampleCount = 0
+            return canvas.update(frame)
+        }
+
+        if (thermalFallback || frameRateFallback || !arCore.available) {
+            if (frameRateFallback) fallbackReason = "frame_rate"
+            usingArCore = false
+            return canvas.update(frame)
+        }
+
+        recordFrameRate(frame)
+        usingArCore = !frameRateFallback
         return if (usingArCore) arCore.update(frame) else canvas.update(frame)
+    }
+
+    private fun recordFrameRate(frame: RealityFrame) {
+        val windowStart = windowStartedAtMs
+        if (windowStart == null || frame.timestampMs < windowStart) {
+            windowStartedAtMs = frame.timestampMs
+            windowFrameRateTotal = frame.fps
+            windowSampleCount = 1
+            return
+        }
+
+        windowFrameRateTotal += frame.fps
+        windowSampleCount += 1
+        if (frame.timestampMs - windowStart < QUALITY_WINDOW_MS) return
+
+        val averageFps = windowFrameRateTotal / windowSampleCount.coerceAtLeast(1)
+        consecutiveLowFrameWindows = if (averageFps < minFps) consecutiveLowFrameWindows + 1 else 0
+        if (consecutiveLowFrameWindows >= REQUIRED_LOW_FRAME_WINDOWS) {
+            frameRateFallback = true
+            fallbackReason = "frame_rate"
+        }
+        windowStartedAtMs = frame.timestampMs
+        windowFrameRateTotal = 0f
+        windowSampleCount = 0
+    }
+
+    /** Starts a new Reality entry; thermal protection remains latched for the owning view. */
+    fun beginRealityEntry() {
+        windowStartedAtMs = null
+        windowFrameRateTotal = 0f
+        windowSampleCount = 0
+        consecutiveLowFrameWindows = 0
+        frameRateFallback = false
+        usingArCore = false
+        if (!thermalFallback) fallbackReason = null
+    }
+
+    fun clearThermalLockoutAfterExplicitStart() {
+        thermalFallback = false
+        frameRateFallback = false
+        consecutiveLowFrameWindows = 0
+        fallbackReason = null
+        beginRealityEntry()
+    }
+
+    private companion object {
+        const val QUALITY_WINDOW_MS = 2_000L
+        const val REQUIRED_LOW_FRAME_WINDOWS = 3
     }
 }

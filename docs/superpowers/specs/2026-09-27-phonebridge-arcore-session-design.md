@@ -1,8 +1,8 @@
 # PhoneBridge ARCore Reality Session 设计规格
 
 日期：2026-09-27
-基线：`974a007` / `feature/integrated-enhancement`
-状态：设计方向已确认；本书面规格待用户审阅；尚未批准实现。
+代码基线：`974a007`；文档基线：`c16dd96` / `feature/integrated-enhancement`
+状态：已实现并进入验证/交付；ARCore 兼容设备上的系统安装、相机画面、平面锚定和热回退仍须实机验收。
 
 ## 目标
 
@@ -10,11 +10,11 @@
 
 必须保持：单一相机所有者；ARCore 自动尝试；首次需要安装时调用 Google ARCore 系统安装流程并由用户确认；失败可回退；不保存原图、不默认上传原图；现实线索和奖励不依赖 ARCore；应用仍从沉浸伙伴界面进入，不新增繁杂设置。
 
-## 当前上下文
+## 实施前上下文
 
 - Android 使用 CameraX `1.3.4`。`MainActivity.startCamera()` 通过 `ProcessCameraProvider` 同时绑定 `Preview` 与 `ImageAnalysis`；图像分析支持本地 Reality cue 与显式打开后的联网上传。
-- Reality 入口当前会保持或启动 CameraX。`RealityLensView` 通过 Android Canvas 绘制 Mote/线索，并用传感器位置计算屏幕位置。
-- `ArCoreAnchorProvider` 目前没有 pose source，不能提供真实跟踪；`RealityCaptureController` 只记录相机是否由 Reality 临时启用。
+- 实施前的 Reality 入口会保持或启动 CameraX。`RealityLensView` 通过 Android Canvas 绘制 Mote/线索，并用传感器位置计算屏幕位置。
+- `ArCoreAnchorProvider` 仍作为通用 Canvas/投影适配缝；真实 Reality Mote 坐标由 ARCore Session Anchor 每帧投影生成，不通过伪造 pose 标记为 ARCore。
 - 现实镜头主要视图位于 `previewFrame` 中，`PreviewView` 和 `RealityLensView` 目前叠放其内。`RealityLensView` 已处理 Mote 触摸及线索节点触摸。
 - 现有原图上传偏好 `allow_remote_camera_upload` 默认为关闭；线索奖励通过既有 `eventId` 收据，不应该被 AR session 生命周期改变。
 
@@ -30,7 +30,7 @@ CameraX 与 ARCore `SharedCamera` 的一手来源评估见 [`2026-09-27-camerax-
 
 ### RealityCameraCoordinator
 
-唯一的相机所有权协调者。`MainActivity` 只调用 Reality 进入、恢复、退出和用户相机关闭等意图，不自行并行启动 CameraX 与 ARCore。
+唯一的相机所有权状态协调者。`RealityCaptureController` 校验 owner、entry 与恢复意图；`MainActivity` 作为 Android 平台适配层按协调结果串行调用 CameraX bind/unbind 和 ARCore view 生命周期，不能并行持有相机。
 
 内部状态至少表达：`NONE`、`CAMERAX`、`ARCORE` 当前 owner；是否进入 Reality；进入 Reality 前 CameraX 是否在运行；当前 AR 尝试的回退原因。状态转换和 restore decision 使用纯 Kotlin policy 测试。异步 CameraX 启动须使用已有 generation/session 取消语义，防止进入 AR 后迟到的 CameraX callback 抢回相机。
 
@@ -45,7 +45,7 @@ CameraX 与 ARCore `SharedCamera` 的一手来源评估见 [`2026-09-27-camerax-
 
 封装 ARCore SDK、安装/兼容性检查、Session 与 Anchor 生命周期、GL 渲染线程、平面 hit-test、相机帧和跟踪状态。对 UI 提供窄接口，以 Reality 意图为输入，以不可变状态快照/回调为输出；不把 ARCore SDK 类型暴露给 `MainActivity` 或 Canvas view。
 
-逻辑接口只需表达以下操作：开始 Reality 尝试、Activity resume/pause、将屏幕点击转换为放置请求、关闭 session。状态输出至少有 `checking/installing/starting/tracking/searching/fallback/stopped`、回退原因和可选 Mote 屏幕投影。Android API 对象创建和 `Session.update()` 限定在 GL/session 线程，界面更新回主线程。
+逻辑接口只需表达以下操作：开始 Reality 尝试、Activity resume/pause、将屏幕点击转换为放置请求、关闭 session。状态输出至少有 `checking/installing/starting/tracking/searching/fallback/stopped`、回退原因和可选 Mote 屏幕投影。Session 创建/配置在专用串行执行器完成；Session resume/pause 遵循 Activity 与 GL surface 生命周期顺序；`Session.update()`、Frame 和 Anchor 操作限定 GL 线程；界面更新回主线程。
 
 ### RealityRenderHost 与 RealityLensView
 
@@ -65,7 +65,7 @@ CameraX 与 ARCore `SharedCamera` 的一手来源评估见 [`2026-09-27-camerax-
 1. 用户从 Reality 入口进入；保存已有 CameraX 状态，令 CameraX 新启动 callback 失效并 unbind 现有 use cases。
 2. Camera 权限缺失时沿用当前按需授权行为。权限拒绝后显示简短状态，保留可手动点击的 Canvas 线索，不反复弹窗。
 3. 查询 ARCore 可用性。只在 `SUPPORTED_INSTALLED` 或受支持的“未安装/版本过旧”状态继续；先前者直接建 Session，后者走 `requestInstall()`。
-4. 首次请求安装使用用户确认流程。若 API 返回安装已请求，Reality 仍留在 Canvas/说明状态；系统流程令 Activity 暂停/恢复后，用 `userRequestedInstall=false` 复查。安装尚未完成、用户拒绝或应用重建时不得形成提示循环。恢复所需的一次性 pending 标记只存本机状态，成功、放弃或退出后清除。
+4. 首次请求安装使用用户确认流程。若 API 返回安装已请求，Reality 仍留在 Canvas/说明状态；系统流程令 Activity 暂停/恢复后，用 `userRequestedInstall=false` 复查。安装尚未完成、用户拒绝或 Activity 重建时不得形成提示循环。恢复所需的一次性 pending 标记只存本机 SharedPreferences，成功、放弃或退出后清除。
 5. Session 启动成功后切换 camera owner 为 ARCore，开始 plane 检测。显示简短“移动设备寻找平面”提示，不显示设置面板。追踪 `PAUSED` 时临时隐藏真实锚定位置并保留线索操作；重获 `TRACKING` 后恢复投影。
 6. 当未放置 Mote 时，用户轻触 Reality 画面：先由 `RealityLensView` 保留已有 Mote/线索命中；未命中交互区域的触摸转交 ARCore 当前帧 `hitTest`。只接受跟踪中的可用平面命中，创建一个 session 内 Anchor 并把其投影输入 Canvas。没有命中则轻提示继续移动设备。Mote 已放置后不因普通触摸重复创建 Anchor；本次不增加复杂的锚点管理 UI。
 7. 点击三类线索仍走当前探索 coordinator 和收据流程。线索不要求 plane、Anchor 或网络；AR 跟踪丢失不撤销已收集或待同步线索。
@@ -76,9 +76,9 @@ CameraX 与 ARCore `SharedCamera` 的一手来源评估见 [`2026-09-27-camerax-
 - 首次安装被系统拒绝/取消、设备不支持、ARCore APK/SDK 不兼容、Session 创建失败、camera unavailable 或 GL surface 初始化失败：清理半初始化资源并回到旧 CameraX + Canvas Reality；Camera permission 也不可用时显示纯 Canvas 手动线索。
 - 短暂 `TrackingState.PAUSED`：留在 ARCore Session，提示重新观察，不立刻 tear down。Anchor 未 tracking 时不绘制在错误屏幕位置。
 - ARCore 内部不可恢复错误：关闭 Session，标记本次进入已尝试，回退 CameraX + Canvas；不在同一次 Reality 进入中不断重启 ARCore。
-- 设备温度到达现有 Reality 渲染上限（40°C），或 GL 渲染连续三个 2 秒窗口低于 24fps：关闭 ARCore 并退到 Canvas 手动模式、关闭相机以降负载；本次进入不自动重试，用户退出并重新进入后再尝试。正常设备不因短促帧抖动回退。
+- 设备温度到达 Reality 渲染上限（40°C），或 GL 渲染连续三个 2 秒窗口低于 24fps：关闭 ARCore 并退到 Canvas 手动模式、关闭相机以降负载；本次进入不自动重试。温度回退进入热锁定；单纯低帧率不建立热锁定，但只有用户明确打开普通相机时才可在本次 Reality 中恢复相机。普通设备不因短促帧抖动回退。
 - 所有回退均显示简短、可理解的原因，如“AR 不可用，已切回普通镜头”或“设备偏热，镜头已暂停；仍可手动探索”。不堆栈显示异常或依赖 Web UI。
-- 热保护优先于“退出时恢复原相机”规则：温度已触发 40°C 保护时，退出 Reality 也不自动恢复 CameraX；温度连续 60 秒低于 38°C 后，用户再次明确开启相机才解除阻止。普通初始化/兼容性失败没有该热锁定，退出时仍按进入前相机状态恢复。
+- 热保护优先于“退出时恢复原相机”规则：温度已触发 40°C 保护时，退出 Reality 也不自动恢复 CameraX；温度连续 60 秒低于 38°C 后，用户再次明确开启相机才解除阻止。低帧率回退在本次 Reality 中关闭相机，退出后仍可按进入前相机状态恢复；普通初始化/兼容性失败使用 CameraX + Canvas 回退。
 - `Session` 在 Reality 退出、Activity 被销毁或启动失败时确定性释放；Activity pause 时停止帧循环并 pause Session，resume 时仅当仍处于 Reality 且此前 session 可恢复才恢复。
 
 ## 隐私与声明
@@ -87,7 +87,7 @@ CameraX 与 ARCore `SharedCamera` 的一手来源评估见 [`2026-09-27-camerax-
 - 不持久化相机图像、视频、Camera texture、精确位置或 AR world map；Anchor 只存于当前 AR Session 内。
 - 不新增云识别服务、第三方地图、自动照片上传或需要登录的后端。
 - 本地 cues 只输出线索类型/提示，不将原始 frame 放入 Workspace event、日志、诊断导出或 outbox。
-- 当显式远程图像上传偏好为 true 时，继续受现有授权门控、在线条件和节流规则约束；关闭开关后即使 ARCore 仍运行也不得发送帧。
+- 当显式远程图像上传偏好为 true 时，继续受现有授权门控、在线条件和节流规则约束；只异步编码最长边不超过 640px 的抽样帧；关闭开关时不复制/编码/发送帧。
 
 ## 验收规格
 
@@ -112,7 +112,14 @@ CameraX 与 ARCore `SharedCamera` 的一手来源评估见 [`2026-09-27-camerax-
 - 验证不支持设备、系统安装取消、权限拒绝/撤销、camera unavailable 和 GL 初始化失败都能正常返回 Canvas，且只存在一个相机 owner。
 - 对照 CameraX 原版验证本地三类 cue、离线 event outbox、用户 opt-in 上传开关和明确关闭后的无上传。
 - 连续 Reality 运行至少 30 分钟记录 FPS、温度、电量、内存和崩溃；两小时长测继续作为整机发布验收单独执行。
-- Xperia 上是否支持 ARCore 以运行时官方 availability 和设备实测为准；设备当前 ADB 不可达，正式规格不预设它必然支持 ARCore。
+- Xperia 上是否支持 ARCore 以运行时官方 availability 和设备实测为准；每批实时 ADB 探测状态写入 `HANDOFF.md`，本规格不预设它必然支持 ARCore。
+
+## 本次实现状态
+
+- 已新增 `ArCoreRealityRenderView`，由它独占普通 ARCore Session，独立执行 GL 相机背景、平面命中、Session Anchor 投影和逐帧资源释放；`MainActivity` 不持有 ARCore `Session`、`Frame` 或 `Anchor` 类型。
+- Reality 入场使 CameraX generation 失效并解绑；普通失败回退 CameraX + Canvas，温度/连续低帧率回退 Canvas 且关闭相机。显式切换普通镜头会取消待启动的 ARCore owner。
+- 首次 Google 安装确认的返回标记在本机保存，Activity 重建时走无提示复查；用户退出会清除待恢复标记。
+- 自动化测试、CI、ADB 与设备验收结果以本批 `HANDOFF.md` 交接记录为准；在兼容设备完成平面放置和 30 分钟温度测试前，不宣称 ARCore 实机验收通过。
 
 ## 不做
 

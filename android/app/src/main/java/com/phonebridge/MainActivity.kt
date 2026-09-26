@@ -8,8 +8,11 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.ImageFormat
 import android.content.res.ColorStateList
 import android.graphics.Matrix
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
@@ -20,6 +23,8 @@ import android.media.audiofx.AudioEffect
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.util.Size
@@ -61,6 +66,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.ar.core.ArCoreApk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -99,6 +105,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         private const val TYPE_FRAME = 1
         private const val TYPE_AUDIO = 2
         private const val TYPE_SPEAK = 5
+        private const val MAX_AR_AVAILABILITY_POLLS = 20
+        private const val MAX_AR_INSTALL_POLLS = 40
+        private const val AR_AVAILABILITY_POLL_MS = 500L
+        private const val AR_THERMAL_LIMIT_CELSIUS = 40f
     }
 
     private data class CockpitAttentionItem(
@@ -301,11 +311,38 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     @Volatile private var speaking = false
     @Volatile private var immersiveMode = false
     private var realityLensActive = false
-    private var realityLensRequestedCamera = false
+    private lateinit var arCoreRenderView: ArCoreRealityRenderView
+    private var realityArEntryId: Long? = null
+    private var arCoreInstallFlow: ArCoreInstallFlow? = null
+    private var arCoreAvailabilityPolls = 0
+    private var arCoreInstallPolls = 0
+    private var awaitingArCoreCameraPermission = false
+    private var cancelledRealityCameraPermission = false
+    @Volatile private var latestArCameraTemperatureCelsius: Float? = null
+    private var lastArRemoteFrameAt = 0L
+    private val arFrameUploadPending = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile private var pairingScanActive = false
     @Volatile private var pairingScanOwnsCamera = false
     @Volatile private var pairingScanLastFrameAt = 0L
     private val realityCaptureController = RealityCaptureController()
+    private val realityThermalHandler = Handler(Looper.getMainLooper())
+    private val realityThermalMonitor = object : Runnable {
+        override fun run() {
+            if (destroyed) return
+            val temperature = currentRealityTemperatureCelsius()
+            latestArCameraTemperatureCelsius = temperature
+            realityCaptureController.observeTemperature(SystemClock.elapsedRealtime(), temperature)
+            val capture = realityCaptureController.snapshot()
+            if (realityLensActive && !capture.thermalLockout &&
+                temperature != null && temperature >= AR_THERMAL_LIMIT_CELSIUS
+            ) {
+                fallbackFromArCore("设备偏热，镜头已暂停；仍可手动探索", thermal = true, disableCamera = true)
+            }
+            if (realityLensActive || realityCaptureController.snapshot().thermalLockout) {
+                realityThermalHandler.postDelayed(this, 2_000L)
+            }
+        }
+    }
     @Volatile private var lastLocalCueAt = 0L
     private val realityLocationSampler by lazy { RealityLocationSampler(this) }
     private val realityExplorationCoordinator = RealityExplorationCoordinator()
@@ -460,6 +497,54 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         previewView.clipToOutline = true
         realityLensView = findViewById(R.id.realityLensView)
+        arCoreRenderView = findViewById(R.id.arCoreRenderView)
+        arCoreRenderView.setListener(object : ArCoreRealityRenderView.Listener {
+            override fun onTrackingSnapshot(snapshot: RealityTrackingSnapshot) {
+                if (realityLensActive) realityLensView.setRealityTrackingSnapshot(snapshot)
+            }
+
+            override fun onSessionStarted() {
+                if (!realityLensActive || realityCaptureController.snapshot().owner != RealityCameraOwner.ARCORE) return
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                renderCameraHeroState()
+                renderFocusTools()
+                renderPet()
+                publishSensorState(force = true)
+                setStatus("现实镜头已启动 · 轻触空白处放置 Mote")
+            }
+
+            override fun onRuntimeFailure(reason: String) {
+                fallbackFromArCore(reason, thermal = false)
+            }
+
+            override fun onQualityFallback(thermal: Boolean) {
+                fallbackFromArCore(
+                    if (thermal) "设备偏热，镜头已暂停；仍可手动探索" else "画面负载偏高，已暂停 AR；仍可手动探索",
+                    thermal = thermal,
+                    disableCamera = true,
+                )
+            }
+
+            override fun onLocalCue(signal: RealityImageSignal) {
+                val hints = RealityCueAnalyzer.analyze(signal)
+                if (realityLensActive) realityLensView.setLocalCueHints(hints.types)
+            }
+
+            override fun wantsRemoteFrame(): Boolean = shouldUploadArRemoteFrame()
+
+            override fun onRemoteFrame(planes: RealityImagePlanes) {
+                encodeAndUploadArFrame(planes)
+            }
+
+            override fun onAnchorPlacementResult(placed: Boolean) {
+                if (!realityLensActive) return
+                if (placed) say("Mote 已放到这个平面上。") else setStatus("还没找到可用平面，请缓慢移动镜头")
+            }
+
+            override fun currentTemperatureCelsius(): Float? =
+                latestArCameraTemperatureCelsius
+                    ?: listOfNotNull(latestTelemetry?.batteryTemperature, latestTelemetry?.thermalCelsius).maxOrNull()
+        })
         realityLensView.contentDescription = "现实镜头，三个可探索线索"
         realityLensView.setDiscovered(loadDiscoveredRealityNodes())
         realityLensView.setPetState(pet)
@@ -469,6 +554,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             }
             override fun onPetTapped(pet: PetState) {
                 handleRealityPetTapped()
+            }
+            override fun onBlankAreaTapped(x: Float, y: Float) {
+                arCoreRenderView.requestMotePlacement(x, y)
             }
         })
         normalPreviewParams = findViewById<View>(R.id.previewFrame).layoutParams as?
@@ -583,6 +671,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         renderAttentionCenter()
         renderCockpitSummary()
     }
+
+    private fun isCameraActive(): Boolean =
+        cameraRunning || realityCaptureController.snapshot().owner == RealityCameraOwner.ARCORE
 
     private fun renderCameraHeroState() {
         val overlayVisible = !cameraRunning || cameraStartPending
@@ -1460,7 +1551,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         feedButton.setOnClickListener { interact("feed") }
         playButton.setOnClickListener { interact("play") }
         strokeButton.setOnClickListener { interact("stroke") }
-        cameraButton.setOnClickListener { if (cameraRunning) stopCamera() else startCameraOrReportPermissions() }
+        cameraButton.setOnClickListener { toggleCameraFromUi() }
         lensButton.setOnClickListener { flipLens() }
         listenButton.setOnClickListener { toggleListening() }
         serverButton.setOnClickListener { askForServer() }
@@ -1506,7 +1597,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             focusToolsExpanded = immersiveShellCoordinator.state.value.drawerOpen
             renderFocusTools()
         }
-        focusCameraButton.setOnClickListener { if (cameraRunning) stopCamera() else startCameraOrReportPermissions() }
+        focusCameraButton.setOnClickListener { toggleCameraFromUi() }
         focusLensButton.setOnClickListener { flipLens() }
         focusListenButton.setOnClickListener { toggleListening() }
         focusVoiceButton.setOnClickListener { toggleContinuousVoice() }
@@ -1814,13 +1905,31 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         if (requestCode == REQUEST_CAMERA_PERMISSION) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                if (cancelledRealityCameraPermission) {
+                    cancelledRealityCameraPermission = false
+                    awaitingArCoreCameraPermission = false
+                    setStatus("现实镜头请求已取消 · 未开启相机")
+                    return
+                }
                 setStatus(if (pairingScanActive) "相机已准备 · 正在本机扫码" else "相机权限已准备")
-                startCamera()
+                if (awaitingArCoreCameraPermission && realityLensActive) {
+                    awaitingArCoreCameraPermission = false
+                    beginArCoreForCurrentEntry()
+                } else {
+                    startCamera()
+                }
             } else {
+                cancelledRealityCameraPermission = false
+                awaitingArCoreCameraPermission = false
                 val pairingDenied = pairingScanActive
                 pairingScanActive = false
                 pairingScanOwnsCamera = false
-                setStatus("相机保持关闭")
+                if (realityLensActive) {
+                    realityLensView.setRealityTrackingSnapshot(
+                        RealityTrackingSnapshot(RealityTrackingStatus.FALLBACK, fallbackReason = "相机权限关闭，可继续手动探索")
+                    )
+                }
+                setStatus(if (realityLensActive) "相机权限关闭 · 仍可手动探索" else "相机保持关闭")
                 if (pairingDenied) Toast.makeText(this, "扫码需要相机权限；未读取或上传任何画面", Toast.LENGTH_LONG).show()
                 else say("需要看见时，再把镜头交给我。")
             }
@@ -1846,7 +1955,22 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     private fun startCameraOrReportPermissions() {
+        val lockout = realityCaptureController.snapshot()
+        if (lockout.thermalLockout) {
+            val allowed = realityCaptureController.clearThermalLockoutAfterExplicitStart(
+                nowMs = SystemClock.elapsedRealtime(),
+                temperatureCelsius = currentRealityTemperatureCelsius(),
+                entryId = lockout.entryId.takeIf { realityLensActive && lockout.surface == RealityCaptureSurface.REALITY },
+            )
+            if (!allowed) {
+                setStatus("设备需先低于 38°C 并稳定冷却 60 秒，随后再手动开启镜头")
+                return
+            }
+            arCoreRenderView.resetQualityLockoutAfterExplicitStart()
+        }
         if (!hasCameraPermission()) {
+            awaitingArCoreCameraPermission = false
+            cancelledRealityCameraPermission = false
             ActivityCompat.requestPermissions(
                 this,
                 arrayOf(android.Manifest.permission.CAMERA),
@@ -1854,7 +1978,354 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             )
             return
         }
+        if (realityLensActive) {
+            val capture = realityCaptureController.snapshot()
+            if (capture.owner == RealityCameraOwner.ARCORE) return
+            if (capture.thermalLockout) {
+                val allowed = realityCaptureController.clearThermalLockoutAfterExplicitStart(
+                    nowMs = SystemClock.elapsedRealtime(),
+                    temperatureCelsius = currentRealityTemperatureCelsius(),
+                    entryId = capture.entryId.takeIf { capture.surface == RealityCaptureSurface.REALITY },
+                )
+                if (!allowed) {
+                    setStatus("设备需先低于 38°C 并稳定冷却 60 秒，随后再手动开启镜头")
+                    return
+                }
+                arCoreRenderView.resetQualityLockoutAfterExplicitStart()
+            }
+        } else if (realityCaptureController.snapshot().thermalLockout) {
+            val allowed = realityCaptureController.clearThermalLockoutAfterExplicitStart(
+                nowMs = SystemClock.elapsedRealtime(),
+                temperatureCelsius = currentRealityTemperatureCelsius(),
+            )
+            if (!allowed) {
+                setStatus("设备需先低于 38°C 并稳定冷却 60 秒，再手动开启镜头")
+                return
+            }
+            arCoreRenderView.resetQualityLockoutAfterExplicitStart()
+        }
+        val ownerState = realityCaptureController.snapshot()
+        if (realityLensActive && ownerState.owner == RealityCameraOwner.ARCORE) return
+        if (realityLensActive && ownerState.owner == RealityCameraOwner.NONE &&
+            ownerState.arAttempted && ownerState.fallbackReason == null
+        ) {
+            cancelPendingArCoreForCameraX(ownerState.entryId)
+        }
         startCamera()
+    }
+
+    private fun cancelPendingArCoreForCameraX(entryId: Long) {
+        if (!isCurrentArEntry(entryId)) return
+        clearPendingArCoreInstall()
+        arCoreInstallFlow = null
+        arCoreRenderView.closeSession()
+        arCoreRenderView.visibility = View.GONE
+        realityCaptureController.markFallback(entryId, "已切换普通镜头", thermal = false)
+        realityLensView.setRealityTrackingSnapshot(
+            RealityTrackingSnapshot(RealityTrackingStatus.FALLBACK, fallbackReason = "普通镜头模式")
+        )
+    }
+
+    private fun toggleCameraFromUi() {
+        val owner = realityCaptureController.snapshot().owner
+        if (cameraRunning || (realityLensActive && owner == RealityCameraOwner.ARCORE)) stopCamera()
+        else startCameraOrReportPermissions()
+    }
+
+    private fun currentRealityTemperatureCelsius(): Float? =
+        listOfNotNull(
+            DeviceTelemetry.currentBatteryTemperatureCelsius(this),
+            latestArCameraTemperatureCelsius,
+            latestTelemetry?.batteryTemperature,
+            latestTelemetry?.thermalCelsius,
+        ).filter { it.isFinite() && it > 0f }.maxOrNull()
+
+    private fun beginArCoreForCurrentEntry() {
+        if (!realityLensActive) return
+        if (cameraRunning || cameraStartPending) {
+            realityLensView.setRealityTrackingSnapshot(
+                RealityTrackingSnapshot(RealityTrackingStatus.FALLBACK, fallbackReason = "普通镜头模式")
+            )
+            return
+        }
+        val current = realityCaptureController.snapshot()
+        if (current.owner == RealityCameraOwner.CAMERAX) {
+            realityLensView.setRealityTrackingSnapshot(
+                RealityTrackingSnapshot(RealityTrackingStatus.FALLBACK, fallbackReason = "普通镜头模式")
+            )
+            return
+        }
+        if (current.owner == RealityCameraOwner.ARCORE) return
+        if (current.thermalLockout) {
+            val reason = current.fallbackReason ?: "设备温度过高"
+            realityLensView.setRealityTrackingSnapshot(
+                RealityTrackingSnapshot(RealityTrackingStatus.FALLBACK, fallbackReason = "$reason · 仍可手动探索")
+            )
+            setStatus(reason)
+            return
+        }
+        if ((currentRealityTemperatureCelsius() ?: 0f) >= AR_THERMAL_LIMIT_CELSIUS) {
+            realityArEntryId = current.entryId
+            fallbackFromArCore("设备偏热，镜头已暂停；仍可手动探索", thermal = true)
+            return
+        }
+        if (!hasCameraPermission()) {
+            awaitingArCoreCameraPermission = true
+            cancelledRealityCameraPermission = false
+            realityLensView.setRealityTrackingSnapshot(
+                RealityTrackingSnapshot(RealityTrackingStatus.STARTING, fallbackReason = "等待相机权限")
+            )
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(android.Manifest.permission.CAMERA),
+                REQUEST_CAMERA_PERMISSION,
+            )
+            return
+        }
+        val entryId = realityCaptureController.beginArCoreAttempt() ?: return
+        realityArEntryId = entryId
+        if ((currentRealityTemperatureCelsius() ?: 0f) >= AR_THERMAL_LIMIT_CELSIUS) {
+            fallbackFromArCore("设备偏热，镜头已暂停；仍可手动探索", thermal = true)
+            return
+        }
+        arCoreInstallFlow = ArCoreInstallFlow()
+        val installReturnPending = getSharedPreferences("reality_arcore", Context.MODE_PRIVATE)
+            .getBoolean("install_return_pending", false)
+        if (installReturnPending) arCoreInstallFlow = ArCoreInstallFlow(initialInstallUiPending = true)
+        arCoreAvailabilityPolls = 0
+        arCoreRenderView.visibility = View.VISIBLE
+        previewView.visibility = View.INVISIBLE
+        realityLensView.setRealityTrackingSnapshot(RealityTrackingSnapshot(RealityTrackingStatus.CHECKING))
+        if (installReturnPending) handleArCoreInstallResume() else checkArCoreAvailability(entryId)
+    }
+
+    private fun checkArCoreAvailability(entryId: Long) {
+        if (!isCurrentArEntry(entryId)) return
+        val availability = runCatching { ArCoreApk.getInstance().checkAvailability(this) }.getOrNull()
+        val state = when (availability) {
+            ArCoreApk.Availability.SUPPORTED_INSTALLED -> ArCoreAvailabilityState.INSTALLED
+            ArCoreApk.Availability.SUPPORTED_NOT_INSTALLED,
+            ArCoreApk.Availability.SUPPORTED_APK_TOO_OLD -> ArCoreAvailabilityState.NEEDS_INSTALL
+            ArCoreApk.Availability.UNKNOWN_CHECKING -> ArCoreAvailabilityState.CHECKING
+            else -> ArCoreAvailabilityState.UNSUPPORTED
+        }
+        when (arCoreInstallFlow?.evaluate(state) ?: ArCoreInstallAction.FALLBACK) {
+            ArCoreInstallAction.WAIT -> {
+                if (arCoreAvailabilityPolls++ >= MAX_AR_AVAILABILITY_POLLS) {
+                    fallbackFromArCore("AR 服务检查超时，已切换兼容镜头", thermal = false)
+                } else {
+                    realityLensView.setRealityTrackingSnapshot(RealityTrackingSnapshot(RealityTrackingStatus.CHECKING))
+                    rootLayout.postDelayed({ checkArCoreAvailability(entryId) }, AR_AVAILABILITY_POLL_MS)
+                }
+            }
+            ArCoreInstallAction.START_SESSION -> startArCoreSession(entryId)
+            ArCoreInstallAction.REQUEST_USER_CONFIRMATION -> requestArCoreInstall(entryId)
+            ArCoreInstallAction.FALLBACK -> fallbackFromArCore("此设备暂不支持 ARCore，已切换兼容镜头", thermal = false)
+            ArCoreInstallAction.CHECK_WITHOUT_PROMPT -> Unit
+        }
+    }
+
+    private fun requestArCoreInstall(entryId: Long) {
+        if (!isCurrentArEntry(entryId)) return
+        try {
+            when (ArCoreApk.getInstance().requestInstall(this, true)) {
+                ArCoreApk.InstallStatus.INSTALLED -> {
+                    arCoreInstallFlow?.onUserInstallResult(installed = true, installUiRequested = false)
+                    clearPendingArCoreInstall()
+                    startArCoreSession(entryId)
+                }
+                ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
+                    arCoreInstallFlow?.onUserInstallResult(installed = false, installUiRequested = true)
+                    getSharedPreferences("reality_arcore", Context.MODE_PRIVATE).edit()
+                        .putBoolean("install_return_pending", true)
+                        .commit()
+                    realityLensView.setRealityTrackingSnapshot(RealityTrackingSnapshot(RealityTrackingStatus.INSTALLING))
+                    setStatus("等待 Google Play 服务安装 ARCore")
+                }
+            }
+        } catch (_: Exception) {
+            clearPendingArCoreInstall()
+            arCoreInstallFlow?.onUserInstallResult(installed = false, installUiRequested = false)
+            fallbackFromArCore("ARCore 安装未完成，已切换兼容镜头", thermal = false)
+        }
+    }
+
+    private fun handleArCoreInstallResume() {
+        val flow = arCoreInstallFlow ?: return
+        if (flow.onActivityResumed() != ArCoreInstallAction.CHECK_WITHOUT_PROMPT) return
+        val entryId = realityArEntryId ?: return
+        if (!isCurrentArEntry(entryId)) return
+        try {
+            when (ArCoreApk.getInstance().requestInstall(this, false)) {
+                ArCoreApk.InstallStatus.INSTALLED -> {
+                    flow.onSilentInstallResult(installed = true)
+                    clearPendingArCoreInstall()
+                    startArCoreSession(entryId)
+                }
+                ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
+                    arCoreInstallPolls = 0
+                    pollArCoreInstall(entryId)
+                }
+            }
+        } catch (_: Exception) {
+            clearPendingArCoreInstall()
+            flow.onSilentInstallResult(installed = false)
+            fallbackFromArCore("ARCore 未安装，已切换兼容镜头", thermal = false)
+        }
+    }
+
+    private fun pollArCoreInstall(entryId: Long) {
+        if (!isCurrentArEntry(entryId)) return
+        val state = runCatching { ArCoreApk.getInstance().checkAvailability(this) }.getOrNull()
+        when (state) {
+            ArCoreApk.Availability.SUPPORTED_INSTALLED -> {
+                arCoreInstallFlow?.onSilentInstallResult(installed = true)
+                clearPendingArCoreInstall()
+                startArCoreSession(entryId)
+            }
+            ArCoreApk.Availability.UNSUPPORTED_DEVICE_NOT_CAPABLE -> {
+                arCoreInstallFlow?.onSilentInstallResult(installed = false)
+                clearPendingArCoreInstall()
+                fallbackFromArCore("此设备暂不支持 ARCore，已切换兼容镜头", thermal = false)
+            }
+            else -> if (arCoreInstallPolls++ >= MAX_AR_INSTALL_POLLS) {
+                arCoreInstallFlow?.onSilentInstallResult(installed = false)
+                clearPendingArCoreInstall()
+                fallbackFromArCore("ARCore 安装超时，已切换兼容镜头", thermal = false)
+            } else {
+                rootLayout.postDelayed({ pollArCoreInstall(entryId) }, AR_AVAILABILITY_POLL_MS)
+            }
+        }
+    }
+
+    private fun startArCoreSession(entryId: Long) {
+        if (!isCurrentArEntry(entryId)) return
+        if (realityCaptureController.snapshot().thermalLockout) {
+            fallbackFromArCore("设备温度过高，镜头已暂停；仍可手动探索", thermal = true, disableCamera = true)
+            return
+        }
+        if (!realityCaptureController.claimArCore(entryId)) {
+            clearPendingArCoreInstall()
+            return
+        }
+        arCoreRenderView.visibility = View.VISIBLE
+        previewView.visibility = View.INVISIBLE
+        realityLensView.setRealityTrackingSnapshot(RealityTrackingSnapshot(RealityTrackingStatus.STARTING))
+        if (!arCoreRenderView.createAndInstallSession(this)) {
+            fallbackFromArCore("ARCore 启动失败，已切换兼容镜头", thermal = false)
+        }
+    }
+
+    private fun isCurrentArEntry(entryId: Long): Boolean =
+        realityLensActive && realityArEntryId == entryId && realityCaptureController.isCurrentRealityEntry(entryId)
+
+    private fun clearPendingArCoreInstall() {
+        getSharedPreferences("reality_arcore", Context.MODE_PRIVATE).edit()
+            .remove("install_return_pending")
+            .apply()
+    }
+
+    private fun fallbackFromArCore(reason: String, thermal: Boolean, disableCamera: Boolean = thermal) {
+        val entryId = realityArEntryId ?: return
+        if (!isCurrentArEntry(entryId)) return
+        val capture = realityCaptureController.snapshot()
+        if (capture.owner == RealityCameraOwner.CAMERAX && !thermal) return
+        if (capture.owner == RealityCameraOwner.NONE && capture.fallbackReason != null && !thermal) return
+        clearPendingArCoreInstall()
+        if (capture.owner == RealityCameraOwner.ARCORE) arCoreRenderView.closeSession()
+        arCoreRenderView.visibility = View.GONE
+        if (capture.owner == RealityCameraOwner.CAMERAX) {
+            cameraSession.incrementAndGet()
+            cameraRunning = false
+            cameraStartPending = false
+            cameraPreview = null
+            runCatching { cameraProvider?.unbindAll() }
+        }
+        if (capture.owner != RealityCameraOwner.NONE) realityCaptureController.releaseCamera(capture.owner, entryId)
+        if (!realityCaptureController.markFallback(entryId, reason, thermal)) return
+        previewView.visibility = View.INVISIBLE
+        previewView.alpha = 0f
+        realityLensView.setRealityTrackingSnapshot(
+            RealityTrackingSnapshot(RealityTrackingStatus.FALLBACK, fallbackReason = reason)
+        )
+        renderCameraHeroState()
+        renderFocusTools()
+        renderPet()
+        if (disableCamera) {
+            cameraSession.incrementAndGet()
+            cameraRunning = false
+            cameraStartPending = false
+            runCatching { cameraProvider?.unbindAll() }
+            realityCaptureController.releaseCamera(RealityCameraOwner.CAMERAX, entryId)
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setStatus(reason)
+        } else if (hasCameraPermission()) {
+            startCamera()
+            setStatus(reason)
+        } else {
+            startCameraOrReportPermissions()
+            setStatus(reason)
+        }
+        publishSensorState(force = true)
+    }
+
+    private fun stopArCoreForManualMode() {
+        val entryId = realityArEntryId ?: return
+        arCoreRenderView.closeSession()
+        arCoreRenderView.visibility = View.GONE
+        realityCaptureController.releaseCamera(RealityCameraOwner.ARCORE, entryId)
+        realityCaptureController.markFallback(entryId, "相机已由用户关闭", thermal = false)
+        realityLensView.setRealityTrackingSnapshot(
+            RealityTrackingSnapshot(RealityTrackingStatus.FALLBACK, fallbackReason = "镜头已关闭 · 可继续手动探索")
+        )
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        renderCameraHeroState()
+        renderFocusTools()
+        renderPet()
+        publishSensorState(force = true)
+        setStatus("镜头已关闭 · 可继续手动探索")
+    }
+
+    private fun shouldUploadArRemoteFrame(): Boolean {
+        if (!realityLensActive || !BridgeLink.isOnline || arFrameUploadPending.get()) return false
+        if (!getSharedPreferences("phonebridge_privacy", Context.MODE_PRIVATE)
+                .getBoolean("allow_remote_camera_upload", false)
+        ) return false
+        val now = SystemClock.elapsedRealtime()
+        val temperature = latestArCameraTemperatureCelsius
+            ?: latestTelemetry?.batteryTemperature?.takeIf { it.isFinite() }
+        val battery = latestTelemetry?.batteryPercent
+        if ((temperature ?: 0f) >= 40f || (battery != null && battery <= 10)) return false
+        val interval = if ((temperature ?: 0f) >= 38f || (battery != null && battery <= 20)) 240L else 120L
+        if (now - lastArRemoteFrameAt < interval) return false
+        lastArRemoteFrameAt = now
+        return true
+    }
+
+    private fun encodeAndUploadArFrame(planes: RealityImagePlanes) {
+        if (!BridgeLink.isOnline || !realityLensActive) return
+        if (!arFrameUploadPending.compareAndSet(false, true)) return
+        runCatching {
+            networkExecutor.execute {
+                try {
+                    if (!realityLensActive || !BridgeLink.isOnline || !getSharedPreferences("phonebridge_privacy", Context.MODE_PRIVATE)
+                            .getBoolean("allow_remote_camera_upload", false)
+                    ) return@execute
+                    val bounded = RealityFrameAnalyzer.toBoundedNv21(planes) ?: return@execute
+                    val jpeg = ByteArrayOutputStream()
+                    if (YuvImage(bounded.data, ImageFormat.NV21, bounded.width, bounded.height, null)
+                            .compressToJpeg(Rect(0, 0, bounded.width, bounded.height), 55, jpeg)
+                    ) sendBinary(TYPE_FRAME, jpeg.toByteArray())
+                } catch (error: Exception) {
+                    Log.w(TAG, "AR frame encode failed", error)
+                } finally {
+                    arFrameUploadPending.set(false)
+                }
+            }
+        }.onFailure {
+            arFrameUploadPending.set(false)
+            Log.w(TAG, "AR frame enqueue failed", it)
+        }
     }
 
     private fun requestAudioPermissionIfNeeded(): Boolean {
@@ -1921,7 +2392,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun applyDeviceCommand(action: String) {
         Log.i(TAG, "Device command received: $action listening=$continuousListening ptt=$pttActive mic=$micRunning")
         when (action) {
-            "camera_on" -> startCameraOrReportPermissions()
+            "camera_on" -> {
+                if (!(realityLensActive && realityCaptureController.snapshot().owner == RealityCameraOwner.ARCORE)) {
+                    startCameraOrReportPermissions()
+                }
+            }
             "camera_off" -> stopCamera()
             "camera_front" -> if (!useFrontCamera) flipLens()
             "camera_back" -> if (useFrontCamera) flipLens()
@@ -1935,13 +2410,19 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun startCamera() {
         if (cameraRunning || cameraStartPending) return
+        val capture = realityCaptureController.snapshot()
+        if (capture.owner == RealityCameraOwner.ARCORE || capture.thermalLockout) return
+        arCoreRenderView.visibility = View.GONE
+        val realityEntryId = capture.entryId.takeIf { realityLensActive && capture.surface == RealityCaptureSurface.REALITY }
         val session = cameraSession.incrementAndGet()
         cameraStartPending = true
         renderCameraHeroState()
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
             try {
-                if (session != cameraSession.get() || cameraRunning) return@addListener
+                if (session != cameraSession.get() || cameraRunning ||
+                    (realityEntryId != null && !realityCaptureController.isCurrentRealityEntry(realityEntryId))
+                ) return@addListener
                 val provider = future.get()
                 cameraProvider = provider
                 val analysis = ImageAnalysis.Builder()
@@ -1961,9 +2442,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 }
                 provider.unbindAll()
                 val selector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+                if (!realityCaptureController.claimCameraX(realityEntryId)) return@addListener
                 provider.bindToLifecycle(BridgeService.lifecycleOwner, selector, *useCases.toTypedArray())
                 if (session != cameraSession.get()) {
                     runCatching { provider.unbindAll() }
+                    realityCaptureController.releaseCamera(RealityCameraOwner.CAMERAX, realityEntryId)
                     return@addListener
                 }
                 cameraRunning = true
@@ -1991,6 +2474,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun stopCamera() {
+        val capture = realityCaptureController.snapshot()
+        if (realityLensActive && capture.owner == RealityCameraOwner.ARCORE) {
+            stopArCoreForManualMode()
+            return
+        }
         pairingScanActive = false
         pairingScanOwnsCamera = false
         cameraRunning = false
@@ -1998,6 +2486,15 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         cameraPreview = null
         runCatching { cameraProvider?.unbindAll() }
+        realityCaptureController.releaseCamera(
+            RealityCameraOwner.CAMERAX,
+            capture.entryId.takeIf { realityLensActive && capture.surface == RealityCaptureSurface.REALITY },
+        )
+        if (realityLensActive) {
+            realityLensView.setRealityTrackingSnapshot(
+                RealityTrackingSnapshot(RealityTrackingStatus.FALLBACK, fallbackReason = "镜头已关闭 · 可继续手动探索")
+            )
+        }
         previewView.visibility = View.INVISIBLE
         previewView.alpha = 0f
         cameraButton.text = getString(R.string.start_camera)
@@ -2019,12 +2516,25 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun enterRealityLens() {
         if (!immersiveMode || realityLensActive) return
+        val restoreCameraOnExit = cameraRunning
+        cameraSession.incrementAndGet()
+        cameraStartPending = false
+        cameraRunning = false
+        runCatching { cameraProvider?.unbindAll() }
+        realityCaptureController.releaseCamera(RealityCameraOwner.CAMERAX)
+        arCoreRenderView.closeSession()
+        arCoreRenderView.visibility = View.GONE
+        previewView.visibility = View.INVISIBLE
+        previewView.alpha = 0f
         realityLensActive = true
         immersiveShellCoordinator.setSurface(ImmersiveSurface.REALITY)
         immersiveShellCoordinator.closeDrawer()
         focusToolsExpanded = false
         saveImmersiveSurface(ImmersiveSurface.REALITY)
-        realityLensRequestedCamera = realityCaptureController.enterReality(cameraRunning).cameraOwned
+        realityArEntryId = null
+        arCoreInstallFlow = null
+        awaitingArCoreCameraPermission = false
+        realityCaptureController.enterReality(restoreCameraOnExit)
 
         val frame = findViewById<View>(R.id.previewFrame)
         normalPreviewParams = frame.layoutParams as?
@@ -2049,20 +2559,50 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             R.id.focusInputRow
         ).forEach { id -> findViewById<View>(id)?.visibility = View.GONE }
         realityLensView.setPetState(pet)
+        realityLensView.setRealityTrackingSnapshot(RealityTrackingSnapshot(RealityTrackingStatus.CHECKING))
         realityLensView.visibility = View.VISIBLE
         requestRealityLocationIfNeeded()
+        realityThermalHandler.removeCallbacks(realityThermalMonitor)
+        realityThermalHandler.post(realityThermalMonitor)
         renderCameraHeroState()
+        renderPet()
+        publishSensorState(force = true)
         renderFocusTools()
         findViewById<View>(R.id.previewFrame).post {
-            if (realityLensActive) startCameraOrReportPermissions()
+            if (realityLensActive) beginArCoreForCurrentEntry()
         }
         say("现实镜头开启，和我一起找线索。")
     }
 
     private fun exitRealityLens() {
         if (!realityLensActive) return
+        val currentCapture = realityCaptureController.snapshot()
+        val oldEntryId = currentCapture.entryId
+        when (currentCapture.owner) {
+            RealityCameraOwner.ARCORE -> {
+                arCoreRenderView.closeSession()
+                arCoreRenderView.visibility = View.GONE
+                realityCaptureController.releaseCamera(RealityCameraOwner.ARCORE, oldEntryId)
+            }
+            RealityCameraOwner.CAMERAX -> {
+                cameraSession.incrementAndGet()
+                cameraRunning = false
+                cameraStartPending = false
+                cameraPreview = null
+                runCatching { cameraProvider?.unbindAll() }
+                realityCaptureController.releaseCamera(RealityCameraOwner.CAMERAX, oldEntryId)
+            }
+            RealityCameraOwner.NONE -> arCoreRenderView.closeSession()
+        }
         realityLensActive = false
         val captureState = realityCaptureController.exitReality()
+        realityArEntryId = null
+        arCoreInstallFlow = null
+        clearPendingArCoreInstall()
+        if (awaitingArCoreCameraPermission) cancelledRealityCameraPermission = true
+        awaitingArCoreCameraPermission = false
+        if (!captureState.keepCameraOnExit) window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        publishSensorState(force = true)
         immersiveShellCoordinator.setSurface(ImmersiveSurface.COMPANION)
         saveImmersiveSurface(ImmersiveSurface.COMPANION)
 
@@ -2074,6 +2614,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         realityLensView.setCoarseRegion(null)
         realityLensView.setNearbyEvents(emptyList())
         realityLensView.setLocalCueHints(emptySet())
+        realityLensView.setRealityTrackingSnapshot(RealityTrackingSnapshot(RealityTrackingStatus.STOPPED))
         realityRegion = null
         renderCameraHeroState()
         if (immersiveMode) {
@@ -2085,10 +2626,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         renderFocusTools()
 
-        if (realityLensRequestedCamera && !captureState.keepCameraOnExit) {
-            if (cameraRunning) stopCamera() else cameraSession.incrementAndGet()
+        if (captureState.keepCameraOnExit) {
+            frame.post { if (!realityLensActive) startCameraOrReportPermissions() }
         }
-        realityLensRequestedCamera = false
         say("退出现实镜头。")
     }
 
@@ -2342,7 +2882,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 BridgePhase.RETRYING -> setStatus("重连中")
                 BridgePhase.AUTH_FAILED -> setStatus("令牌失效")
                 BridgePhase.DISCONNECTED -> setStatus("休眠中")
-                BridgePhase.ONLINE -> if (!cameraRunning) setStatus("在线")
+                BridgePhase.ONLINE -> if (!isCameraActive()) setStatus("在线")
             }
             renderCockpitSummary()
             renderCompanionSessionSnapshot()
@@ -2361,7 +2901,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     override fun onBridgeLost(reason: String) {
         companionSessionRepository.markOffline(reason)
-        runOnUiThread { stopCamera() }
+        runOnUiThread { if (!realityLensActive) stopCamera() }
         cleanupConnection(false)
         runOnUiThread {
             setStatus("重连中")
@@ -2390,13 +2930,14 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun publishSensorState(force: Boolean = false) {
         val audioActive = micRunning || continuousListening || pttActive
-        val state = (if (cameraRunning) 2 else 0) or (if (audioActive) 1 else 0)
+        val cameraActive = isCameraActive()
+        val state = (if (cameraActive) 2 else 0) or (if (audioActive) 1 else 0)
         if (!force && state == lastPublishedSensorState) return
         lastPublishedSensorState = state
         sendJson(
             JSONObject()
                 .put("type", "sensor_state")
-                .put("camera", cameraRunning)
+                .put("camera", cameraActive)
                 .put("audio", audioActive)
         )
     }
@@ -2471,7 +3012,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             text.equals("/clear", true) -> logAdapter.add("info", "")
             text.equals("/feed", true) -> interact("feed")
             text.equals("/play", true) -> interact("play")
-            text.equals("/camera", true) -> if (cameraRunning) stopCamera() else startCameraOrReportPermissions()
+            text.equals("/camera", true) -> if (isCameraActive()) stopCamera() else startCameraOrReportPermissions()
         text.equals("/flip", true) -> flipLens()
         text.equals("/listen", true) -> toggleListening()
         text.equals("/memory", true) -> showMemoryDialog()
@@ -4552,7 +5093,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusToolsToggle.text = if (focusToolsExpanded) "▾" else "▸"
         focusToolsToggle.contentDescription =
             if (focusToolsExpanded) "折叠沉浸工具栏" else "展开沉浸工具栏"
-        focusCameraButton.text = getString(if (cameraRunning) R.string.stop_camera else R.string.start_camera)
+        focusCameraButton.text = getString(if (isCameraActive()) R.string.stop_camera else R.string.start_camera)
         focusListenButton.alpha = if (continuousListening || micRunning || pttActive) 1f else .68f
         focusVoiceButton.alpha = if (BridgeService.isVoiceChatRunning) 1f else .68f
         renderCompanionSessionSnapshot()
@@ -4598,7 +5139,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             )).coerceAtLeast(0f) to PetMood.CALM
         )
         val mood = moodScores.maxByOrNull { it.first }?.second ?: PetMood.CALM
-        pet = pet.copy(mood = mood, connected = online, cameraActive = cameraRunning, listening = micRunning, activeTasks = activeTasks.size, emotion = emotion)
+        pet = pet.copy(mood = mood, connected = online, cameraActive = isCameraActive(), listening = micRunning, activeTasks = activeTasks.size, emotion = emotion)
         val behavior = MoteBehaviorEngine.resolve(
             MoteProfiles.profile(pet.appearance),
             MoteBehaviorInput(
@@ -4645,7 +5186,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun persistWidgetSnapshot() {
         getSharedPreferences("mote_widget", Context.MODE_PRIVATE).edit()
             .putBoolean("connected", BridgeLink.isOnline)
-            .putBoolean("cameraActive", cameraRunning)
+            .putBoolean("cameraActive", isCameraActive())
             .putBoolean("listening", micRunning)
             .putInt("fps", fpsCounter.get())
             .putInt("activeTasks", activeTasks.count { !it.value.status.equals("done", true) })
@@ -4948,6 +5489,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     override fun onPause() {
+        if (::arCoreRenderView.isInitialized) arCoreRenderView.onHostPause()
         super.onPause()
         savePet()
         // A detached SurfaceView blocks CameraX session configuration when the
@@ -4970,6 +5512,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     override fun onResume() {
         super.onResume()
+        if (::arCoreRenderView.isInitialized) {
+            arCoreRenderView.onHostResume()
+            handleArCoreInstallResume()
+        }
         if (cameraRunning) {
             cameraRunning = false
             startCamera()
@@ -5024,6 +5570,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun releaseSensorHardware() {
+        if (::arCoreRenderView.isInitialized) {
+            arCoreRenderView.shutdownSessionCreation()
+            arCoreRenderView.setListener(null)
+        }
         cameraRunning = false
         continuousListening = false
         pttActive = false
@@ -5033,5 +5583,6 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         cameraPreview = null
         runCatching { cameraProvider?.unbindAll() }
         cameraProvider = null
+        realityThermalHandler.removeCallbacks(realityThermalMonitor)
     }
 }

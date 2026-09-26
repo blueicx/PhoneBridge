@@ -175,6 +175,12 @@
             app:implementationMode="compatible"
             android:clipToOutline="true" />
 
+            <com.phonebridge.ArCoreRealityRenderView
+                android:id="@+id/arCoreRenderView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:id="@+id/cameraStateOverlay"
                 android:layout_width="match_parent"

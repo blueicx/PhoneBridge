@@ -401,3 +401,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本机 `:app:lintDebug` 到达 `lintAnalyzeDebug` 后超过 6 分钟无进展且未生成报告，已结束该无响应分析；这不计为本机 Lint 通过。
 - GitHub Actions run #33（提交 `11fe2cd`）全量成功，耗时 4m35s：Node **142/142**、协议 **8/8**、Android 单测、Lint、Debug 构建、签名解析、APK 发布门禁、artifact 上传、`git diff --check` 与 clean-worktree 检查均通过。原 8 个 Lint 错误已由该远端 Lint 步骤复验清零。
 - 实机仍不执行安装/相机/GPS/扫码/长时测试：上次只读遥测为 0% 电量、42.2°C，且 thermal HAL 未就绪。正式签名身份、真实配对、ARCore 平面锚定与两小时运行继续保持未验收。
+
+## 32. ARCore Reality Session 实装与自动化验收（2026-09-27）
+
+- 从 `feature/integrated-enhancement` 的本地文档提交 `c16dd96` 继续；未改 `main`，未使用子 agent。新增固定 ARCore `1.54.0` 依赖并声明为 optional；CameraX 与普通 ARCore Session 串行交接，不使用 `SharedCamera`。
+- `ArCoreRealityRenderView` 独占 ARCore Session/GL 相机背景，在 GL 线程做 display geometry、平面 hit-test、单 Anchor 生命周期与相机姿态投影；Canvas 角色只消费不可变 tracking snapshot。Session 创建/配置在专用执行器，Activity/GL 生命周期配对。
+- Reality 进入会先使 CameraX generation 失效并 unbind；ARCore 不支持、安装取消、权限拒绝或启动失败时保留 CameraX/Canvas 或纯 Canvas 手动探索。安装确认只请求一次，恢复时静默复查；回调 epoch 阻止已关闭 Session 的延迟回调污染后续 Reality entry。
+- 温度达到 40°C 或三个连续 2 秒窗口低于 24fps 会释放 AR 相机并退至手动 Canvas；热锁定要求温度低于 38°C 持续 60 秒且用户明确重新启动。相机原始图像不落盘；本地亮度采样节流为 240ms。远程图像保持原有明确 opt-in、在线/温度/电量门控，异步编码且最长边限制 640px。
+- 自动验证：Node **142/142**；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug --rerun-tasks --no-daemon --console=plain` **BUILD SUCCESSFUL**，58 actionable tasks；最终 XML 共 **108** 个 JVM 测试、0 failures。新增回调 epoch 测试先以 unresolved reference 失败，再实现后通过。`git diff --check`、`scan_secrets.ps1`、APK signer parser、workspace 性能预算均通过；预算结果 `elapsedMs=1.36`、`fullBytes=1694`、`summaryBytes=48`、缓存命中 `10000`、突发广播 `1`。
+- 实际 Debug APK 门禁通过：包名 `com.phonebridge`，版本 `2.2.0` / code `4`；大小 `92,047,936` bytes，SHA-256 `08201c8db77a9fd6acd5c77368664d5633c93534137ab76b8188614ebee82077e`。这是 Android Debug 证书的内部候选，不是正式签名 Release；APK 不纳入 Git。
+- 本轮未取得手机新遥测：本机 `adb.exe devices -l` 报 ADB server protocol fault，且 `192.168.101.68:40325` TCP 探测失败。上一次实际手机温度/电量是第 30 节记录的 42.2°C/0%，本轮不能推断现在仍是该状态，也没有安装或启动 APK。
+- 仍待兼容设备验收：ARCore 系统安装往返、相机画面、实际平面追踪/点击放置/旋转投影、暂停恢复与退出后 CameraX 状态恢复；热回退、低帧率回退和至少 30 分钟的 FPS/温度/电量观测。真实设备未测前不宣称真平面 AR 已通过。最新 GitHub Actions 与提交信息在推送后补记。
