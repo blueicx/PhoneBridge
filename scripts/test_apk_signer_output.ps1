@@ -15,6 +15,19 @@ $crlfOutput = "Verifies`r`nSigner #1 certificate DN: C=US, O=Android, CN=Test`r`
 $crlf = Get-PhoneBridgeApkSignerMetadata -SignatureOutput $crlfOutput
 if ($crlf.CertificateSha256 -ne $compactDigest) { throw 'CRLF signer output parsing failed' }
 
+$v2Output = @"
+Verifies
+Verified using v2 scheme (APK Signature Scheme v2): true
+Number of signers: 1
+V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug
+V2 Signer: certificate SHA-256 digest:
+$compactDigest
+V2 Signer: certificate SHA-1 digest: 0123456789abcdef0123456789abcdef01234567
+"@
+$v2 = Get-PhoneBridgeApkSignerMetadata -SignatureOutput $v2Output
+if ($v2.CertificateSha256 -ne $compactDigest) { throw 'V2 Signer multiline SHA-256 digest parsing failed' }
+if ($v2.CertificateDn -ne 'C=US, O=Android, CN=Android Debug') { throw 'V2 Signer certificate DN parsing failed' }
+
 $colonDigest = $compactDigest -replace '(.{2})(?!$)', '$1:'
 $colonOutput = $compactOutput.Replace($compactDigest, $colonDigest)
 $colon = Get-PhoneBridgeApkSignerMetadata -SignatureOutput $colonOutput
@@ -43,4 +56,4 @@ if ($rejectionMessage -notlike '*Signer #1 certificate SHA-256 digest: 0123:inva
   throw 'malformed certificate digest diagnostic did not include its sanitized source line'
 }
 
-Write-Output 'APK signer metadata parser tests passed (compact, colon-separated, space-separated, ANSI-decorated, malformed).'
+Write-Output 'APK signer metadata parser tests passed (legacy and V2 Signer formats, multiline, colon/space-separated, ANSI-decorated, malformed).'
