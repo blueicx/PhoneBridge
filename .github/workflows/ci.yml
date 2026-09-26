@@ -38,7 +38,15 @@ jobs:
         run: bash ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
       - name: Android lint
         working-directory: android
-        run: bash ./gradlew :app:lintDebug --no-daemon --console=plain
+        run: |
+          lint_status=0
+          bash ./gradlew :app:lintDebug --no-daemon --console=plain || lint_status=$?
+          report="app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt"
+          if [[ -f "$report" ]]; then
+            echo "Android lint error details:"
+            grep -n -B 2 -A 4 " Error:" "$report" || true
+          fi
+          exit "$lint_status"
       - name: Android debug build
         working-directory: android
         run: bash ./gradlew :app:assembleDebug --no-daemon --console=plain
