@@ -363,17 +363,21 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.deepEqual(behavior.body.behavior.taskAffinity, ['exploration', 'creative']);
     const story = await request('/api/motes/story');
     assert.equal(story.response.status, 200);
-    assert.equal(story.body.story.length, 12);
+    assert.equal(story.body.story.length, 32);
     assert.equal(story.body.story.find(item => item.id === 'first-awakening').completed, true);
     const claimedStory = await request('/api/motes/story/first-awakening/claim', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ claimId: 'api-story-1' }),
     });
     assert.equal(claimedStory.response.status, 201);
+    assert.equal(claimedStory.body.relationship.duplicate, false);
+    const storyXpAfterClaim = claimedStory.body.relationship.xp;
     const replayedStory = await request('/api/motes/story/first-awakening/claim', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ claimId: 'api-story-1' }),
     });
     assert.equal(replayedStory.response.status, 200);
     assert.equal(replayedStory.body.duplicate, true);
+    assert.equal(replayedStory.body.relationship.duplicate, true);
+    assert.equal(replayedStory.body.relationship.xp, storyXpAfterClaim);
 
     const realityEvents = await request('/api/reality/events?region=cell:7:8');
     assert.equal(realityEvents.response.status, 200);

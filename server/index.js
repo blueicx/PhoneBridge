@@ -9,7 +9,7 @@ const { DeviceHealthStore } = require('./device-health');
 const { MoteStore, deriveMoteBehavior } = require('./mote-profiles');
 const { TaskRunner } = require('./task-runner');
 const { MoteRelationshipStore, MoteQuestStore } = require('./mote-expansion');
-const { MoteStoryStore } = require('./mote-story');
+const { MoteStoryStore, deriveExclusiveTriggers, claimMoteStoryWithReward } = require('./mote-story');
 const { RevisionSnapshotCache, BroadcastCoalescer } = require('./workspace-performance');
 const { WorkspaceTimeline } = require('./workspace-timeline');
 const { AiProviderManager } = require('./ai-provider');
@@ -376,7 +376,11 @@ function buildMoteProjection() {
 }
 
 function progressMoteStory(eventId, extra = {}, { emit = true } = {}) {
-  const result = moteStoryStore.evaluate({ ...moteStoryContext(extra), eventId });
+  const result = moteStoryStore.evaluate({
+    ...moteStoryContext(extra),
+    eventId,
+    exclusiveTriggers: deriveExclusiveTriggers(extra),
+  });
   if (emit && result.newlyCompleted.length) {
     broadcast({
       type: 'mote.story',
@@ -894,13 +898,19 @@ function publishRunnerState(update) {
     const task = workspaceStore.updateTask(update.id, patch);
     broadcast({ type: 'workspace.task', task });
     if (task.state === 'succeeded') {
+      const previousRelationshipLevel = moteRelationshipStore.snapshot().level;
       const relationship = moteRelationshipStore.recordInteraction({
         eventId: `task-success:${task.id}`,
         kind: 'task',
         amount: 8,
       });
       if (!relationship.duplicate) broadcast({ type: 'mote.relationship', relationship });
-      progressMoteStory(`task:${task.id}:${task.state}`, { successfulTasks: 1 });
+      progressMoteStory(`task:${task.id}:${task.state}`, {
+        successfulTasks: 1,
+        recoveredTasks: Number(task.runner?.retryCount) > 0 ? 1 : 0,
+        relationshipLevel: relationship.level,
+        previousRelationshipLevel,
+      });
     }
     if (['succeeded', 'failed', 'cancelled'].includes(task.state)) broadcastTaskAttention(task);
   } catch (error) {
@@ -2062,7 +2072,10 @@ const handleHttpRequest = async (req, res) => {
         const payload = await readJson(req);
         const result = applyMoteClue(payload);
         const story = result.businessStatus !== 'rejected'
-          ? progressMoteStory(`clue:${payload.eventId}`, { clueCounts: { [String(payload.clueType).toLowerCase()]: 1 } })
+          ? progressMoteStory(`clue:${payload.eventId}`, {
+            clueCounts: { [String(payload.clueType).toLowerCase()]: 1 },
+            unlockedCount: result.unlockedId ? 7 : 0,
+          })
           : null;
         const status = result.businessStatus === 'rejected' ? 409 : result.duplicate || result.businessStatus === 'duplicate' ? 200 : 201;
         return sendJson(res, status, { ok: true, ...result, story: story?.events || moteStoryStore.list() });
@@ -2077,10 +2090,14 @@ const handleHttpRequest = async (req, res) => {
       try {
         const eventId = decodeURIComponent(storyClaimMatch[1]);
         const payload = await readJson(req);
-        const result = moteStoryStore.claim(eventId, payload.claimId || payload.eventId);
-        if (!result.duplicate && result.reward?.xp) {
-          const relationship = moteRelationshipStore.recordInteraction({ eventId: `story:${eventId}`, kind: 'story', amount: result.reward.xp });
-          if (!relationship.duplicate) broadcast({ type: 'mote.relationship', relationship });
+        const result = claimMoteStoryWithReward({
+          storyStore: moteStoryStore,
+          relationshipStore: moteRelationshipStore,
+          eventId,
+          claimId: payload.claimId || payload.eventId,
+        });
+        if (result.relationship && !result.relationship.duplicate) {
+          broadcast({ type: 'mote.relationship', relationship: result.relationship });
         }
         broadcast({ type: 'mote.story', story: moteStoryStore.list(), claimed: result.event, state: result.state });
         return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result, story: moteStoryStore.list() });
@@ -2092,8 +2109,12 @@ const handleHttpRequest = async (req, res) => {
     if (parsedUrl.pathname === '/api/motes/relationship' && req.method === 'POST') {
       try {
         const payload = await readJson(req);
+        const previousRelationshipLevel = moteRelationshipStore.snapshot().level;
         const result = moteRelationshipStore.recordInteraction(payload);
-        progressMoteStory(`relationship:${payload.eventId || result.interactions}`, { relationshipLevel: result.level });
+        progressMoteStory(`relationship:${payload.eventId || result.interactions}`, {
+          relationshipLevel: result.level,
+          previousRelationshipLevel,
+        });
         broadcast({ type: 'mote.relationship', relationship: result });
         return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
       } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
@@ -2137,8 +2158,12 @@ const handleHttpRequest = async (req, res) => {
         const result = realityEventMatch[2] === 'start'
           ? realityEngine.startEncounter({ eventId, region: payload.region })
           : realityEngine.resolve({ eventId, region: payload.region, clueType: payload.clueType, actions: payload.actions });
+        if (realityEventMatch[2] === 'start' && !result.duplicate) {
+          result.story = progressMoteStory(`exploration-start:${eventId}`, { explorationCount: 1 });
+        }
         if (realityEventMatch[2] === 'resolve' && !result.duplicate) {
-          moteRelationshipStore.recordInteraction({ eventId: `reality:${eventId}`, kind: 'reality', amount: result.reward?.xp || 1 });
+          const previousRelationshipLevel = moteRelationshipStore.snapshot().level;
+          const relationship = moteRelationshipStore.recordInteraction({ eventId: `reality:${eventId}`, kind: 'reality', amount: result.reward?.xp || 1 });
           result.growth = moteGrowthStore.recordClue({
             eventId,
             clueType: payload.clueType || result.event.clueType,
@@ -2147,6 +2172,9 @@ const handleHttpRequest = async (req, res) => {
           result.story = progressMoteStory(`reality:${eventId}`, {
             explorationCount: 1,
             clueCounts: { [String(payload.clueType || result.event.clueType).toLowerCase()]: 1 },
+            boostCount: result.growth?.reward?.boost ? 1 : 0,
+            relationshipLevel: relationship.level,
+            previousRelationshipLevel,
           });
           broadcast({ type: 'reality.progress', result, state: realityEngine.snapshot() });
         }

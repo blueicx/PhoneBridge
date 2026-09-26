@@ -18,4 +18,27 @@ class MoteStoryProtocolTest {
         assertTrue(entries.first().completed)
         assertEquals("剧情 1/1 · 已领奖 0", MoteStoryProtocol.summary(entries))
     }
+
+    @Test fun parsesMoteExclusiveCompletionAndClaimMetadataFromWire() {
+        val story = MoteStoryProtocol.parseRows(
+            listOf(mapOf(
+                "id" to "exclusive-ember_sprig",
+                "title" to "焰芽先行一步",
+                "description" to "行动",
+                "trigger" to "task_success",
+                "completion" to "激活焰芽并成功完成一项任务",
+                "moteId" to "ember_sprig",
+                "moteName" to "焰芽",
+                "exclusive" to true,
+                "rewardXp" to 11,
+                "completed" to true,
+                "claimed" to false,
+            ))
+        ).single()
+        assertEquals("ember_sprig", story.moteId)
+        assertEquals("焰芽", story.moteName)
+        assertTrue(story.exclusive)
+        assertEquals("激活焰芽并成功完成一项任务", story.completion)
+        assertEquals(11, story.rewardXp)
+    }
 }

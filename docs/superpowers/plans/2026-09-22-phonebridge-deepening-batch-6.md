@@ -28,4 +28,20 @@ CI 复核：提交 2ffadf7 的 GitHub Actions 因递归测试发现运行到 nod
 
 以 `1d0f52b` 为续作基线：完成 Android CameraX/ZXing 本机扫码、v2 二维码 claim、HTTPS/TLS DER 指纹校验和失败保留旧配置；服务端配对前置条件与一次性 claim 已接通。运行时备份/恢复加入完整清单验证、JSON 状态净化和迁移、空备份保护、只读验证及失败回滚；新增认证 flush API，并确保 WorkspaceStore debounce 写入先落盘。聊天历史作为可恢复用户状态保留；令牌、日志、原始媒体和精确坐标继续排除。
 
-验收记录：Node 全量 134/134；PowerShell 临时目录备份/恢复故障注入通过；Android 单测与 Debug 构建通过。`lintDebug` 因分析器依赖缺失且仓库下载连接挂起而未完成，离线复验显示 `intellij-core-31.5.2.jar`、`kotlin-compiler-31.5.2.jar` 未缓存。当前 ADB 无已连接设备，因此真实扫码/claim 未验收。正式签名、角色专属剧情扩展和真实 ARCore 留在后续增量。
+验收记录：Node 全量 134/134；PowerShell 临时目录备份/恢复故障注入通过；Android 单测与 Debug 构建通过。`lintDebug` 因分析器依赖缺失且仓库下载连接挂起而未完成，离线复验显示 `intellij-core-31.5.2.jar`、`kotlin-compiler-31.5.2.jar` 未缓存。当前 ADB 无已连接设备，因此真实扫码/claim 未验收。正式签名、角色专属剧情和真实 ARCore 当时留待后续增量，进度见下方续作记录。
+
+## 续作 2：专属剧情与跨平台签名解析（2026-09-26）
+
+- 故事目录 schema v2 保留 12 条通用剧情，新增 20 条逐形态专属剧情；通过当前 `activeId` 限定触发，迁移保留旧完成/领奖状态。
+- Android 图鉴现在展示专属剧情与完成条件，对已完成项提供领奖入口并在成功后刷新服务端投影。
+- Actions run #26 的 Node、Android 单测/Debug 构建等通过，但 APK release manifest gate 报告读不到 signer SHA-256。旧 run 的日志包返回 403，无法读取 Ubuntu 的原始 signer 行；本机复现定位到 `Out-String` CRLF 行尾不匹配，解析器现接受 CRLF、ANSI、连续、冒号/空格分隔格式，并有回归测试。该修复与 CI 报错位置吻合，仍需新 CI 证实。
+- Node 全量为 137/137；Android `:app:testDebugUnitTest :app:assembleDebug` 成功。版本已按计划升至 `2.2.0` / `versionCode 4`，实际 APK 包名/内部版本一致，Debug release gate 返回 `{"ok":true,"errors":[]}`；APK SHA-256 为 `92c58c82e456dad6917e9783e917dc4e34210f928ea3ddfbe8db5833bef5b9db`。
+- 当前本机仅有 C/D/E/F 固定盘，没有离线恢复介质，因此尚未安全生成正式签名身份/keystore。ADB 列表为空，已知端口 `39663`、`41253`、`43003` 均不可达；扫码/重连与 ARCore 真平面/锚点仍未验收。
+- `lintDebug --offline` 明确报缺 `kotlin-compiler-31.5.2.jar`；在线分析器依赖下载尝试被用户中断，Lint 未完成。修复后的 GitHub Actions 尚未由本轮提交触发。
+
+## 续作 3：剧情隔离与领奖恢复（2026-09-27）
+
+- 专属剧情只能由当前激活 Mote 对应的事件局部触发；关系等级剧情需当前关系事件真实跨过对应门槛；历史累计状态不能在切换角色时直接解锁专属故事。
+- 故事领奖先持久化领取状态，再用 `story:<id>` 稳定关系收据应用 XP；重试会补齐“领取已保存、XP 写入中断”的状态。故事收据不受 512 条普通关系事件保留窗口影响。
+- 故障注入覆盖关系持久化失败、服务重建、重放去重，以及超过 512 条普通交互后的故事领奖重试。
+- 验收：Node **142/142**；Android 单测/Debug 构建通过；备份/恢复、签名解析、敏感扫描和性能预算通过。在线 Lint 因 Google Maven TLS 握手失败未完成。Debug APK 为 `2.2.0` / code `4`，SHA-256 `03de9eec453d9332f58099f069e9aa4cdefdb88517bd2ac33c680ec20cd717de`，不是正式签名版。实机配对、GPS/镜头、ARCore、正式 keystore 仍待验收。

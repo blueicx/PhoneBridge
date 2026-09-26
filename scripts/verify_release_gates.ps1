@@ -10,6 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'ApkSignerOutput.psm1') -Force
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location -LiteralPath $repository
 
@@ -54,12 +55,9 @@ $signatureOutput = (& $apksigner verify --verbose --print-certs $artifact.FullNa
 $signatureVerified = $LASTEXITCODE -eq 0 -and $signatureOutput -match '(?m)^Verifies\s*$'
 if (-not $signatureVerified) { throw "apksigner verification failed for $($artifact.Name)" }
 $signatureScheme = if ($signatureOutput -match 'Verified using v3 scheme.*true') { 'v3' } elseif ($signatureOutput -match 'Verified using v2 scheme.*true') { 'v2' } elseif ($signatureOutput -match 'Verified using v1 scheme.*true') { 'v1' } else { 'unknown' }
-$certificateMatch = [regex]::Match($signatureOutput, '(?m)^Signer #1 certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$')
-if (-not $certificateMatch.Success) { throw 'APK signer certificate SHA-256 digest could not be read' }
-$certificateSha256 = $certificateMatch.Groups[1].Value.ToLowerInvariant()
-$certificateDnMatch = [regex]::Match($signatureOutput, '(?m)^Signer #1 certificate DN:\s*(.+?)\s*$')
-if (-not $certificateDnMatch.Success) { throw 'APK signer certificate DN could not be read' }
-$certificateDn = $certificateDnMatch.Groups[1].Value.Trim()
+$signerMetadata = Get-PhoneBridgeApkSignerMetadata -SignatureOutput $signatureOutput
+$certificateSha256 = $signerMetadata.CertificateSha256
+$certificateDn = $signerMetadata.CertificateDn
 if ($Channel -eq 'release') {
   if (-not $Signed) { throw 'release channel requires -Signed and an external keystore certificate' }
   if ($certificateDn -match '(?i)Android Debug') {

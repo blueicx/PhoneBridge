@@ -10,6 +10,10 @@ data class MoteStoryEntry(
     val rewardXp: Int,
     val completed: Boolean,
     val claimed: Boolean,
+    val moteId: String = "",
+    val moteName: String = "",
+    val exclusive: Boolean = false,
+    val completion: String = "",
 )
 
 object MoteStoryProtocol {
@@ -28,6 +32,10 @@ object MoteStoryProtocol {
                         "rewardXp" to (reward?.optInt("xp", 0) ?: 0),
                         "completed" to value.optBoolean("completed", false),
                         "claimed" to value.optBoolean("claimed", false),
+                        "moteId" to value.optString("moteId"),
+                        "moteName" to value.optString("moteName"),
+                        "exclusive" to value.optBoolean("exclusive", false),
+                        "completion" to value.optString("completion"),
                     )
                 )
                 if (entry != null) add(entry)
@@ -47,6 +55,10 @@ object MoteStoryProtocol {
             rewardXp = (value["rewardXp"] as? Number)?.toInt()?.coerceAtLeast(0) ?: 0,
             completed = value["completed"] as? Boolean ?: false,
             claimed = value["claimed"] as? Boolean ?: false,
+            moteId = value["moteId"].toString().takeUnless { it == "null" }.orEmpty(),
+            moteName = value["moteName"].toString().takeUnless { it == "null" }.orEmpty(),
+            exclusive = value["exclusive"] as? Boolean ?: false,
+            completion = value["completion"].toString().takeUnless { it == "null" }.orEmpty(),
         )
     }
 

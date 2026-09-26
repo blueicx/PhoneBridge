@@ -254,6 +254,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var moteRelationship = MoteRelationshipSummary()
     private var moteStateJson = JSONObject()
     private var moteStoryJson = JSONArray()
+    private var moteDexDialog: AlertDialog? = null
     private var companionSummary = CompanionSummary()
     private var workspaceRevision: Long = 0L
     private val timelineProjection = TimelineProjection()
@@ -4144,6 +4145,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun renderMoteDexDialog() {
+        moteDexDialog?.dismiss()
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(8), dp(20), 0)
@@ -4151,13 +4153,16 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         val exploration = moteStateJson.optJSONObject("exploration") ?: JSONObject()
         val target = exploration.optString("targetId").ifBlank { "暂无" }
         val fragments = exploration.optJSONObject("fragments")
+        val storyEntries = MoteStoryProtocol.parse(moteStoryJson)
         container.addView(TextView(this).apply {
-            val storyEntries = MoteStoryProtocol.parse(moteStoryJson)
             val nextStory = storyEntries.firstOrNull { it.completed && !it.claimed }?.let { "\n待领奖：${it.title} +${it.rewardXp} XP" }.orEmpty()
             text = "探索目标：$target\n地点 ${if (RealityClueProtocol.booleanField(fragments?.opt("location"))) "✓" else "·"}  物体 ${if (RealityClueProtocol.booleanField(fragments?.opt("object"))) "✓" else "·"}  光线 ${if (RealityClueProtocol.booleanField(fragments?.opt("light"))) "✓" else "·"}\n${MoteStoryProtocol.summary(moteStoryJson)}$nextStory"
             setTextColor(Color.parseColor("#D9F5E6"))
             setPadding(0, 0, 0, dp(8))
         })
+        val exclusiveStories = storyEntries
+            .filter { it.exclusive }
+            .associateBy { it.moteId }
         for (index in 0 until moteRosterJson.length()) {
             val profile = moteRosterJson.optJSONObject(index) ?: continue
             val id = profile.optString("id")
@@ -4175,8 +4180,51 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 }
             }
             container.addView(button)
+            val story = exclusiveStories[id] ?: continue
+            container.addView(TextView(this).apply {
+                val progress = when {
+                    story.claimed -> "已完成 · 已领取"
+                    story.completed -> "已完成 · 待领取 ${story.rewardXp} XP"
+                    else -> "未完成"
+                }
+                text = "专属剧情：${story.title}（$progress）\n完成条件：${story.completion}"
+                textSize = 12f
+                setTextColor(Color.parseColor("#AFC9C0"))
+                setPadding(dp(12), 0, dp(12), dp(6))
+            })
+            if (story.completed && !story.claimed) {
+                val claimButton = Button(this).apply {
+                    text = "领取 ${story.title} · +${story.rewardXp} XP"
+                    isAllCaps = false
+                }
+                claimButton.setOnClickListener {
+                    claimButton.isEnabled = false
+                    val claimId = "story-${story.id}-${System.currentTimeMillis()}"
+                    workspaceRequest(
+                        "/api/motes/story/${android.net.Uri.encode(story.id)}/claim",
+                        "POST",
+                        JSONObject().put("claimId", claimId),
+                        onSuccess = {
+                            workspaceRequest("/api/motes", onSuccess = { latest ->
+                                handleMoteSnapshot(latest)
+                                renderMoteDexDialog()
+                            })
+                        },
+                        onError = { message ->
+                            claimButton.isEnabled = true
+                            Toast.makeText(this, "领取失败：$message", Toast.LENGTH_LONG).show()
+                        }
+                    )
+                }
+                container.addView(claimButton)
+            }
         }
-        AlertDialog.Builder(this).setTitle("Mote 图鉴 · ${moteRosterJson.length()}/20").setView(container).setPositiveButton("关闭", null).show()
+        val scrollableContent = android.widget.ScrollView(this).apply { addView(container) }
+        moteDexDialog = AlertDialog.Builder(this)
+            .setTitle("Mote 图鉴 · ${moteRosterJson.length()}/20")
+            .setView(scrollableContent)
+            .setPositiveButton("关闭", null)
+            .show()
     }
 
     private fun showSignalGameDialog() {

@@ -365,3 +365,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 验证：Node 全量 **134/134**，运行时备份/恢复 PowerShell 集成故障注入通过，Android `:app:testDebugUnitTest :app:assembleDebug` **BUILD SUCCESSFUL**，`git diff --check` 通过。`lintDebug` 在线任务等待 lint 分析器依赖下载超过 5 分钟；离线复验确认 `intellij-core-31.5.2.jar` 与 `kotlin-compiler-31.5.2.jar` 未缓存，因此 Lint 未通过/未完成（不是代码诊断通过）。
 - 本轮 ADB 5038 设备列表为空，未完成真实二维码扫描、无线 claim 或配对后重连；正式 keystore/2.2.0 Release、20 个角色专属事件、真实 ARCore 平面锚定与两小时设备运行仍待后续执行/验收。
 - 提交 2ffadf7 已推送，但对应 GitHub Actions Node 测试因递归 find server 把 node_modules/dijkstrajs/test/dijkstra.test.js 也纳入发现，缺其包内开发依赖 expect.js 而失败；PhoneBridge 自身 134 项全部通过。CI 已改为只发现 server/*.test.js，本地同命令 134/134；修复提交推送后需确认最新 Actions。
+
+## 28. 全面深化批次 6 续作：角色专属剧情与 CI 签名解析（2026-09-26）
+
+- 当前分支仍为 `feature/integrated-enhancement`，从已推送提交 `329dd6e` 继续；本段实现尚未提交，不修改 `main`，未使用子 agent。
+- Mote 剧情目录升为 schema v2：保留旧 12 条通用剧情和进度，追加 20 条与 20 个形态一一对应的专属剧情。每条有独立标题、描述、触发代码、可见完成条件和经验奖励；只有对应 `moteId` 当前激活时才可完成。旧状态迁移不会把新增剧情标记为已完成。
+- Android `MoteStoryProtocol` 解析专属形态、完成条件与奖励；图鉴逐只显示专属剧情和进度，完成但未领取的剧情提供领奖按钮。领奖成功后重新读取统一 `/api/motes` 投影，失败可重试。
+- Node 全量测试 **137/137**；Android `:app:testDebugUnitTest :app:assembleDebug` **BUILD SUCCESSFUL**。实际 APK 为 `com.phonebridge` / `2.2.0` / code `4`，Debug 产物门禁通过。签名解析器测试覆盖连续/冒号/空格分隔、CRLF、ANSI 着色和畸形指纹。
+- GitHub Actions run #26（提交 `329dd6e`）Node、敏感扫描、协议、性能、Android 单测和 Debug 构建通过，但 Release gate manifest 在解析签名证书 SHA-256 时失败。GitHub 对该旧 run 的日志包返回 403，无法读取 runner 原始 signer 行；本机复现发现解析器未接受 `Out-String` 的 CRLF 行尾，现已显式兼容 CRLF 与 ANSI 控制码并加入测试。这与远端错误步骤一致，但 run #26 的原始格式尚无直接证据；下一次 Actions 才能确认修复。
+- 新构建 Debug APK 的 `verify_release_gates.ps1` 返回 `{"ok":true,"errors":[]}`，SHA-256 为 `92c58c82e456dad6917e9783e917dc4e34210f928ea3ddfbe8db5833bef5b9db`。它是 Debug 签名内部候选，不是正式 Release。
+- `lintDebug --offline` 明确失败于 `:app:lintAnalyzeDebug`：`kotlin-compiler-31.5.2.jar` 没有缓存。联网 Lint 尝试曾停留在分析器下载且被用户中断；故 Lint 未通过/未完成，不能记作代码 lint 成功。当前 Android Debug 设备列表为空，已探测用户历史给出的 `192.168.101.68` 端口 `39663`、`41253`、`43003`，均不可达，故扫码实机未验收。
+- 本机当前仅发现 C/D/E/F 固定盘，没有可离线保管的可移动介质；因此未生成正式签名身份/keystore，避免产生无法按计划离线恢复的唯一密钥。后续仍需外部离线恢复介质、Xperia 真实扫码/claim 与断线恢复、真实 ARCore 平面/锚点及长时温度电量测试。不得将 Canvas 回退、单测或 Debug 签名表述为这些门禁已通过。
+
+## 29. 全面深化批次 6 续作：剧情事件隔离与奖励崩溃恢复（2026-09-27）
+
+- 修正专属剧情对累计共享上下文的误触发：故事 store 仍使用完整快照计算通用剧情，但专属剧情必须同时匹配当前激活的 Mote 和本次事件显式提供的触发标记。关系等级剧情还要求当前关系事件确实跨过 2/3 级门槛；仅仅切换到对应 Mote 或执行普通任务不会触发。任务成功/重试、对话、区域探索、线索、关系等级、新形态解锁与增益现已分别传入事件局部标记。
+- 领奖路径改为由目录中的规范奖励值派生，并在 story claim 已落盘但关系经验写入失败时，允许同一故事领奖请求安全重放；关系 XP 以 `story:<id>` 稳定收据去重。模拟关系快照写入故障、进程重建与重复重放均验证通过。
+- 永久保留有限故事目录对应的 `story:` 奖励收据；一般关系交互仍只保留最近 512 条。跨越 513 条普通互动后再次重放剧情领奖，XP 不会重复增加。
+- 当前回归：Node **142/142**；Android `:app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain` **BUILD SUCCESSFUL**（48 tasks）；运行时备份/恢复注入测试、APK signer parser 测试、敏感扫描、`git diff --check` 通过。最终性能预算：`elapsedMs=1.3`、`fullBytes=1694`、`summaryBytes=48`、缓存命中 `10000`、突发广播 `1`。
+- Debug APK 当前门禁检查通过：包名 `com.phonebridge`、`2.2.0` / code `4`、APK SHA-256 `03de9eec453d9332f58099f069e9aa4cdefdb88517bd2ac33c680ec20cd717de`；证书是 Android Debug 证书，只是内部 Debug 候选，不是正式签名版。
+- 本次重试 `:app:lintDebug` 仍未完成，失败点为从 `dl.google.com` 下载 `kotlin-compiler-31.5.2.jar` 时 TLS 握手被远端关闭；这是环境依赖获取失败，不是 Lint 诊断通过。无线 ADB 当前未连接，实机配对/位置/镜头与 ARCore 真实锚点仍未验收。
+- 修复后的签名解析器和发布门禁需以本批最新提交对应的 GitHub Actions 结果确认；正式 keystore 仍等待可保护的离线恢复介质。

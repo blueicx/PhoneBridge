@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased · feature/integrated-enhancement
+## 2.2.0 · internal-debug candidate · feature/integrated-enhancement
 
-- 增加 Mote 三类现实线索的每日成长、经验、等级和限时探索增益。
-- 统一 Android RealityLens 的粗区域事件过滤、离线 outbox、ACK 恢复和重复事件幂等。
-- 统一 Web、Android 和服务端摘要中的探索成长状态；新增 `GET /api/motes/growth`。
-- 增加 Debug/Release 产物清单校验、敏感路径拒绝、SHA-256 和回滚门禁。
+- 版本升至 `2.2.0` / `versionCode 4`，当前只作为内部 Debug 候选构建，不宣称正式签名发布。
+- 增加 20 条逐 Mote 专属剧情，保留原有通用剧情与存档，图鉴展示触发条件、进度和领奖操作。
+- 专属剧情只响应当前事件；故事领奖与 XP 写入可在崩溃后安全重放，长期故事奖励收据不随普通交互历史压缩丢失。
+- 安全二维码配对和运行时备份/恢复支持证书指纹校验、一次性 claim、内容哈希清单、隐私净化和失败回滚。
+- CI 发布门禁兼容连续/冒号分隔的 signer SHA-256 格式，并测试格式解析。
 
-当前版本仍是 `2.0.0` Debug 侧载基线；正式签名、ARCore 真平面和长期实机运行需单独验收。
+正式签名密钥尚未生成：当前机器没有可离线保存恢复副本的可移动介质；正式签名、ARCore 真平面和长期实机运行仍需独立验收。

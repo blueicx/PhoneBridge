@@ -1,5 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { MOTE_STORY_EVENTS } = require('./mote-story');
+
+const DURABLE_STORY_REWARD_RECEIPTS = new Set(MOTE_STORY_EVENTS.map(event => `story:${event.id}`));
 
 class MoteRelationshipStore {
   constructor({ now = () => Date.now(), snapshotPath = null, persistence = null } = {}) {
@@ -28,8 +31,10 @@ class MoteRelationshipStore {
     const key = String(eventId || '').trim();
     if (!key) throw new Error('eventId is required');
     if (this.state.seenEventIds.includes(key)) return { duplicate: true, ...this.snapshot() };
-    this.state.seenEventIds.push(key);
-    this.state.seenEventIds = this.state.seenEventIds.slice(-512);
+    const eventIds = [...new Set([...this.state.seenEventIds, key])];
+    const durableRewardReceipts = eventIds.filter(id => DURABLE_STORY_REWARD_RECEIPTS.has(id));
+    const recentInteractions = eventIds.filter(id => !DURABLE_STORY_REWARD_RECEIPTS.has(id)).slice(-512);
+    this.state.seenEventIds = [...durableRewardReceipts, ...recentInteractions];
     this.state.xp += Math.max(0, Math.round(Number(amount) || 0));
     this.state.interactions += 1;
     this.state.level = Math.max(1, Math.floor(this.state.xp / 100) + 1);

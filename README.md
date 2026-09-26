@@ -63,7 +63,7 @@
 - 运行时持久化已升级到 schema v3，兼容迁移 v2 信封和旧裸 JSON；会话上下文会裁剪长历史并生成确定性摘要。
 - 批次 A 新增统一脱敏伴侣摘要：`GET /api/companion/summary`，支持 ETag/304；Web 工作台展示 Mote、任务、提醒、现实探索、Provider、记忆和自治状态，现实事件可直接发起遭遇或收集。
 - Android 新增 `CompanionSummary` 协议模型，主界面和 Mote 小组件读取同一份摘要字段，断线时继续使用本地镜像。
-- Android 当前版本为 `2.1.0`（`versionCode 3`）；已加入可选 HTTPS/WSS、版本化二维码配对载荷、证书指纹 pin、实际 APK 版本/签名门禁和脱敏诊断导出，正式签名仍需外部 keystore。
+- Android 当前版本为 `2.2.0`（`versionCode 4`，内部 Debug 候选）；已加入可选 HTTPS/WSS、版本化二维码配对载荷、证书指纹 pin、实际 APK 版本/签名门禁和脱敏诊断导出，正式签名仍需外部 keystore 与离线恢复介质。
 
 上述 2.0 能力已加入统一双端摘要入口；Wi-Fi TLS 配对与正式签名发布仍需外部证书/keystore，实机结果按能力逐项记录，不把 Canvas 回退扩大为 ARCore 真平面证据。
 
@@ -192,8 +192,9 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 
 ## 全面深化批次 4：角色差异与完整成长
 
-- 服务端固定 12 个 Mote 剧情事件，完成与领奖分离并按来源事件/领奖键幂等；接口为 `GET /api/motes/story` 和 `POST /api/motes/story/:id/claim`，实时事件为 `mote.story`。
-- 剧情触发覆盖激活、对话、成功/恢复任务、现实探索、三类线索、关系升级、增益和新形态解锁；故事投影进入 Mote 图鉴、快照和 Android 缓存。
+- 服务端保留 12 个通用 Mote 剧情，并新增 20 条逐形态专属剧情；专属剧情只有对应 Mote 激活时才会触发。完成与领奖分离并按来源事件/领奖键幂等；接口为 `GET /api/motes/story` 和 `POST /api/motes/story/:id/claim`，实时事件为 `mote.story`。
+- 剧情触发覆盖激活、对话、成功/恢复任务、现实探索、三类线索、关系升级、增益和新形态解锁；Android 图鉴逐只显示专属剧情、完成条件和领奖入口，故事投影进入快照与离线缓存。
+- 专属剧情条件只由当前业务事件触发，关系等级剧情要求本事件真实跨过门槛，不会因切换角色而消费累计历史；领奖与关系经验之间使用稳定收据，服务重启可补齐中断奖励，故事收据不受普通交互最近 512 条压缩影响。
 - 行为提示继续兼容旧字段，同时增加 `motion`、`visualPreset`、`colors`、`taskAffinity`、`emotionBias` 和 `ability`，角色状态会改变注视、提醒倾向和动作节奏。
 - Android 通过 `MoteVisualProfile`/`MoteBodyKind` 统一驱动 20 个形态；14 个探索形态在 `CompanionView` 与 `RealityLensView` 使用各自轮廓、配色、动作和粒子，未知形态安全回退。
 - 设计与迁移记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-4.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-4.md)。实体机、ARCore 真平面、正式签名和长时间运行仍需独立验收。
@@ -210,12 +211,14 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 
 ## 全面深化批次 6：配对、签名与可恢复交付
 
-- Android 版本为 `2.1.0` / `versionCode 3`；Release signing 只接受四个 `PHONEBRIDGE_RELEASE_*` 外部环境变量成组注入，缺 keystore 时不冒充正式发布。
+- 当前 Android 版本为 `2.2.0` / `versionCode 4`（内部 Debug 候选，后续版本已从批次最初的 `2.1.0` 更新）；Release signing 只接受四个 `PHONEBRIDGE_RELEASE_*` 外部环境变量成组注入，缺 keystore 时不冒充正式发布。
 - `scripts/verify_release_gates.ps1` 使用实际 APK 的 `aapt dump badging` 和 `apksigner verify --verbose --print-certs`，校验包名 `com.phonebridge`、APK 内部版本、字节数、SHA-256、证书指纹和签名状态；schema v2 manifest 可按需输出到 CI 临时目录。`release` 还必须显式传 `-Signed` 并提供 `PHONEBRIDGE_RELEASE_CERT_SHA256`，不能使用 Android Debug 证书。
 - GitHub Actions 上传 Debug APK 与发布 manifest 作为构建产物，源码历史不包含 APK、运行时状态、令牌或签名材料。
 - `/api/pairing/start` 返回版本化 `qrPayload`；Android `PairingProtocol` 可解析二维码、生成 claim 字段并转换证书指纹，BridgeLink 在显式指纹下使用 OkHttp certificate pinning，断线重连保留地址/令牌/指纹。
 - Android 扫码路径使用 ZXing 仅解析相机亮度平面，不存储或上传扫描画面；配对确认后先完成 HTTPS claim，成功才轮换令牌及连接配置，拒绝/超时不会覆盖旧配置。
 - `POST /api/runtime/flush` 提供认证快照落盘。`backup_runtime.ps1` 生成 v3 SHA-256/字节数清单并逐个校验、迁移与净化允许的状态文件；`restore_runtime.ps1 -VerifyOnly` 只验证不写入，实际恢复必须确认节点已停止，失败时自动回滚。备份保留可恢复聊天状态，排除令牌、日志、照片数据、精确坐标、APK 和签名材料；旧 v2 清单仍可验证和迁移。
 - `/api/diagnostics/export` 明确声明不含 secrets、原图、精确位置和连续轨迹；正式 keystore 与实机扫码仍待后续验收。
+- `scripts/verify_release_gates.ps1` 的签名元数据解析兼容紧凑、冒号/空格分隔指纹、CRLF 行尾和 ANSI 着色；CI run #26 报告未能读到签名指纹后，新增这些格式及畸形输入的解析测试。修复后的 Actions 仍待验证。
+- 后续验收：Node 全量 **142/142**、运行时备份/恢复、签名解析、敏感扫描、性能预算与当前 Debug APK 实际签名门禁通过；Android 单测和 Debug 构建通过。`lintDebug` 未通过：Google Maven 下载分析器依赖时 TLS 握手被远端关闭；无线实机、正式签名和 ARCore 真锚定仍未验收。
 
 本批实现记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md)。正式 keystore、真实 WSS/二维码扫描和 Xperia 实机验收仍待独立证据。
