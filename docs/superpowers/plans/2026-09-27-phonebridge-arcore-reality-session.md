@@ -41,7 +41,7 @@
 - [x] 5.1 运行 Node 全量 `node --test server/*.test.js`、Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon --console=plain`、性能预算、敏感扫描、APK release-gate、`git diff --check`；每个结果单独记录，Lint/CI/设备不可用不冒充通过。
 - [x] 5.2 人工审阅相机 owner 唯一性、Activity 重建/安装回流、frame close/隐私门控、GL 坐标/overlay 顺序和资源释放；修复发现项并重新验证。
 - [x] 5.3 更新 `README.md`、`HANDOFF.md` 和本规格：区分自动化通过、GitHub Actions、ADB 当前状态、实机 ARCore 平面/退出恢复与 30 分钟温度测试待验收；设备不可用时明确列为未验收。
-- [ ] 5.4 在功能分支提交变更并推送，确认最新 GitHub Actions 状态后报告提交、测试和仍待设备验证的项目。
+- [x] 5.4 已推送提交 `e913d70`；GitHub Actions run `36267932570` 对该提交全量成功，Debug APK/manifest artifact 已上传。实机 ARCore 项目继续保持待验收。
 
 ## 明确边界
 
