@@ -45,4 +45,4 @@ CI 复核：提交 2ffadf7 的 GitHub Actions 因递归测试发现运行到 nod
 - 故事领奖先持久化领取状态，再用 `story:<id>` 稳定关系收据应用 XP；重试会补齐“领取已保存、XP 写入中断”的状态。故事收据不受 512 条普通关系事件保留窗口影响。
 - 故障注入覆盖关系持久化失败、服务重建、重放去重，以及超过 512 条普通交互后的故事领奖重试。
 - 验收：Node **142/142**；Android 单测/Debug 构建通过；备份/恢复、签名解析、敏感扫描和性能预算通过。在线 Lint 因 Google Maven TLS 握手失败未完成。Debug APK 为 `2.2.0` / code `4`，SHA-256 `03de9eec453d9332f58099f069e9aa4cdefdb88517bd2ac33c680ec20cd717de`，不是正式签名版。实机配对、GPS/镜头、ARCore、正式 keystore 仍待验收。
-- GitHub Actions run #28 的限长诊断确认 Ubuntu `apksigner` 使用 `V2 Signer: certificate ...` 标签，并把 SHA-256 值放在下一行。解析器和 PS7 fixture 已支持 legacy 与 V2 格式；本地实际 APK 门禁通过，待下一次 Actions 验证真实 runner。
+- GitHub Actions run #29（`cf45596`）已全绿，真实 APK 门禁与 artifact 上传通过；确认 Ubuntu `V2 Signer` 多行 SHA-256 格式修复有效。
