@@ -45,3 +45,4 @@ CI 复核：提交 2ffadf7 的 GitHub Actions 因递归测试发现运行到 nod
 - 故事领奖先持久化领取状态，再用 `story:<id>` 稳定关系收据应用 XP；重试会补齐“领取已保存、XP 写入中断”的状态。故事收据不受 512 条普通关系事件保留窗口影响。
 - 故障注入覆盖关系持久化失败、服务重建、重放去重，以及超过 512 条普通交互后的故事领奖重试。
 - 验收：Node **142/142**；Android 单测/Debug 构建通过；备份/恢复、签名解析、敏感扫描和性能预算通过。在线 Lint 因 Google Maven TLS 握手失败未完成。Debug APK 为 `2.2.0` / code `4`，SHA-256 `03de9eec453d9332f58099f069e9aa4cdefdb88517bd2ac33c680ec20cd717de`，不是正式签名版。实机配对、GPS/镜头、ARCore、正式 keystore 仍待验收。
+- GitHub Actions run #27 上 parser fixture 通过但真实 APK signer digest 提取失败；可见日志未包含原始 signer 行。解析错误现附带限长且剔除控制字符的 signer 相关行，新一次 Actions 用于采集 runner 实际格式，不提前宣称 CI 修复。

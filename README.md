@@ -218,7 +218,7 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - Android 扫码路径使用 ZXing 仅解析相机亮度平面，不存储或上传扫描画面；配对确认后先完成 HTTPS claim，成功才轮换令牌及连接配置，拒绝/超时不会覆盖旧配置。
 - `POST /api/runtime/flush` 提供认证快照落盘。`backup_runtime.ps1` 生成 v3 SHA-256/字节数清单并逐个校验、迁移与净化允许的状态文件；`restore_runtime.ps1 -VerifyOnly` 只验证不写入，实际恢复必须确认节点已停止，失败时自动回滚。备份保留可恢复聊天状态，排除令牌、日志、照片数据、精确坐标、APK 和签名材料；旧 v2 清单仍可验证和迁移。
 - `/api/diagnostics/export` 明确声明不含 secrets、原图、精确位置和连续轨迹；正式 keystore 与实机扫码仍待后续验收。
-- `scripts/verify_release_gates.ps1` 的签名元数据解析兼容紧凑、冒号/空格分隔指纹、CRLF 行尾和 ANSI 着色；CI run #26 报告未能读到签名指纹后，新增这些格式及畸形输入的解析测试。修复后的 Actions 仍待验证。
+- `scripts/verify_release_gates.ps1` 的签名元数据解析兼容紧凑、冒号/空格分隔指纹、CRLF 行尾和 ANSI 着色；CI run #26/#27 的真实 APK 门禁仍未匹配 SHA-256 行，现为该错误增加限长清理后的 signer 行诊断。解析 fixture 本身在 Actions 通过，真实输出兼容性仍待下一运行确认。
 - 后续验收：Node 全量 **142/142**、运行时备份/恢复、签名解析、敏感扫描、性能预算与当前 Debug APK 实际签名门禁通过；Android 单测和 Debug 构建通过。`lintDebug` 未通过：Google Maven 下载分析器依赖时 TLS 握手被远端关闭；无线实机、正式签名和 ARCore 真锚定仍未验收。
 
 本批实现记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md)。正式 keystore、真实 WSS/二维码扫描和 Xperia 实机验收仍待独立证据。

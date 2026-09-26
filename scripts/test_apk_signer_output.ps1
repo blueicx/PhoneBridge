@@ -32,8 +32,15 @@ if ($ansiParsed.CertificateSha256 -ne $compactDigest) { throw 'ANSI-decorated si
 
 $invalidOutput = $compactOutput.Replace($compactDigest, '0123:invalid')
 $rejected = $false
+$rejectionMessage = ''
 try { Get-PhoneBridgeApkSignerMetadata -SignatureOutput $invalidOutput | Out-Null }
-catch { $rejected = $_.Exception.Message -match 'digest could not be read' }
+catch {
+  $rejectionMessage = $_.Exception.Message
+  $rejected = $rejectionMessage -match 'digest could not be read'
+}
 if (-not $rejected) { throw 'malformed certificate digest was not rejected' }
+if ($rejectionMessage -notlike '*Signer #1 certificate SHA-256 digest: 0123:invalid*') {
+  throw 'malformed certificate digest diagnostic did not include its sanitized source line'
+}
 
 Write-Output 'APK signer metadata parser tests passed (compact, colon-separated, space-separated, ANSI-decorated, malformed).'
