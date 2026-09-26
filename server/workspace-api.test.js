@@ -68,6 +68,29 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     const denied = await fetch(`${BASE}/api/tools`);
     assert.equal(denied.status, 401);
 
+    const unauthorizedFlush = await fetch(`${BASE}/api/runtime/flush`, { method: 'POST' });
+    assert.equal(unauthorizedFlush.status, 401);
+    const queuedEvent = await fetch(`${BASE}/api/workspace/events`, {
+      method: 'POST',
+      headers: { 'x-phonebridge-token': TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({ event: {
+        eventId: 'runtime-flush-pending-event', origin: 'flush-test', sequence: 1,
+        type: 'test.flush', payload: { marker: 'persist-before-ack' },
+      } }),
+    });
+    assert.equal(queuedEvent.status, 202);
+    const flushResponse = await fetch(`${BASE}/api/runtime/flush`, {
+      method: 'POST', headers: { 'x-phonebridge-token': TOKEN, 'content-type': 'application/json' }, body: '{}',
+    });
+    assert.equal(flushResponse.status, 200);
+    const flushed = await flushResponse.json();
+    assert.equal(flushed.ok, true);
+    assert.equal(typeof flushed.flushedAt, 'string');
+    assert.equal(flushed.persistence.schemaVersion, 3);
+    assert.equal(fs.existsSync(path.join(runtimeDir, 'runtime-state.json')), true);
+    const persistedWorkspace = JSON.parse(fs.readFileSync(path.join(runtimeDir, 'workspace-state.json'), 'utf8'));
+    assert.equal(persistedWorkspace.state.eventLog.some(event => event.eventId === 'runtime-flush-pending-event'), true);
+
     const health = await request('/api/device/health');
     assert.equal(health.response.status, 200);
     assert.equal(health.body.ok, true);

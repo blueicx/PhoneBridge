@@ -2,7 +2,6 @@ package com.phonebridge
 
 import org.json.JSONObject
 import java.net.URI
-import java.util.Base64
 
 data class PairingOffer(
     val pairingId: String,
@@ -13,17 +12,31 @@ data class PairingOffer(
     val fingerprint: String? = null,
     val expiresAt: Long = 0L,
     val scheme: String = "ws",
+    val version: Int = 2,
+    val fingerprintType: String = "x509-der-sha256",
 ) {
-    fun isUsable(now: Long): Boolean = pairingId.isNotBlank() && code.matches(Regex("\\d{6}")) && nonce.isNotBlank() && expiresAt > now
-    fun isSecureRemote(): Boolean = !PairingProtocol.isLoopbackHost(host) && scheme.equals("wss", ignoreCase = true) && PairingProtocol.isValidFingerprint(fingerprint)
+    fun isUsable(now: Long): Boolean = version == 2 && pairingId.isNotBlank() && code.matches(Regex("\\d{6}")) &&
+        nonce.isNotBlank() && expiresAt > now && host.isNotBlank() && port in 1..65535 &&
+        (scheme.equals("ws", ignoreCase = true) && PairingProtocol.isLoopbackHost(host) || isPinnedWss())
+
+    private fun isPinnedWss(): Boolean = scheme.equals("wss", ignoreCase = true) &&
+        fingerprintType == "x509-der-sha256" && PairingProtocol.isValidFingerprint(fingerprint)
+
+    fun isSecureRemote(): Boolean = version == 2 && !PairingProtocol.isLoopbackHost(host) &&
+        isPinnedWss()
     fun endpointUrl(): String = "${scheme.lowercase()}://$host:$port"
+    fun claimUrl(): String = "${if (scheme.equals("wss", true)) "https" else "http"}://$host:$port/api/pairing/claim"
 }
 
 object PairingProtocol {
     fun normalizeCode(value: String): String = value.filter(Char::isDigit).take(6)
-    fun isLoopbackHost(host: String): Boolean = host == "127.0.0.1" || host == "localhost" || host == "::1"
+    fun isLoopbackHost(host: String): Boolean {
+        val normalized = host.lowercase().removeSurrounding("[", "]")
+        return normalized == "127.0.0.1" || normalized == "localhost" || normalized == "::1"
+    }
 
     fun fromQrPayload(value: String): PairingOffer {
+        require(value.length <= 4096) { "pairing QR payload is too large" }
         fun string(name: String, fallback: String = ""): String {
             val match = Regex("\\\"$name\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"").find(value)
             return match?.groupValues?.getOrNull(1) ?: fallback
@@ -34,24 +47,33 @@ object PairingProtocol {
         }
         val endpoint = string("endpoint", string("url"))
         val uri = runCatching { URI(endpoint) }.getOrNull()
+        require(
+            uri != null && uri.scheme?.lowercase() in setOf("ws", "wss") && uri.host != null &&
+                uri.port in 1..65535 && uri.userInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
+                (uri.path.isNullOrEmpty() || uri.path == "/")
+        ) {
+            "pairing QR endpoint is invalid"
+        }
         return PairingOffer(
             pairingId = string("pairingId", string("id")),
             code = normalizeCode(string("code")),
             nonce = string("nonce"),
-            host = string("host", uri?.host ?: ""),
-            port = string("port").toIntOrNull() ?: (uri?.port ?: -1),
+            host = uri.host,
+            port = uri.port,
             fingerprint = string("fingerprint").ifBlank { null },
             expiresAt = number("expiresAt"),
-            scheme = string("scheme", uri?.scheme ?: "ws"),
+            scheme = uri.scheme ?: "",
+            version = number("version").toInt(),
+            fingerprintType = string("fingerprintType"),
         )
     }
 
     fun fromJson(json: JSONObject): PairingOffer {
         val endpoint = json.optString("endpoint", json.optString("url"))
         val uri = runCatching { URI(endpoint) }.getOrNull()
-        val scheme = json.optString("scheme", uri?.scheme ?: "ws")
-        val host = json.optString("host", uri?.host ?: "")
-        val port = if (json.has("port")) json.optInt("port", -1) else (uri?.port ?: -1)
+        val scheme = uri?.scheme ?: ""
+        val host = uri?.host ?: ""
+        val port = uri?.port ?: -1
         return PairingOffer(
             pairingId = json.optString("pairingId", json.optString("id")),
             code = normalizeCode(json.optString("code")),
@@ -61,13 +83,12 @@ object PairingProtocol {
             fingerprint = json.optString("fingerprint").ifBlank { null },
             expiresAt = json.optLong("expiresAt", 0L),
             scheme = scheme,
+            version = json.optInt("version", 0),
+            fingerprintType = json.optString("fingerprintType"),
         )
     }
 
-    fun claimPayload(offer: PairingOffer): JSONObject = JSONObject()
-        .put("id", offer.pairingId)
-        .put("code", offer.code)
-        .put("nonce", offer.nonce)
+    fun claimPayload(offer: PairingOffer): String = """{"id":${quoteJson(offer.pairingId)},"code":${quoteJson(offer.code)},"nonce":${quoteJson(offer.nonce)}}"""
 
     fun claimFields(offer: PairingOffer): Map<String, String> = mapOf(
         "id" to offer.pairingId,
@@ -77,11 +98,21 @@ object PairingProtocol {
 
     fun isValidFingerprint(value: String?): Boolean = value?.trim()?.matches(Regex("sha256:[0-9a-fA-F]{64}")) == true
 
-    /** Converts the server's documented sha256:<hex> fingerprint to OkHttp pin syntax. */
-    fun certificatePin(value: String?): String? {
-        if (!isValidFingerprint(value)) return null
-        val hex = value!!.substringAfter(':')
-        val bytes = ByteArray(32) { index -> hex.substring(index * 2, index * 2 + 2).toInt(16).toByte() }
-        return "sha256/${Base64.getEncoder().encodeToString(bytes)}"
+    private fun quoteJson(value: String): String = buildString {
+        append('"')
+        value.forEach { character ->
+            when (character) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\b' -> append("\\b")
+                '\u000c' -> append("\\f")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> if (character < ' ') append("\\u%04x".format(character.code)) else append(character)
+            }
+        }
+        append('"')
     }
+
 }

@@ -301,6 +301,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     @Volatile private var immersiveMode = false
     private var realityLensActive = false
     private var realityLensRequestedCamera = false
+    @Volatile private var pairingScanActive = false
+    @Volatile private var pairingScanOwnsCamera = false
+    @Volatile private var pairingScanLastFrameAt = 0L
     private val realityCaptureController = RealityCaptureController()
     @Volatile private var lastLocalCueAt = 0L
     private val realityLocationSampler by lazy { RealityLocationSampler(this) }
@@ -1810,11 +1813,15 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         if (requestCode == REQUEST_CAMERA_PERMISSION) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-                setStatus("相机权限已准备")
+                setStatus(if (pairingScanActive) "相机已准备 · 正在本机扫码" else "相机权限已准备")
                 startCamera()
             } else {
+                val pairingDenied = pairingScanActive
+                pairingScanActive = false
+                pairingScanOwnsCamera = false
                 setStatus("相机保持关闭")
-                say("需要看见时，再把镜头交给我。")
+                if (pairingDenied) Toast.makeText(this, "扫码需要相机权限；未读取或上传任何画面", Toast.LENGTH_LONG).show()
+                else say("需要看见时，再把镜头交给我。")
             }
             return
         }
@@ -1964,7 +1971,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 renderCameraHeroState()
                 renderPet()
                 publishSensorState(force = true)
-                setStatus(if (!BridgeLink.isOnline) "眼睛开启 · 未连节点" else "眼睛开启 · 在线")
+                setStatus(
+                    when {
+                        pairingScanActive -> "扫码中 · 画面仅在本机识别"
+                        !BridgeLink.isOnline -> "眼睛开启 · 未连节点"
+                        else -> "眼睛开启 · 在线"
+                    }
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "camera failed", e)
                 stopCamera()
@@ -1977,6 +1990,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun stopCamera() {
+        pairingScanActive = false
+        pairingScanOwnsCamera = false
         cameraRunning = false
         cameraSession.incrementAndGet()
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -2141,6 +2156,35 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         try {
             if (!cameraRunning) return
             val now = SystemClock.elapsedRealtime()
+            if (pairingScanActive) {
+                if (now - pairingScanLastFrameAt >= 500L) {
+                    pairingScanLastFrameAt = now
+                    val plane = image.planes.firstOrNull()
+                    val crop = image.cropRect
+                    val pixels = plane?.let {
+                        PairingQrDecoder.copyLuminancePlane(
+                            source = it.buffer,
+                            width = crop.width(),
+                            height = crop.height(),
+                            rowStride = it.rowStride,
+                            pixelStride = it.pixelStride,
+                            cropLeft = crop.left,
+                            cropTop = crop.top,
+                        )
+                    }
+                    val payload = pixels?.let { PairingQrDecoder.decode(it, crop.width(), crop.height()) }
+                    if (payload != null && pairingScanActive) {
+                        pairingScanActive = false
+                        val stopOwnedCamera = pairingScanOwnsCamera
+                        pairingScanOwnsCamera = false
+                        runOnUiThread {
+                            if (stopOwnedCamera) stopCamera()
+                            receivePairingQr(payload)
+                        }
+                    }
+                }
+                return
+            }
             val allowRemoteUpload = getSharedPreferences("phonebridge_privacy", Context.MODE_PRIVATE)
                 .getBoolean("allow_remote_camera_upload", false)
             val shouldAnalyzeLocally = realityLensActive && now - lastLocalCueAt >= 240L
@@ -4659,8 +4703,112 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     connectSavedServer()
                 }
             }
+            .setNeutralButton(if (pairingScanActive) "取消扫码" else "扫码配对") { _, _ ->
+                if (pairingScanActive) cancelPairingScan() else beginPairingScan()
+            }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    private fun beginPairingScan() {
+        if (pairingScanActive) return
+        pairingScanActive = true
+        pairingScanOwnsCamera = !cameraRunning
+        pairingScanLastFrameAt = 0L
+        setStatus("正在扫码 · 画面仅在本机识别，不会上传")
+        Toast.makeText(this, "将二维码对准手机镜头；再次打开节点设置可取消扫码", Toast.LENGTH_LONG).show()
+        if (!hasCameraPermission()) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(android.Manifest.permission.CAMERA),
+                REQUEST_CAMERA_PERMISSION
+            )
+        } else if (!cameraRunning) {
+            startCamera()
+        }
+    }
+
+    private fun cancelPairingScan() {
+        val stopOwnedCamera = pairingScanOwnsCamera
+        pairingScanActive = false
+        pairingScanOwnsCamera = false
+        if (stopOwnedCamera && (cameraRunning || cameraStartPending)) stopCamera()
+        else setStatus(if (cameraRunning) "眼睛开启" else "扫码已取消")
+    }
+
+    private fun receivePairingQr(payload: String) {
+        val offer = runCatching { PairingProtocol.fromQrPayload(payload) }.getOrElse {
+            setStatus("二维码格式无效")
+            Toast.makeText(this, "无法识别 PhoneBridge 配对二维码", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (offer.version != 2) {
+            setStatus("配对二维码版本过旧")
+            AlertDialog.Builder(this)
+                .setTitle("需要重新配对")
+                .setMessage("此二维码使用旧版配对格式。请在 PhoneBridge 网页重新生成 v2 二维码。")
+                .setPositiveButton("知道了", null)
+                .show()
+            return
+        }
+        if (!offer.isUsable(System.currentTimeMillis())) {
+            setStatus("配对二维码已过期或校验失败")
+            Toast.makeText(this, "二维码过期或缺少有效的 HTTPS/WSS 证书指纹，请重新生成", Toast.LENGTH_LONG).show()
+            return
+        }
+        val fingerprint = offer.fingerprint ?: "本机回环连接"
+        AlertDialog.Builder(this)
+            .setTitle("确认安全配对")
+            .setMessage("目标节点：${offer.endpointUrl()}\n证书指纹：$fingerprint\n\n仅在你信任此节点时继续。令牌将在证书校验通过并领取成功后保存。")
+            .setPositiveButton("验证并配对") { _, _ -> claimPairingOffer(offer) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun claimPairingOffer(offer: PairingOffer) {
+        setStatus("正在验证证书并领取一次性令牌")
+        appScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) { PairingClaimClient().claim(offer) }
+            }
+            val token = result.getOrNull()
+            if (token == null) {
+                val message = result.exceptionOrNull()?.message ?: "安全配对失败，请重新生成二维码。"
+                setStatus("配对失败")
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
+            val preferences = getSharedPreferences("phonebridge", Context.MODE_PRIVATE)
+            val previousToken = savedAccessToken()
+            val previousServer = preferences.getString("server", null)
+            val previousFingerprint = preferences.getString("server_fingerprint", null)
+            val previousAutoConnect = preferences.getBoolean("auto_connect", false)
+            try {
+                secureTokenStore.put(token)
+                val editor = preferences.edit()
+                    .putString("server", offer.endpointUrl())
+                    .putBoolean("auto_connect", true)
+                if (offer.fingerprint == null) editor.remove("server_fingerprint")
+                else editor.putString("server_fingerprint", offer.fingerprint)
+                check(editor.commit()) { "配对设置无法写入本机存储" }
+            } catch (error: Exception) {
+                preferences.edit()
+                    .putString("server", previousServer)
+                    .putString("server_fingerprint", previousFingerprint)
+                    .putBoolean("auto_connect", previousAutoConnect)
+                    .commit()
+                runCatching { secureTokenStore.put(previousToken) }
+                setStatus("配对凭据保存失败")
+                Toast.makeText(this@MainActivity, "凭据未能安全保存；请重新生成二维码后重试", Toast.LENGTH_LONG).show()
+                Log.w(TAG, "pairing credential persistence failed", error)
+                return@launch
+            }
+
+            disconnect()
+            connectSavedServer()
+            setStatus("安全配对完成 · 正在连接")
+        }
     }
 
     private fun startTelemetryLoop() {

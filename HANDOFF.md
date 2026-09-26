@@ -354,3 +354,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 最终回归已转绿：Node 全量 `129/129`，Android `:app:testDebugUnitTest` 与 `:app:assembleDebug` 均 `BUILD SUCCESSFUL`，敏感扫描通过，`git diff --check` 通过；新 `2.1.0` Debug APK 的实际 `aapt`/`apksigner --print-certs` 门禁返回 `{"ok":true,"errors":[]}`，release 伪装 Debug 证书按预期以 exit 1 拒绝。GitHub Actions 仍需在推送后由远端执行。
 
 实现记录：[`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md)。当前未取得正式 keystore、真实 WSS/二维码扫描、目标设备 `192.168.101.68:41253` 或 ARCore 实机证据。
+
+## 27. 全面深化批次 6 续作：安全扫码配对与可验证备份（2026-09-26）
+
+- 当前工作分支为 `feature/integrated-enhancement`，基线提交 `1d0f52b`；本续作不改 `main`，不使用子 agent。
+- 配对协议升级到 v2：服务端仅在 LAN 监听、TLS 已启用、显式配置手机可达主机且未设置不可轮换的固定 `PHONEBRIDGE_TOKEN` 时生成五分钟二维码；指纹定义为 X.509 DER 证书 SHA-256。Android 使用 CameraX/ZXing 以 500ms 限频读取亮度平面，不保存/上传相机帧；确认后通过 HTTPS 一次性领取，TLS 指纹核验成功才用 Android Keystore 加密保存令牌与连接配置。claim 失败保留原配置。
+- 新增认证 `POST /api/runtime/flush`。它先等待 WorkspaceStore 的延迟快照写盘，再写入主运行时状态；时间线、Mote、provider 等其他 RuntimePersistence 状态由各自同步持久化路径保存。
+- 备份清单升级到 v3，逐文件记录 SHA-256 与字节数；备份前校验并迁移可恢复 JSON，保留聊天历史，去除日志字段、精确坐标和照片数据，排除访问令牌、日志文件、签名材料、APK 和连续位置数据。可选 flush endpoint 在生成前请求服务端落盘。
+- 恢复支持 v2/v3 清单、哈希与路径白名单校验、旧状态迁移、`-VerifyOnly` 只读验证、拒绝空备份、必须明确确认节点已停止、替换失败自动回滚；临时目录仅在 runtime 目录内创建。
+- 验证：Node 全量 **134/134**，运行时备份/恢复 PowerShell 集成故障注入通过，Android `:app:testDebugUnitTest :app:assembleDebug` **BUILD SUCCESSFUL**，`git diff --check` 通过。`lintDebug` 在线任务等待 lint 分析器依赖下载超过 5 分钟；离线复验确认 `intellij-core-31.5.2.jar` 与 `kotlin-compiler-31.5.2.jar` 未缓存，因此 Lint 未通过/未完成（不是代码诊断通过）。
+- 本轮 ADB 5038 设备列表为空，未完成真实二维码扫描、无线 claim 或配对后重连；正式 keystore/2.2.0 Release、20 个角色专属事件、真实 ARCore 平面锚定与两小时设备运行仍待后续执行/验收。

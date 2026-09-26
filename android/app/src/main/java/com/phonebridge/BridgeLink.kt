@@ -1,8 +1,6 @@
 package com.phonebridge
 
-import android.net.Uri
 import android.util.Log
-import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -42,10 +40,10 @@ object BridgeLink {
         val builder = OkHttpClient.Builder()
             .connectTimeout(6L, TimeUnit.SECONDS)
             .pingInterval(20L, TimeUnit.SECONDS)
-        val pin = PairingProtocol.certificatePin(expectedFingerprint)
-        val host = Uri.parse(url).host
-        if (url.startsWith("wss://", ignoreCase = true) && host != null && pin != null) {
-            builder.certificatePinner(CertificatePinner.Builder().add(host, pin).build())
+        val fingerprint = expectedFingerprint
+        if (fingerprint != null) {
+            require(url.startsWith("wss://", ignoreCase = true)) { "pinned connections require WSS" }
+            PairingTls.configure(builder, fingerprint)
         }
         return builder.build()
     }
@@ -134,11 +132,18 @@ object BridgeLink {
     private fun open() {
         val url = targetUrl ?: return
         webSocket?.cancel()
+        val socketClient = runCatching { newClient(url) }.getOrElse { error ->
+            autoReconnect = false
+            val reason = error.message ?: "certificate configuration failed"
+            emitHealth(DeviceHealthEvent.Closed(reason, false, System.currentTimeMillis()))
+            listener()?.onBridgeLost(reason)
+            return
+        }
         val request = Request.Builder()
-            .url(authorizedUrl(url))
+            .url(url)
             .header("x-phonebridge-token", accessToken)
             .build()
-        webSocket = newClient(url).newWebSocket(request, object : WebSocketListener() {
+        webSocket = socketClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 emitHealth(DeviceHealthEvent.Opened(System.currentTimeMillis()))
                 listener()?.onBridgeOpen()
@@ -190,12 +195,6 @@ object BridgeLink {
             Log.i(TAG, "reconnecting $targetUrl")
             open()
         }, delayMs, TimeUnit.MILLISECONDS)
-    }
-
-    private fun authorizedUrl(url: String): String {
-        if (accessToken.isBlank()) return url
-        val separator = if (url.contains('?')) '&' else '?'
-        return "$url${separator}token=${android.net.Uri.encode(accessToken)}"
     }
 
     private fun listener(): Listener? = listenerRef?.get()

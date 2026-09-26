@@ -21,10 +21,11 @@ class SecureTokenStore(context: Context) {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val encrypted = cipher.doFinal(token.toByteArray(Charsets.UTF_8))
-        preferences.edit()
+        val persisted = preferences.edit()
             .putString(KEY_IV, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .putString(KEY_VALUE, Base64.encodeToString(encrypted, Base64.NO_WRAP))
-            .apply()
+            .commit()
+        check(persisted) { "secure token storage failed" }
     }
 
     fun get(): String {

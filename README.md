@@ -59,7 +59,7 @@
 - AI provider 能力、流式 request、取消、每日输出预算和本地记忆存储；新增 `/api/ai/capabilities`、`POST /api/ai/requests/:id/cancel`、`/api/memories`。
 - 现实探索引擎：确定性粗区域事件、过期/跨区域校验、遭遇、库存、合成、装备、家园、任务和幂等奖励；新增 `/api/reality/catalog`、`/api/reality/events`、`/api/reality/events/:id/start|resolve`、`/api/reality/crafting`、`/api/reality/loadout`、`/api/reality/habitat`。
 - Mote 图鉴扩展为 20 个形态，新增潮獭、月鹿、岩鼹、风貂、雷雀、雪兔、花灵、晶蜥、沙狐和影蛾；Android 已加入协议解析和配置回退。
-- 本地配对底座：认证 Web 可调用 `POST /api/pairing/start` 获取五分钟一次性配对码；手机通过 loopback `POST /api/pairing/claim` 领取新令牌。固定环境令牌和非 loopback 节点会拒绝配对。
+- 安全扫码配对：认证 Web 可调用 `POST /api/pairing/start` 获取五分钟有效二维码；远程配对要求明确的手机可达地址、TLS 和 X.509 DER 证书 SHA-256 指纹。Android 用 CameraX/ZXing 本机读取二维码亮度数据，经 HTTPS 一次性领取令牌并保存到 Keystore；失败时保留原连接配置。固定环境令牌、不可轮换的 `PHONEBRIDGE_TOKEN` 与不安全远程 claim 会在配对前被拒绝。
 - 运行时持久化已升级到 schema v3，兼容迁移 v2 信封和旧裸 JSON；会话上下文会裁剪长历史并生成确定性摘要。
 - 批次 A 新增统一脱敏伴侣摘要：`GET /api/companion/summary`，支持 ETag/304；Web 工作台展示 Mote、任务、提醒、现实探索、Provider、记忆和自治状态，现实事件可直接发起遭遇或收集。
 - Android 新增 `CompanionSummary` 协议模型，主界面和 Mote 小组件读取同一份摘要字段，断线时继续使用本地镜像。
@@ -121,7 +121,8 @@ F:\CodexApps\PhoneBridge\cloudflared.exe tunnel --url http://127.0.0.1:9503 --no
 - 可插拔 AI 适配器与设置：`GET /api/ai/providers`、`GET /api/ai/settings`、`PATCH /api/ai/settings`、`POST /api/ai/providers/:id/probe`。
 - 统一伴侣摘要：`GET /api/companion/summary`；现实探索事件动作：`POST /api/reality/events/:id/start|resolve`。
 - 脱敏诊断导出：`GET /api/diagnostics/export`；TLS 配置使用 `PHONEBRIDGE_TLS_KEY`、`PHONEBRIDGE_TLS_CERT` 和可选 `PHONEBRIDGE_PAIRING_HOST`。
-- 配对：认证 Web 调用 `POST /api/pairing/start` 获取五分钟一次性 `qrPayload`；手机向其 endpoint 的 `POST /api/pairing/claim` 提交 `id/code/nonce`，远程配对必须使用 WSS/TLS 和证书指纹。
+- 配对：认证 Web 调用 `POST /api/pairing/start` 获取五分钟一次性 `qrPayload`；手机向其 endpoint 的 `POST /api/pairing/claim` 提交 `id/code/nonce`，远程配对必须使用 HTTPS/WSS、X.509 DER SHA-256 指纹匹配和明确的 LAN 主机地址。
+- 备份前落盘：认证 `POST /api/runtime/flush` 将工作区、时间线、Mote、AI 安全设置等运行时状态同步写盘；脚本可通过 `-FlushEndpoint https://<节点>/api/runtime/flush -AccessTokenPath <本机令牌文件>` 调用，令牌仅在内存中用于请求。
 
 App 的“节点”按钮可同时填写节点地址和访问令牌。令牌文件位于 `server/access.token`，请勿把公网地址和令牌一起公开。
 - 浏览器令牌失效时会重新提示输入；取消提示不会造成无限弹窗。WebSocket、API、画面和音频都校验同一个令牌。
@@ -213,6 +214,8 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - `scripts/verify_release_gates.ps1` 使用实际 APK 的 `aapt dump badging` 和 `apksigner verify --verbose --print-certs`，校验包名 `com.phonebridge`、APK 内部版本、字节数、SHA-256、证书指纹和签名状态；schema v2 manifest 可按需输出到 CI 临时目录。`release` 还必须显式传 `-Signed` 并提供 `PHONEBRIDGE_RELEASE_CERT_SHA256`，不能使用 Android Debug 证书。
 - GitHub Actions 上传 Debug APK 与发布 manifest 作为构建产物，源码历史不包含 APK、运行时状态、令牌或签名材料。
 - `/api/pairing/start` 返回版本化 `qrPayload`；Android `PairingProtocol` 可解析二维码、生成 claim 字段并转换证书指纹，BridgeLink 在显式指纹下使用 OkHttp certificate pinning，断线重连保留地址/令牌/指纹。
-- `/api/diagnostics/export` 明确声明不含 secrets、原图、精确位置和连续轨迹；备份/恢复覆盖所有新增 RuntimePersistence 状态并生成备份文件哈希清单。
+- Android 扫码路径使用 ZXing 仅解析相机亮度平面，不存储或上传扫描画面；配对确认后先完成 HTTPS claim，成功才轮换令牌及连接配置，拒绝/超时不会覆盖旧配置。
+- `POST /api/runtime/flush` 提供认证快照落盘。`backup_runtime.ps1` 生成 v3 SHA-256/字节数清单并逐个校验、迁移与净化允许的状态文件；`restore_runtime.ps1 -VerifyOnly` 只验证不写入，实际恢复必须确认节点已停止，失败时自动回滚。备份保留可恢复聊天状态，排除令牌、日志、照片数据、精确坐标、APK 和签名材料；旧 v2 清单仍可验证和迁移。
+- `/api/diagnostics/export` 明确声明不含 secrets、原图、精确位置和连续轨迹；正式 keystore 与实机扫码仍待后续验收。
 
 本批实现记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md)。正式 keystore、真实 WSS/二维码扫描和 Xperia 实机验收仍待独立证据。

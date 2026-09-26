@@ -21,3 +21,9 @@
 
 - 当前没有外部正式 keystore，因此未生成或宣称正式签名 APK，也未上传商店。
 - 目标手机 `192.168.101.68:41253`、真实局域网 WSS 配对、二维码相机扫描、ARCore、GPS fix 和长时间运行仍需设备可用后的独立验收。
+
+## 后续续作记录（2026-09-26）
+
+以 `1d0f52b` 为续作基线：完成 Android CameraX/ZXing 本机扫码、v2 二维码 claim、HTTPS/TLS DER 指纹校验和失败保留旧配置；服务端配对前置条件与一次性 claim 已接通。运行时备份/恢复加入完整清单验证、JSON 状态净化和迁移、空备份保护、只读验证及失败回滚；新增认证 flush API，并确保 WorkspaceStore debounce 写入先落盘。聊天历史作为可恢复用户状态保留；令牌、日志、原始媒体和精确坐标继续排除。
+
+验收记录：Node 全量 134/134；PowerShell 临时目录备份/恢复故障注入通过；Android 单测与 Debug 构建通过。`lintDebug` 因分析器依赖缺失且仓库下载连接挂起而未完成，离线复验显示 `intellij-core-31.5.2.jar`、`kotlin-compiler-31.5.2.jar` 未缓存。当前 ADB 无已连接设备，因此真实扫码/claim 未验收。正式签名、角色专属剧情扩展和真实 ARCore 留在后续增量。

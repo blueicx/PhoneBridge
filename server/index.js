@@ -3,6 +3,7 @@ const https = require('https');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
+const QRCode = require('qrcode');
 const { WorkspaceStore, createEventEnvelope } = require('./workspace-core');
 const { DeviceHealthStore } = require('./device-health');
 const { MoteStore, deriveMoteBehavior } = require('./mote-profiles');
@@ -25,7 +26,7 @@ const { ProactivePolicy } = require('./proactive-policy');
 const { PairingManager } = require('./pairing');
 const { prepareConversation } = require('./session-context');
 const { buildCompanionSummary } = require('./companion-summary');
-const { loadTlsOptions, pairingTransport, buildPairingQrPayload } = require('./tls-config');
+const { loadTlsOptions, pairingTransport, pairingAvailabilityError, buildPairingQrPayload } = require('./tls-config');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1494,6 +1495,7 @@ const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name
 <div class="grid"><div class="panel"><h2>实时感官</h2><img id="frame"><div class="metrics" style="margin-top:12px"><div class="metric"><b id="cpu">-</b><span>手机 CPU</span></div><div class="metric"><b id="mem">-</b><span>内存</span></div><div class="metric"><b id="bat">-</b><span>电量</span></div><div class="metric"><b id="temp">-</b><span>温度</span></div></div><div class="row"><button class="primary" onclick="device('camera_on')">开眼</button><button onclick="device('camera_front')">前眼</button><button onclick="device('camera_back')">后眼</button><button onclick="device('listen_on')">监听</button><button onclick="say()">说话</button></div><div class="row"><input id="speech" placeholder="输入要在手机上播放的话" style="flex:1"></div><div class=row><select id=idleTimeout title="空闲断流时间"><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5 selected>5 分钟</option><option value=10>10 分钟</option><option value=30>30 分钟</option></select><button onclick=setIdleTimeout()>空闲断流</button></div><div class=row><select id=screenOffTimeout title="息屏自动退出时间"><option value=0>不自动退出</option><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5>5 分钟</option><option value=10 selected>10 分钟</option><option value=30>30 分钟</option><option value=60>60 分钟</option></select><button onclick=setScreenOffTimeout()>息屏退出</button></div></div>
 <div class="panel"><h2>指挥台</h2><div class="tabs"><button class="active" data-tab="tasks">任务</button><button data-tab="log">日志</button><button data-tab="sensors">传感器</button><button data-tab="frame">画面</button></div><div id="tasks"></div><div id="log" hidden></div><div id="sensors" hidden></div><div id="framebox" hidden><img id="frame2"></div><div class="row"><input id="cmd" placeholder="help / ping 8.8.8.8 / screenshot / ps / say 你好" style="flex:1"><button class="primary" onclick="sendCmd()">执行</button></div><textarea id="detail" readonly placeholder="选中任务的输出会出现在这里"></textarea></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div></div>
+<div class="panel" style="grid-column:1/-1"><h2>手机安全配对</h2><div class="row"><button onclick="startPairing()">生成五分钟二维码</button><span id="pairingStatus" class="sub" aria-live="polite">在手机“节点”中选择“扫码配对”</span></div><img id="pairingQr" alt="手机配对二维码" style="display:none;width:min(300px,100%);margin-top:12px;background:white;border-radius:12px;padding:8px"></div>
 <div class="panel" style="grid-column:1/-1"><h2>现实探索</h2><div class="sub">只输入粗区域 ID，不上传精确位置；例如 <code>cell:1561:6073</code>。</div><div class="row"><input id="realityRegion" placeholder="粗区域 ID" style="flex:1"><button class="primary" onclick="refreshReality()">刷新事件</button></div><div id="realitySummary" class="sub" style="margin-top:8px">尚未加载现实事件</div></div>
 <script>
 let selected='';
@@ -1593,6 +1595,18 @@ async function refreshCompanionSummary(){
       aiProviderSelect.innerHTML=(providers.providers||[]).map(p=>'<option value="'+esc(p.id)+'" '+(p.isActive?'selected':'')+'>'+esc(p.name||p.id)+' · '+esc((p.capabilities||[]).join('/'))+'</option>').join('');
     }
   }catch(error){ companionSummary.textContent='伴侣摘要不可用：'+error.message; }
+}
+async function startPairing(){
+  const qr=document.getElementById('pairingQr');
+  const status=document.getElementById('pairingStatus');
+  qr.style.display='none';qr.removeAttribute('src');
+  try{
+    const result=await api('/api/pairing/start',{method:'POST'});
+    qr.src=result.qrImage;qr.style.display='block';
+    status.textContent='请在手机扫码，二维码将在五分钟内过期。完成后此浏览器需要重新登录。';
+    const expiresAt=result.offer.expiresAt;
+    setTimeout(()=>{if(Date.now()>=expiresAt){qr.removeAttribute('src');qr.style.display='none';status.textContent='配对码已过期，请重新生成。'}},Math.max(0,expiresAt-Date.now())+100);
+  }catch(error){status.textContent='无法生成配对码：'+error.message}
 }
 async function probeSelectedProvider(){
   const id=aiProviderSelect.value;
@@ -1793,12 +1807,19 @@ const handleHttpRequest = async (req, res) => {
     }
 
     if (parsedUrl.pathname === '/api/pairing/start' && req.method === 'POST') {
-      const loopback = BIND_HOST === '127.0.0.1' || BIND_HOST === 'localhost' || BIND_HOST === '::1';
-      if (!loopback && !TLS_ENABLED) return sendJson(res, 409, { ok: false, error: 'remote pairing requires TLS' });
+      const unavailableReason = pairingAvailabilityError({
+        bindHost: BIND_HOST,
+        pairingHost: PAIRING_HOST,
+        tlsEnabled: TLS_ENABLED,
+        fixedToken: Boolean(process.env.PHONEBRIDGE_TOKEN),
+      });
+      if (unavailableReason) return sendJson(res, 409, { ok: false, error: unavailableReason });
       const transport = pairingTransport({ tls: TLS_ENABLED, host: PAIRING_HOST, port: PORT, fingerprint: TLS_CONFIG.fingerprint });
       const offer = pairingManager.start({ host: PAIRING_HOST, port: PORT, fingerprint: TLS_CONFIG.fingerprint });
       const qrPayload = buildPairingQrPayload({ ...offer, transport });
-      return sendJson(res, 201, { ok: true, offer: { ...offer, ...transport, qrPayload } });
+      const qrImage = await QRCode.toDataURL(qrPayload, { errorCorrectionLevel: 'M', margin: 2, width: 300 });
+      res.setHeader('Cache-Control', 'no-store');
+      return sendJson(res, 201, { ok: true, offer: { ...offer, ...transport, qrPayload }, qrImage });
     }
 
     if (deviceSimulator && parsedUrl.pathname === '/api/dev/simulator' && req.method === 'GET') {
@@ -1839,6 +1860,19 @@ const handleHttpRequest = async (req, res) => {
       }
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ETag: etag, 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify(response));
+    }
+    if (parsedUrl.pathname === '/api/runtime/flush' && req.method === 'POST') {
+      try {
+        await workspaceStore.flushPersistence();
+        savePersistentState();
+        return sendJson(res, 200, {
+          ok: true,
+          flushedAt: new Date().toISOString(),
+          persistence: runtimePersistence.snapshot(),
+        });
+      } catch (_) {
+        return sendJson(res, 503, { ok: false, error: 'runtime state flush failed' });
+      }
     }
     if (parsedUrl.pathname === '/api/diagnostics' && req.method === 'GET') {
       diagnosticsCollector.updateTelemetry(phoneTelemetry);
