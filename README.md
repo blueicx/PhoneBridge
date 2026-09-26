@@ -39,7 +39,7 @@
 - 自治审批闭环：`/api/autonomy/approvals` 为受限工具生成一次性确认，批准后只能消费一次，过期、重放和硬禁止调用继续拒绝。
 - 同步恢复：`/api/workspace/events?since=N` 返回 delta/snapshot 模式、起止 revision 和 `resetRequired`，事件保留窗口不足时安全回退全量同步。
 - Mote 关系任务：`/api/motes/relationship`、`/api/motes/quests` 提供幂等互动经验、等级和陪伴任务；Android 识别审批、关系和任务事件。
-- GitHub Actions：`.github/workflows/ci.yml` 自动执行 Node 服务端测试、Android 单元测试和差异空白检查，不运行 ADB 或上传运行时数据。
+- GitHub Actions：`.github/workflows/ci.yml` 自动执行 Node 服务端测试、Android 单元测试/Lint/Debug 构建、发布门禁和差异空白检查；不运行 ADB 或上传运行时数据。
 - 加载性能：`GET /api/state?view=summary` 返回首屏所需的轻量投影并支持 ETag；完整快照按 revision 缓存，Web 工作台采用帧合并更新，Android 同步按 revision/eventId 去重。
 - 任务运行指标：任务公开摘要包含 runner attempt、retryCount、queuePosition、lastError 和 lastTransitionAt，便于 Web/Android 共用审计信息。
 - 工作台加载优化：摘要轮询保存 ETag，服务端返回 `304` 时浏览器跳过解析和 DOM 重绘；任务状态统计、筛选、详情、结果和最近审计按需展示。

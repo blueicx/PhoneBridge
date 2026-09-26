@@ -46,3 +46,4 @@ CI 复核：提交 2ffadf7 的 GitHub Actions 因递归测试发现运行到 nod
 - 故障注入覆盖关系持久化失败、服务重建、重放去重，以及超过 512 条普通交互后的故事领奖重试。
 - 验收：Node **142/142**；Android 单测/Debug 构建通过；备份/恢复、签名解析、敏感扫描和性能预算通过。在线 Lint 因 Google Maven TLS 握手失败未完成。Debug APK 为 `2.2.0` / code `4`，SHA-256 `03de9eec453d9332f58099f069e9aa4cdefdb88517bd2ac33c680ec20cd717de`，不是正式签名版。实机配对、GPS/镜头、ARCore、正式 keystore 仍待验收。
 - GitHub Actions run #29（`cf45596`）已全绿，真实 APK 门禁与 artifact 上传通过；确认 Ubuntu `V2 Signer` 多行 SHA-256 格式修复有效。
+- 本机 Android Lint 因 Google Maven TLS 握手失败未运行到分析器；CI 已新增 `:app:lintDebug`，待新 run 验收。Xperia 当前在线但仍装 `2.1.0`，遥测显示充电 0%、42.2°C；保留用户数据，未在高温低电条件下升级或运行相机/长测。

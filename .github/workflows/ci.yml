@@ -36,6 +36,9 @@ jobs:
       - name: Android unit tests
         working-directory: android
         run: bash ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+      - name: Android lint
+        working-directory: android
+        run: bash ./gradlew :app:lintDebug --no-daemon --console=plain
       - name: Android debug build
         working-directory: android
         run: bash ./gradlew :app:assembleDebug --no-daemon --console=plain

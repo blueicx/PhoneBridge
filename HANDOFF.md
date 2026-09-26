@@ -386,3 +386,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - Debug APK 当前门禁检查通过：包名 `com.phonebridge`、`2.2.0` / code `4`、APK SHA-256 `03de9eec453d9332f58099f069e9aa4cdefdb88517bd2ac33c680ec20cd717de`；证书是 Android Debug 证书，只是内部 Debug 候选，不是正式签名版。
 - 本次重试 `:app:lintDebug` 仍未完成，失败点为从 `dl.google.com` 下载 `kotlin-compiler-31.5.2.jar` 时 TLS 握手被远端关闭；这是环境依赖获取失败，不是 Lint 诊断通过。无线 ADB 当前未连接，实机配对/位置/镜头与 ARCore 真实锚点仍未验收。
 - GitHub Actions run #29（提交 `cf45596`）全部通过：Node、敏感扫描、协议、性能、Android 单测/Debug 构建、legacy/V2 signer fixture、真实 APK release gate、artifact 上传、diff 检查和 clean-worktree。由此确认 Ubuntu `V2 Signer` 多行摘要解析修复有效；Debug APK 与 manifest 已作为 Actions artifact 上传。正式签名/实机等仍按前文保持待验收。
+
+## 30. Lint CI 补验与 Xperia 连接状态（2026-09-27）
+
+- 本机 `:app:lintDebug` 失败在 Google Maven 下载 `kotlin-compiler-31.5.2.jar` 的 TLS handshake；不是 Lint 诊断结果。现已把 `:app:lintDebug` 增加到 Ubuntu GitHub Actions，等待新 run 给出可访问网络下的结果。
+- Xperia XZ2 / LineageOS 已通过无线 ADB 连接，当前序列为 `192.168.101.68:40325`（交接中旧端口 `39663` 现不可达）。只读检查确认手机安装 `com.phonebridge` `2.1.0` / code `3`，尚未升级。
+- 设备遥测：USB 充电、battery level `0%`、温度 `42.2°C`；`dumpsys thermalservice` 显示 status 0，但 `HAL Ready: false`。为保留现有 Debug 数据并避免高温/低电状态，不执行 APK 升级、相机/GPS、扫码或长时测试；待电量与温度恢复后再继续实机验收。
