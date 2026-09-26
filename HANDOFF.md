@@ -398,5 +398,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - GitHub Actions run #31（提交 `cbe449d`）首次真正执行 Android Lint，报告 8 个错误、193 条警告。run #32（诊断提交 `34f9766`）打印完整报告，确认 8 项分别是：`BridgeService.kt` 后台创建 `AudioRecord` 时没有在使用点重新检查麦克风权限（1）；`CompanionView.kt` 将 `Color.WHITE == -1` 误作为 `Color.argb` 的 RGB 分量（6）；`MainActivity.kt` PTT 读取循环缩进与实际作用域不符（1）。
 - 已修复：在后台创建录音器前再次检查录音权限，并对权限撤销造成的 `SecurityException` 停止并清理语音会话；白色 RGB 改为合法分量 `255`；修正循环缩进。没有新增 lint baseline 或忽略规则。
 - 本机验证：Node **142/142**；Android `:app:testDebugUnitTest :app:assembleDebug` **BUILD SUCCESSFUL**（48 actionable tasks）；`scan_secrets.ps1`、APK signer parser、workspace performance budget、Debug APK release gate 与 `git diff --check` 均通过。性能输出 `elapsedMs=1.339`、`fullBytes=1694`、`summaryBytes=48`、缓存命中 `10000`、突发广播 `1`；Debug APK 内部版本 `2.2.0` / code `4`。
-- 本机 `:app:lintDebug` 到达 `lintAnalyzeDebug` 后超过 6 分钟无进展且未生成报告，已结束该无响应分析；这不计为 Lint 通过。修复代码推送后的 GitHub Actions 结果待取。
+- 本机 `:app:lintDebug` 到达 `lintAnalyzeDebug` 后超过 6 分钟无进展且未生成报告，已结束该无响应分析；这不计为本机 Lint 通过。
+- GitHub Actions run #33（提交 `11fe2cd`）全量成功，耗时 4m35s：Node **142/142**、协议 **8/8**、Android 单测、Lint、Debug 构建、签名解析、APK 发布门禁、artifact 上传、`git diff --check` 与 clean-worktree 检查均通过。原 8 个 Lint 错误已由该远端 Lint 步骤复验清零。
 - 实机仍不执行安装/相机/GPS/扫码/长时测试：上次只读遥测为 0% 电量、42.2°C，且 thermal HAL 未就绪。正式签名身份、真实配对、ARCore 平面锚定与两小时运行继续保持未验收。

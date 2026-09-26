@@ -219,6 +219,6 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - `POST /api/runtime/flush` 提供认证快照落盘。`backup_runtime.ps1` 生成 v3 SHA-256/字节数清单并逐个校验、迁移与净化允许的状态文件；`restore_runtime.ps1 -VerifyOnly` 只验证不写入，实际恢复必须确认节点已停止，失败时自动回滚。备份保留可恢复聊天状态，排除令牌、日志、照片数据、精确坐标、APK 和签名材料；旧 v2 清单仍可验证和迁移。
 - `/api/diagnostics/export` 明确声明不含 secrets、原图、精确位置和连续轨迹；正式 keystore 与实机扫码仍待后续验收。
 - `scripts/verify_release_gates.ps1` 的签名元数据解析兼容旧版 `Signer #1` 与新版 `V2 Signer` 标签、单行/换行指纹、冒号/空格分隔、CRLF 和 ANSI 着色。Actions run #29（`cf45596`）已通过真实 APK 门禁，并成功上传 Debug APK 与 manifest。
-- 后续验收：Node 全量 **142/142**、运行时备份/恢复、签名解析、敏感扫描、性能预算与当前 Debug APK 实际签名门禁通过；Android 单测和 Debug 构建通过。GitHub Actions run #31 首次执行 Lint 揭示 8 个真实代码错误，run #32 增加了完整错误诊断；已修复后台录音的二次权限检查与撤权处理、粒子白色 RGB 分量和音频循环缩进。本机 `lintAnalyzeDebug` 连续运行超过 6 分钟无进展而中止，当前修复提交的远端 Lint 验证待 CI。无线实机、正式签名和 ARCore 真锚定仍未验收。
+- 后续验收：Node 全量 **142/142**、运行时备份/恢复、签名解析、敏感扫描、性能预算与当前 Debug APK 实际签名门禁通过；Android 单测和 Debug 构建通过。GitHub Actions run #31 首次执行 Lint 揭示 8 个真实代码错误，run #32 增加了完整错误诊断；提交 `11fe2cd` 修复后台录音的二次权限检查与撤权处理、粒子白色 RGB 分量和音频循环缩进。GitHub Actions run #33 全部通过，Android Lint 错误清零并完成 APK artifact 上传。本机 `lintAnalyzeDebug` 曾连续运行超过 6 分钟无进展，未计作通过。无线实机、正式签名和 ARCore 真锚定仍未验收。
 
 本批实现记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md)。正式 keystore、真实 WSS/二维码扫描和 Xperia 实机验收仍待独立证据。
