@@ -392,3 +392,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本机 `:app:lintDebug` 失败在 Google Maven 下载 `kotlin-compiler-31.5.2.jar` 的 TLS handshake；不是 Lint 诊断结果。现已把 `:app:lintDebug` 增加到 Ubuntu GitHub Actions，等待新 run 给出可访问网络下的结果。
 - Xperia XZ2 / LineageOS 已通过无线 ADB 连接，当前序列为 `192.168.101.68:40325`（交接中旧端口 `39663` 现不可达）。只读检查确认手机安装 `com.phonebridge` `2.1.0` / code `3`，尚未升级。
 - 设备遥测：USB 充电、battery level `0%`、温度 `42.2°C`；`dumpsys thermalservice` 显示 status 0，但 `HAL Ready: false`。为保留现有 Debug 数据并避免高温/低电状态，不执行 APK 升级、相机/GPS、扫码或长时测试；待电量与温度恢复后再继续实机验收。
+
+## 31. Android Lint 根因修复（2026-09-27）
+
+- GitHub Actions run #31（提交 `cbe449d`）首次真正执行 Android Lint，报告 8 个错误、193 条警告。run #32（诊断提交 `34f9766`）打印完整报告，确认 8 项分别是：`BridgeService.kt` 后台创建 `AudioRecord` 时没有在使用点重新检查麦克风权限（1）；`CompanionView.kt` 将 `Color.WHITE == -1` 误作为 `Color.argb` 的 RGB 分量（6）；`MainActivity.kt` PTT 读取循环缩进与实际作用域不符（1）。
+- 已修复：在后台创建录音器前再次检查录音权限，并对权限撤销造成的 `SecurityException` 停止并清理语音会话；白色 RGB 改为合法分量 `255`；修正循环缩进。没有新增 lint baseline 或忽略规则。
+- 本机验证：Node **142/142**；Android `:app:testDebugUnitTest :app:assembleDebug` **BUILD SUCCESSFUL**（48 actionable tasks）；`scan_secrets.ps1`、APK signer parser、workspace performance budget、Debug APK release gate 与 `git diff --check` 均通过。性能输出 `elapsedMs=1.339`、`fullBytes=1694`、`summaryBytes=48`、缓存命中 `10000`、突发广播 `1`；Debug APK 内部版本 `2.2.0` / code `4`。
+- 本机 `:app:lintDebug` 到达 `lintAnalyzeDebug` 后超过 6 分钟无进展且未生成报告，已结束该无响应分析；这不计为 Lint 通过。修复代码推送后的 GitHub Actions 结果待取。
+- 实机仍不执行安装/相机/GPS/扫码/长时测试：上次只读遥测为 0% 电量、42.2°C，且 thermal HAL 未就绪。正式签名身份、真实配对、ARCore 平面锚定与两小时运行继续保持未验收。

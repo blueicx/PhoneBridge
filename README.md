@@ -137,7 +137,7 @@ App 的“节点”按钮可同时填写节点地址和访问令牌。令牌文�
 - 健康检查：`GET /health/live`、`GET /health/ready`，兼容 `/api/health/liveness` 与 `/api/health/readiness`；`/api/diagnostics` 增加持久化恢复指标。
 - 日志通过结构化 JSON 输出并对 token、密码、Authorization、Cookie 和密钥模式脱敏；访问令牌轮换接口只返回轮换结果，不返回新令牌。
 - 备份/恢复：`scripts/backup_runtime.ps1`、`scripts/restore_runtime.ps1`；备份只包含可恢复状态文件，排除 token、日志、画面和构建产物。
-- CI 现在覆盖 Node、协议回归、性能预算、敏感扫描、Android 单测/Debug 构建、差异检查和干净工作树检查。
+- CI 现在覆盖 Node、协议回归、性能预算、敏感扫描、Android 单测/Lint/Debug 构建、签名解析与发布门禁、差异检查和干净工作树检查。
 
 批次 A 的设计、迁移和回滚说明见 [`docs/superpowers/phonebridge-batch-a.md`](docs/superpowers/phonebridge-batch-a.md)。最新实体机证据与未验证边界见 `HANDOFF.md` 第 16 节。
 
@@ -219,6 +219,6 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - `POST /api/runtime/flush` 提供认证快照落盘。`backup_runtime.ps1` 生成 v3 SHA-256/字节数清单并逐个校验、迁移与净化允许的状态文件；`restore_runtime.ps1 -VerifyOnly` 只验证不写入，实际恢复必须确认节点已停止，失败时自动回滚。备份保留可恢复聊天状态，排除令牌、日志、照片数据、精确坐标、APK 和签名材料；旧 v2 清单仍可验证和迁移。
 - `/api/diagnostics/export` 明确声明不含 secrets、原图、精确位置和连续轨迹；正式 keystore 与实机扫码仍待后续验收。
 - `scripts/verify_release_gates.ps1` 的签名元数据解析兼容旧版 `Signer #1` 与新版 `V2 Signer` 标签、单行/换行指纹、冒号/空格分隔、CRLF 和 ANSI 着色。Actions run #29（`cf45596`）已通过真实 APK 门禁，并成功上传 Debug APK 与 manifest。
-- 后续验收：Node 全量 **142/142**、运行时备份/恢复、签名解析、敏感扫描、性能预算与当前 Debug APK 实际签名门禁通过；Android 单测和 Debug 构建通过。`lintDebug` 未通过：Google Maven 下载分析器依赖时 TLS 握手被远端关闭；无线实机、正式签名和 ARCore 真锚定仍未验收。
+- 后续验收：Node 全量 **142/142**、运行时备份/恢复、签名解析、敏感扫描、性能预算与当前 Debug APK 实际签名门禁通过；Android 单测和 Debug 构建通过。GitHub Actions run #31 首次执行 Lint 揭示 8 个真实代码错误，run #32 增加了完整错误诊断；已修复后台录音的二次权限检查与撤权处理、粒子白色 RGB 分量和音频循环缩进。本机 `lintAnalyzeDebug` 连续运行超过 6 分钟无进展而中止，当前修复提交的远端 Lint 验证待 CI。无线实机、正式签名和 ARCore 真锚定仍未验收。
 
 本批实现记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md)。正式 keystore、真实 WSS/二维码扫描和 Xperia 实机验收仍待独立证据。

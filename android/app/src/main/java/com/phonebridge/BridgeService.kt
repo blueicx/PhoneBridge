@@ -178,15 +178,25 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         )
     }
 
+    private fun showVoicePermissionMissing() {
+        val detail = "请先打开 App 授予麦克风权限。"
+        syncForegroundState(currentForegroundState().permissionMissing(detail))
+        updateQuickReply("连续语音未开启", detail)
+    }
+
+    private fun stopVoiceChatAfterPermissionRevoked() {
+        voiceHandler.post {
+            stopVoiceChat(persist = true, notify = false)
+            showVoicePermissionMissing()
+        }
+    }
+
     private fun startVoiceChat(persist: Boolean = true) {
         if (isVoiceChatRunning) return
         if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            syncForegroundState(
-                currentForegroundState().permissionMissing("请先打开 App 授予麦克风权限。")
-            )
-            updateQuickReply("连续语音未开启", "请先打开 App 授予麦克风权限。")
+            showVoicePermissionMissing()
             return
         }
         isVoiceChatRunning = true
@@ -329,6 +339,12 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
     }
 
     private fun startVoiceCapture() {
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            stopVoiceChatAfterPermissionRevoked()
+            return
+        }
         if (voiceCaptureRunning) return
         val minBuffer = AudioRecord.getMinBufferSize(
             VOICE_SAMPLE_RATE,
@@ -336,13 +352,18 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
             AudioFormat.ENCODING_PCM_16BIT
         )
         require(minBuffer > 0) { "麦克风缓冲区初始化失败" }
-        val record = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            VOICE_SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            maxOf(minBuffer * 4, 8_192)
-        )
+        val record = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                VOICE_SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                maxOf(minBuffer * 4, 8_192)
+            )
+        } catch (_: SecurityException) {
+            stopVoiceChatAfterPermissionRevoked()
+            return
+        }
         require(record.state == AudioRecord.STATE_INITIALIZED) { "麦克风初始化失败" }
 
         if (AcousticEchoCanceler.isAvailable()) {
@@ -354,7 +375,13 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
             noiseSuppressor?.enabled = true
         }
 
-        record.startRecording()
+        try {
+            record.startRecording()
+        } catch (_: SecurityException) {
+            runCatching { record.release() }
+            stopVoiceChatAfterPermissionRevoked()
+            return
+        }
         voiceAudioRecord = record
         voiceCaptureRunning = true
         voicePaused = false

@@ -1461,9 +1461,9 @@ class CompanionView @JvmOverloads constructor(
                 bodyPath.close()
                 particlePaint.color = Color.argb(
                     (86 * age).toInt(),
-                    Color.WHITE,
-                    Color.WHITE,
-                    Color.WHITE
+                    255,
+                    255,
+                    255
                 )
                 canvas.drawPath(bodyPath, particlePaint)
             }

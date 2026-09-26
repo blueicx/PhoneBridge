@@ -3967,10 +3967,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             val buffer = ByteArray(1600)
             var chunksSent = 0
             try {
-            while (micRunning) {
-                val count = record.read(buffer, 0, buffer.size)
-                if (!micRunning) break
-                if (count <= 0) continue
+                while (micRunning) {
+                    val count = record.read(buffer, 0, buffer.size)
+                    if (!micRunning) break
+                    if (count <= 0) continue
                     sendBinary(TYPE_AUDIO, buffer.copyOf(count))
                     chunksSent++
                     SystemClock.sleep(1)
