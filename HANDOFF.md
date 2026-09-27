@@ -469,4 +469,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - Pairing/TLS fingerprint 与 pin、一次性 claim / 错 nonce、Android QR/claim client、设备断线 reducer、timeline cursor 与 outbox retry 均在全量自动测试范围内；Node `154/154`、Android JVM `136/136`、Lint、Debug 构建、敏感扫描、APK 门禁和性能预算通过。实际无线 `192.168.101.68:39663` TCP 不可达，手机相机权限未授权，当前 Android 节点显示离线；因此尚无实机扫码、WSS pin、断线重连、事件同步延迟或现实线索业务结果证据。
 - 本地隔离备份恢复演练通过。批次 5 Actions run [36340549528](https://github.com/blueicx/PhoneBridge/actions/runs/36340549528) 成功（3m54s），artifact `phonebridge-debug-5399286df307ef74c05ffaa6ad81a893305b5314` 已上传，大小 `65,278,819 bytes`；APK 与签名密钥没有进入 Git。
 - 正式签名仍为受控待办：未确认密钥及独立加密恢复副本的存在和可解密性，因此没有创建/使用 Release 身份、没有生成正式签名 APK。当前 Debug APK 不能分发为正式版。
-- 本轮未完成两小时运行、连续电量/温度记录、实机配对/断线恢复、同步延迟测量、三类镜头线索与 ARCore 放置。重新开放这些测试前需确认无线/USB 设备可用、节点可连接、相机授权由设备用户明确完成；正式签名需先验证离线加密恢复副本。本批文档/代码状态在 GitHub Actions 通过后补录本节提交号。
+- 本轮未完成两小时运行、连续电量/温度记录、实机配对/断线恢复、同步延迟测量、三类镜头线索与 ARCore 放置。重新开放这些测试前需确认无线/USB 设备可用、节点可连接、相机授权由设备用户明确完成；正式签名需先验证离线加密恢复副本。
+- 批次 6 交接提交 `04e2cf1` 已推送；GitHub Actions run [36340939107](https://github.com/blueicx/PhoneBridge/actions/runs/36340939107) 全部成功（4m53s）。内部 Debug APK artifact `phonebridge-debug-04e2cf1565336cdb370050ab719652de98898e6d`（`65,278,817 bytes`）已上传，未进入 Git。之后仅补录此 CI 证据。
