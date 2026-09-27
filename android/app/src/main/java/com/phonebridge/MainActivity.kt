@@ -318,7 +318,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var arCoreInstallPolls = 0
     private var awaitingArCoreCameraPermission = false
     private var cancelledRealityCameraPermission = false
-    @Volatile private var latestArCameraTemperatureCelsius: Float? = null
+    @Volatile private var latestArCameraTemperature: TimedTemperature? = null
+    @Volatile private var latestTelemetrySampledAtMs = 0L
     private var lastArRemoteFrameAt = 0L
     private val arFrameUploadPending = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile private var pairingScanActive = false
@@ -330,7 +331,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         override fun run() {
             if (destroyed) return
             val temperature = currentRealityTemperatureCelsius()
-            latestArCameraTemperatureCelsius = temperature
+            latestArCameraTemperature = temperature?.let {
+                TimedTemperature(it, SystemClock.elapsedRealtime())
+            }
             realityCaptureController.observeTemperature(SystemClock.elapsedRealtime(), temperature)
             val capture = realityCaptureController.snapshot()
             if (realityLensActive && !capture.thermalLockout &&
@@ -542,8 +545,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             }
 
             override fun currentTemperatureCelsius(): Float? =
-                latestArCameraTemperatureCelsius
-                    ?: listOfNotNull(latestTelemetry?.batteryTemperature, latestTelemetry?.thermalCelsius).maxOrNull()
+                currentCachedRealityTemperatureCelsius(SystemClock.elapsedRealtime())
         })
         realityLensView.contentDescription = "现实镜头，三个可探索线索"
         realityLensView.setDiscovered(loadDiscoveredRealityNodes())
@@ -2032,13 +2034,31 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         else startCameraOrReportPermissions()
     }
 
-    private fun currentRealityTemperatureCelsius(): Float? =
-        listOfNotNull(
-            DeviceTelemetry.currentBatteryTemperatureCelsius(this),
-            latestArCameraTemperatureCelsius,
-            latestTelemetry?.batteryTemperature,
-            latestTelemetry?.thermalCelsius,
-        ).filter { it.isFinite() && it > 0f }.maxOrNull()
+    private fun currentRealityTemperatureCelsius(): Float? {
+        val nowMs = SystemClock.elapsedRealtime()
+        return RealityTemperaturePolicy.maximumFresh(
+            nowMs = nowMs,
+            currentCelsius = DeviceTelemetry.currentBatteryTemperatureCelsius(this),
+            cached = cachedTelemetryTemperatures(),
+        )
+    }
+
+    private fun currentCachedRealityTemperatureCelsius(nowMs: Long): Float? =
+        RealityTemperaturePolicy.maximumFresh(
+            nowMs = nowMs,
+            currentCelsius = null,
+            cached = cachedTelemetryTemperatures() + listOfNotNull(latestArCameraTemperature),
+        )
+
+    private fun cachedTelemetryTemperatures(): List<TimedTemperature> {
+        val sampleAtMs = latestTelemetrySampledAtMs
+        val telemetry = latestTelemetry ?: return emptyList()
+        if (sampleAtMs <= 0L) return emptyList()
+        return listOfNotNull(
+            telemetry.batteryTemperature.takeIf { it.isFinite() && it > 0f },
+            telemetry.thermalCelsius.takeIf { it.isFinite() && it > 0f },
+        ).map { TimedTemperature(it, sampleAtMs) }
+    }
 
     private fun beginArCoreForCurrentEntry() {
         if (!realityLensActive) return
@@ -2292,8 +2312,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 .getBoolean("allow_remote_camera_upload", false)
         ) return false
         val now = SystemClock.elapsedRealtime()
-        val temperature = latestArCameraTemperatureCelsius
-            ?: latestTelemetry?.batteryTemperature?.takeIf { it.isFinite() }
+        val temperature = currentCachedRealityTemperatureCelsius(now)
         val battery = latestTelemetry?.batteryPercent
         if ((temperature ?: 0f) >= 40f || (battery != null && battery <= 10)) return false
         val interval = if ((temperature ?: 0f) >= 38f || (battery != null && battery <= 20)) 240L else 120L
@@ -5057,7 +5076,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (immersiveMode && keyCode == KeyEvent.KEYCODE_BACK) {
-            if (!dismissFocusKeyboard()) exitFocusMode()
+            if (!dismissFocusKeyboard()) onBackPressedDispatcher.onBackPressed()
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -5430,6 +5449,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 sensorText.text = sample.summary()
             }
             latestTelemetry = sample
+            latestTelemetrySampledAtMs = SystemClock.elapsedRealtime()
             persistWidgetSnapshot()
             MoteWidget.refresh(this@MainActivity)
             sendJson(

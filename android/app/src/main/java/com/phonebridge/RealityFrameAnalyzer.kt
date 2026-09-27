@@ -210,11 +210,19 @@ class RealitySessionLifecycle(private val port: RealitySessionLifecyclePort) {
 
     fun close() {
         if (state == RealitySessionLifecycleState.CLOSED) return
-        pause()
+        var failure: Exception? = null
+        try {
+            pause()
+        } catch (error: Exception) {
+            failure = error
+        }
         try {
             port.close()
+        } catch (error: Exception) {
+            if (failure == null) failure = error else failure.addSuppressed(error)
         } finally {
             state = RealitySessionLifecycleState.CLOSED
         }
+        failure?.let { throw it }
     }
 }

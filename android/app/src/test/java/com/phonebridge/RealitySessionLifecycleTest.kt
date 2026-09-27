@@ -40,4 +40,20 @@ class RealitySessionLifecycleTest {
         assertEquals(1, closeCount)
         assertEquals(RealitySessionLifecycleState.CLOSED, lifecycle.state)
     }
+
+    @Test
+    fun closeStillReleasesSessionWhenPauseThrows() {
+        var closeCount = 0
+        val lifecycle = RealitySessionLifecycle(object : RealitySessionLifecyclePort {
+            override fun resume() = Unit
+            override fun pause() { error("pause failed") }
+            override fun close() { closeCount += 1 }
+        })
+        assertTrue(lifecycle.resume())
+
+        runCatching { lifecycle.close() }
+
+        assertEquals(1, closeCount)
+        assertEquals(RealitySessionLifecycleState.CLOSED, lifecycle.state)
+    }
 }

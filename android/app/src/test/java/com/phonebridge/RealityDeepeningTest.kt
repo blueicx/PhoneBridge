@@ -82,11 +82,31 @@ class RealityDeepeningTest {
         val attempt = controller.beginArCoreAttempt()!!
         assertTrue(controller.markFallback(attempt, "设备偏热", thermal = true))
         controller.observeTemperature(nowMs = 1_000L, temperatureCelsius = 37.5f)
+        for (at in 6_000L..56_000L step 5_000L) {
+            controller.observeTemperature(nowMs = at, temperatureCelsius = 37.5f)
+        }
         controller.observeTemperature(nowMs = 60_999L, temperatureCelsius = 37.5f)
         assertFalse(controller.clearThermalLockoutAfterExplicitStart(60_999L, 37.5f, entry))
         controller.observeTemperature(nowMs = 61_000L, temperatureCelsius = 37.5f)
         assertTrue(controller.clearThermalLockoutAfterExplicitStart(61_000L, 37.5f, entry))
         assertFalse(controller.snapshot().thermalLockout)
+    }
+
+    @Test fun coolingEvidenceMustRemainContinuousAcrossFreshSamples() {
+        val controller = RealityCaptureController()
+        val entry = controller.enterReality(cameraAlreadyRunning = false).entryId
+        val attempt = controller.beginArCoreAttempt()!!
+        assertTrue(controller.markFallback(attempt, "设备偏热", thermal = true))
+        controller.observeTemperature(nowMs = 1_000L, temperatureCelsius = 37f)
+        controller.observeTemperature(nowMs = 3_000L, temperatureCelsius = 37f)
+        controller.observeTemperature(nowMs = 30_000L, temperatureCelsius = 37f)
+
+        assertFalse(controller.clearThermalLockoutAfterExplicitStart(30_000L, 37f, entry))
+        for (at in 34_000L..86_000L step 4_000L) {
+            controller.observeTemperature(nowMs = at, temperatureCelsius = 37f)
+        }
+        controller.observeTemperature(nowMs = 90_000L, temperatureCelsius = 37f)
+        assertTrue(controller.clearThermalLockoutAfterExplicitStart(90_000L, 37f, entry))
     }
 
     @Test fun eventProjectionUsesNearestUnexpiredEventForEachClue() {

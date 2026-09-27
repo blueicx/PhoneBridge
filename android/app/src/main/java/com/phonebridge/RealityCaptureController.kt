@@ -96,6 +96,10 @@ class RealityCaptureController {
     fun observeTemperature(nowMs: Long, temperatureCelsius: Float?) {
         if (!state.thermalLockout) return
         val temperature = temperatureCelsius?.takeIf { it.isFinite() }
+        val previousSampleMs = lastThermalSampleMs
+        if (previousSampleMs != null && nowMs - previousSampleMs !in 0L..MAX_THERMAL_SAMPLE_GAP_MS) {
+            thermalCoolSinceMs = null
+        }
         lastThermalSampleMs = nowMs
         lastThermalSampleCelsius = temperature
         thermalCoolSinceMs = when {
@@ -153,5 +157,6 @@ class RealityCaptureController {
         const val THERMAL_COOLDOWN_CELSIUS = 38f
         const val THERMAL_COOLDOWN_DURATION_MS = 60_000L
         const val MAX_THERMAL_SAMPLE_AGE_MS = 5_000L
+        const val MAX_THERMAL_SAMPLE_GAP_MS = 5_000L
     }
 }

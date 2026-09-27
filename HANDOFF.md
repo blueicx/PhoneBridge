@@ -413,3 +413,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本轮未取得手机新遥测：本机 `adb.exe devices -l` 报 ADB server protocol fault，且 `192.168.101.68:40325` TCP 探测失败。上一次实际手机温度/电量是第 30 节记录的 42.2°C/0%，本轮不能推断现在仍是该状态，也没有安装或启动 APK。
 - 已推送实现提交 `e913d7053b406f2f4f542e7993b008897f639779`。GitHub Actions run [#36267932570](https://github.com/blueicx/PhoneBridge/actions/runs/36267932570) 对该提交全量成功（3m58s）：Node、Secret scan、协议、性能、Android 单测、Lint、Debug 构建、APK 签名解析/门禁、artifact 上传、diff 和 clean-worktree 均通过；artifact `phonebridge-debug-e913d7053b406f2f4f542e7993b008897f639779` 已上传。Runner 给出 Node.js 20 与 `ubuntu-latest` 的上游弃用迁移提醒，不影响本次结果。
 - 仍待兼容设备验收：ARCore 系统安装往返、相机画面、实际平面追踪/点击放置/旋转投影、暂停恢复与退出后 CameraX 状态恢复；热回退、低帧率回退和至少 30 分钟的 FPS/温度/电量观测。真实设备未测前不宣称真平面 AR 已通过。
+
+## 33. 全方向深化批次 1：温度保护与 AR 生命周期（2026-09-27）
+
+- 修正现实温度聚合：安全判断只使用当前电池读数和 10 秒内的遥测样本；不再把上一次聚合温度重新并入下一次最大值，避免高温旧样本自锁。Canvas 与远程帧门控同样丢弃过期温度样本。
+- 热锁解除要求低于 38°C 的样本间隔不超过 5 秒并连续覆盖 60 秒；采样中断会重新开始冷却计时。保留明确用户重新启动相机的门槛。
+- `RealitySessionLifecycle.close()` 在 pause 失败后仍尝试 close，并保证最终状态为 CLOSED；沉浸硬件返回键改为调用统一 OnBackPressedDispatcher，现实镜头清理逻辑不再被绕过。
+- 基线 Node **142/142**；Android 单测、Lint、Debug 构建初始基线均通过。批次实现后定向温度/生命周期测试及完整 `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 通过，XML 汇总 **112 tests / 0 failures**；`git diff --check` 通过。
+- 当前 ADB server 仍报 protocol fault，未对 Xperia 安装或启动；所有相机、温度和 ARCore 实机门槛仍待可达设备验收。
