@@ -70,6 +70,25 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
 
     const unauthorizedFlush = await fetch(`${BASE}/api/runtime/flush`, { method: 'POST' });
     assert.equal(unauthorizedFlush.status, 401);
+    const firstSequenceEvent = await request('/api/workspace/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: {
+        eventId: 'sequence-collision-first', origin: 'sequence-collision-test', sequence: 1,
+        type: 'test.sequence', payload: {},
+      } }),
+    });
+    assert.equal(firstSequenceEvent.body.businessAccepted, true);
+    const sequenceCollision = await request('/api/workspace/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: {
+        eventId: 'sequence-collision-second', origin: 'sequence-collision-test', sequence: 1,
+        type: 'test.sequence', payload: {},
+      } }),
+    });
+    assert.equal(sequenceCollision.body.duplicateBy, 'origin_sequence');
+    assert.equal(sequenceCollision.body.businessStatus, 'rejected');
+    assert.equal(sequenceCollision.body.businessAccepted, false);
+
     const queuedEvent = await fetch(`${BASE}/api/workspace/events`, {
       method: 'POST',
       headers: { 'x-phonebridge-token': TOKEN, 'content-type': 'application/json' },
@@ -317,6 +336,23 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
       socket.send(JSON.stringify(event));
       const duplicateAck = await duplicateAckPromise;
       assert.equal(duplicateAck.accepted, false);
+
+      const sequenceFirstAckPromise = nextSocketMessage(socket, message => message.type === 'workspace.ack');
+      socket.send(JSON.stringify({
+        type: 'workspace.event', eventId: 'ws-sequence-first', origin: 'ws-sequence-collision-test',
+        sequence: 1, eventType: 'test.sequence', payload: {},
+      }));
+      const sequenceFirstAck = await sequenceFirstAckPromise;
+      assert.equal(sequenceFirstAck.businessAccepted, true);
+      const sequenceCollisionAckPromise = nextSocketMessage(socket, message => message.type === 'workspace.ack');
+      socket.send(JSON.stringify({
+        type: 'workspace.event', eventId: 'ws-sequence-second', origin: 'ws-sequence-collision-test',
+        sequence: 1, eventType: 'test.sequence', payload: {},
+      }));
+      const sequenceCollisionAck = await sequenceCollisionAckPromise;
+      assert.equal(sequenceCollisionAck.businessStatus, 'rejected');
+      assert.equal(sequenceCollisionAck.businessAccepted, false);
+
       const chatCancelAckPromise = nextSocketMessage(socket, message => message.type === 'chat_cancelled');
       socket.send(JSON.stringify({ type: 'chat_cancel', requestId: 'chat_nonexistent' }));
       const chatCancelAck = await chatCancelAckPromise;

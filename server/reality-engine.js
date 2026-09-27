@@ -64,9 +64,10 @@ class RealityEngine {
     this.now = now;
     this.eventStore = new RealityEventStore({ templates: EVENTS, now });
     this.state = {
-      version: 2,
+      version: 3,
       region: null,
       seenEventIds: [],
+      rewardReceipts: {},
       inventory: {},
       loadout: [],
       habitat: { decorations: [], comfort: 0 },
@@ -86,9 +87,11 @@ class RealityEngine {
     this.state = {
       ...this.state,
       ...saved,
+      version: 3,
       inventory: saved.inventory && typeof saved.inventory === 'object' ? saved.inventory : {},
       habitat: { ...this.state.habitat, ...(saved.habitat || {}) },
       seenEventIds: Array.isArray(saved.seenEventIds) ? saved.seenEventIds.slice(-1000) : [],
+      rewardReceipts: saved.rewardReceipts && typeof saved.rewardReceipts === 'object' ? saved.rewardReceipts : {},
       claimedQuestIds: Array.isArray(saved.claimedQuestIds) ? saved.claimedQuestIds.slice(-500) : [],
       activeBoosts: Array.isArray(saved.activeBoosts) ? saved.activeBoosts.slice(-12) : [],
     };
@@ -100,6 +103,7 @@ class RealityEngine {
   }
 
   snapshot() { return clone(this.state); }
+  getReceipt(eventId) { return clone(this.state.rewardReceipts[String(eventId || '')] || null); }
   catalog() { return { items: clone(ITEMS), recipes: clone(RECIPES), decorations: clone(DECORATIONS), quests: clone(QUESTS), events: clone(EVENTS), encounters: clone(ENCOUNTERS) }; }
 
   setBoosts(boosts = []) {
@@ -123,42 +127,73 @@ class RealityEngine {
   }
 
   startEncounter({ eventId, region, at = this.now() } = {}) {
-    const event = this.eventsFor(region, at).find(item => item.id === String(eventId));
+    const id = String(eventId || '');
+    const event = this.eventsFor(region, at).find(item => item.id === id);
     if (!event) throw new Error('event is not valid for this region or time');
+    if (this.state.seenEventIds.includes(id)) {
+      const receipt = this.getReceipt(id);
+      const completedEncounter = receipt?.encounterId
+        ? ENCOUNTERS.find(item => item.id === receipt.encounterId)
+        : null;
+      return { duplicate: true, event, encounter: clone(completedEncounter), receipt, state: this.snapshot() };
+    }
+    const active = this.state.activeEncounter;
+    if (active?.eventId === id) {
+      const existingEncounter = ENCOUNTERS.find(item => item.id === active.encounterId) || null;
+      return { duplicate: true, event, encounter: clone(existingEncounter), state: this.snapshot() };
+    }
     const encounter = ENCOUNTERS[parseInt(hash(event.id).slice(0, 4), 16) % ENCOUNTERS.length];
+    const previousState = clone(this.state);
     this.state.activeEncounter = { eventId: event.id, encounterId: encounter.id, step: 0, score: 0, startedAt: this.now() };
-    this._save();
-    return { event, encounter: clone(encounter), state: this.snapshot() };
+    try { this._save(); } catch (error) { this.state = previousState; throw error; }
+    return { duplicate: false, event, encounter: clone(encounter), state: this.snapshot() };
   }
 
   resolve({ eventId, region, clueType = null, actions = [], at = this.now() } = {}) {
     const id = String(eventId || '');
     if (!id) throw new Error('eventId is required');
-    if (this.state.seenEventIds.includes(id)) return { duplicate: true, state: this.snapshot() };
+    if (this.state.seenEventIds.includes(id)) {
+      const receipt = this.getReceipt(id);
+      return { duplicate: true, receipt, event: clone(receipt?.event || null), reward: clone(receipt?.reward || null), state: this.snapshot() };
+    }
     const event = this.eventsFor(region, at).find(item => item.id === id);
     if (!event || event.expiresAt <= Number(at)) throw new Error('event is expired or invalid for this region');
     if (clueType && !CLUE_TYPES.includes(String(clueType))) throw new Error('invalid clueType');
     if (clueType && String(clueType) !== event.clueType) throw new Error('clue type does not match event');
     const encounter = this.state.activeEncounter?.eventId === id ? this.state.activeEncounter : null;
-    const bonus = encounter ? Math.min(5, actions.filter(action => ['observe', 'soothe', 'dodge', 'skill'].includes(String(action))).length) : 0;
+    const selectedActions = [...new Set((Array.isArray(actions) ? actions : [])
+      .map(action => String(action))
+      .filter(action => ['observe', 'soothe', 'dodge', 'skill'].includes(action)))].slice(0, 4);
+    const bonus = encounter ? Math.min(5, selectedActions.length) : 0;
     const itemId = encounter ? ENCOUNTERS.find(item => item.id === encounter.encounterId)?.rewardItem : event.rewardPreview;
+    const item = ITEMS.find(candidate => candidate.id === itemId) || null;
+    const previousState = clone(this.state);
+    const boost = this.activeBoost(at);
+    const multiplier = boost?.multiplier || 1;
+    const baseXp = event.difficulty + event.xp + bonus;
+    const rewardXp = Math.max(baseXp, Math.round(baseXp * multiplier));
+    const reward = { itemId, item: clone(item), amount: 1, xp: rewardXp, baseXp, multiplier, boostId: boost?.id || null };
+    const receipt = {
+      eventId: id,
+      region: String(region || ''),
+      clueType: event.clueType,
+      encounterId: encounter?.encounterId || null,
+      action: selectedActions[0] || null,
+      event: clone(event),
+      reward: clone(reward),
+      resolvedAt: this.now(),
+    };
     this.state.seenEventIds.push(id);
     this.state.seenEventIds = this.state.seenEventIds.slice(-1000);
     this.state.inventory[itemId] = (this.state.inventory[itemId] || 0) + 1;
-    const baseXp = event.difficulty + event.xp + bonus;
-    const boost = this.activeBoost(at);
-    const multiplier = boost?.multiplier || 1;
-    const rewardXp = Math.max(baseXp, Math.round(baseXp * multiplier));
     this.state.xp += rewardXp;
     this.state.level = Math.max(1, Math.floor(this.state.xp / 100) + 1);
+    this.state.rewardReceipts[id] = receipt;
+    const receiptIds = Object.keys(this.state.rewardReceipts);
+    for (const oldId of receiptIds.slice(0, Math.max(0, receiptIds.length - 1000))) delete this.state.rewardReceipts[oldId];
     this.state.activeEncounter = null;
-    this._save();
-    return {
-      duplicate: false,
-      event,
-      reward: { itemId, amount: 1, xp: rewardXp, baseXp, multiplier, boostId: boost?.id || null },
-      state: this.snapshot(),
-    };
+    try { this._save(); } catch (error) { this.state = previousState; throw error; }
+    return { duplicate: false, event, reward: clone(reward), receipt: clone(receipt), state: this.snapshot() };
   }
 
   craft(recipeId) {

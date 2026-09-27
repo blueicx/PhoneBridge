@@ -216,12 +216,12 @@ class ArCoreRealityRenderView @JvmOverloads constructor(
         sessionCreationExecutor.shutdownNow()
     }
 
-    fun requestMotePlacement(x: Float, y: Float) {
+    fun requestMotePlacement(x: Float, y: Float, replaceExisting: Boolean = false) {
         if (visibility != VISIBLE || arSession == null) return
         queueEvent {
             val frame = latestFrame
             val cameraTracking = frame?.camera?.trackingState == TrackingState.TRACKING
-            if (!cameraTracking || anchor != null || frame == null) {
+            if (!cameraTracking || frame == null) {
                 postCallback { it.onAnchorPlacementResult(false) }
                 return@queueEvent
             }
@@ -233,12 +233,20 @@ class ArCoreRealityRenderView @JvmOverloads constructor(
                 }
             }.getOrNull()
             val planeHit = hit != null
-            if (!RealityPlanePlacementPolicy.canPlace(cameraTracking, anchor != null, planeHit)) {
+            val canReplace = replaceExisting && anchor != null
+            if (!RealityPlanePlacementPolicy.canPlace(cameraTracking, anchor != null, planeHit, replacingAnchor = canReplace)) {
                 postCallback { it.onAnchorPlacementResult(false) }
                 return@queueEvent
             }
-            anchor = runCatching { hit?.createAnchor() }.getOrNull()
-            val placed = anchor != null
+            val newAnchor = runCatching { hit?.createAnchor() }.getOrNull()
+            if (newAnchor == null) {
+                postCallback { it.onAnchorPlacementResult(false) }
+                return@queueEvent
+            }
+            val previousAnchor = anchor
+            anchor = newAnchor
+            if (previousAnchor != null && previousAnchor !== newAnchor) runCatching { previousAnchor.detach() }
+            val placed = true
             postCallback { it.onAnchorPlacementResult(placed) }
             publishTrackingSnapshot(frame)
         }
@@ -396,7 +404,7 @@ class ArCoreRealityRenderView @JvmOverloads constructor(
         val currentAnchor = anchor
         val anchorTracking = currentAnchor?.trackingState == TrackingState.TRACKING
         val pose = if (cameraTracking && anchorTracking) currentAnchor?.let { projectAnchor(frame, it) } else null
-        val tracking = cameraTracking
+        val tracking = cameraTracking && (currentAnchor == null || anchorTracking)
         val status = if (tracking) RealityTrackingStatus.TRACKING else RealityTrackingStatus.SEARCHING
         val snapshot = RealityTrackingSnapshot(
             status = status,

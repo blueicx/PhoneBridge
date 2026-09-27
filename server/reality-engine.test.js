@@ -50,6 +50,31 @@ test('crafting, habitat, encounters and quests persist through the engine state'
   assert.equal(engine.claimQuest('quest_01', 'claim-1').duplicate, true);
 });
 
+test('encounter start is replay-safe and resolution preserves the chosen action receipt', () => {
+  let now = 1_700_000_000_000;
+  const engine = new RealityEngine({ now: () => now });
+  const event = engine.eventsFor('cell:4:5', now)[0];
+  const started = engine.startEncounter({ eventId: event.id, region: event.region, at: now });
+  engine.state.activeEncounter.step = 2;
+  const replayedStart = engine.startEncounter({ eventId: event.id, region: event.region, at: now });
+  assert.equal(replayedStart.duplicate, true);
+  assert.equal(engine.snapshot().activeEncounter.step, 2);
+
+  const result = engine.resolve({ eventId: event.id, region: event.region, clueType: event.clueType, actions: ['observe'], at: now });
+  assert.equal(result.duplicate, false);
+  assert.equal(result.receipt.action, 'observe');
+  assert.equal(result.receipt.reward.itemId, result.reward.itemId);
+  assert.equal(result.reward.item.name, ITEMS.find(item => item.id === result.reward.itemId).name);
+  assert.equal(engine.getReceipt(event.id).reward.xp, result.reward.xp);
+
+  const replayed = engine.resolve({ eventId: event.id, region: event.region, clueType: event.clueType, actions: ['dodge'], at: now });
+  assert.equal(replayed.duplicate, true);
+  assert.equal(replayed.receipt.action, 'observe');
+  assert.deepEqual(replayed.reward, result.reward);
+  assert.equal(engine.snapshot().inventory[result.reward.itemId], 1);
+  assert.equal(started.encounter.id, replayedStart.encounter.id);
+});
+
 test('active time-limited boosts modify reality rewards and expire', () => {
   let now = 1_700_000_000_000;
   const engine = new RealityEngine({ now: () => now });

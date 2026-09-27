@@ -50,6 +50,10 @@ object RealityProjection {
 }
 
 object RealityPlanePlacementPolicy {
-    fun canPlace(tracking: Boolean, anchorAlreadyPlaced: Boolean, planeHit: Boolean): Boolean =
-        tracking && !anchorAlreadyPlaced && planeHit
+    fun canPlace(
+        tracking: Boolean,
+        anchorAlreadyPlaced: Boolean,
+        planeHit: Boolean,
+        replacingAnchor: Boolean = false,
+    ): Boolean = tracking && (!anchorAlreadyPlaced || replacingAnchor) && planeHit
 }

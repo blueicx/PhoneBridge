@@ -448,3 +448,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 新增 Android `ChatMemoryPolicy`、`ChatStreamPolicy` 与语音阶段测试；Node provider、记忆及工作区 API 增加回归覆盖。验证：Node `node --test` **149/149**；Android XML 汇总 **128 tests / 0 failures**；`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon --console=plain` **BUILD SUCCESSFUL**；敏感扫描、内部 Debug APK 实际签名/版本门禁、性能预算和 `git diff --check` 通过，性能预算 `elapsedMs=1.213`、`fullBytes=1694`、`summaryBytes=48`、缓存命中 `10000`、突发广播 `1`。GitHub Actions 需在推送后确认。
 - 修复审查发现的 requestId 断链：此前普通 provider adapter 未收到客户端 ID，可能让取消后的流式增量绕开 Android 的取消集合；Node 的稳定 ID与“部分输出后禁止本地拼接”测试均先失败、修复后通过；Kotlin 为迟到增量过滤及 TTS turn-generation 校验增加纯逻辑回归测试。Node 全量单测和服务端语法检查通过。
 - 本批尚未在 Xperia 上实际验证文本/连续语音、语音打断与重试、记忆交互或播放资源释放；所有实机体验仍待设备验收。正式签名 Release 仍必须通过独立加密恢复副本门槛，内部 Debug APK 不代表正式发布。
+
+## 37. 全方向深化批次 5：现实探索与奖励恢复闭环（2026-09-28）
+
+- 现实遭遇贯通“发现 → 当前 Mote 观察提示 → 用户选择动作 → 奖励 → 收据回显”。`RealityEngine` 状态 schema v3 保存最多 1000 条事件收据，包含事件、区域、线索、动作、道具和经验。奖励持久化失败会回滚内存；跨账本部分失败后允许逐账本重放，不重复发奖。
+- 新区域事件仍由当前服务端时间验证；离线补交不能复活已过期遭遇。若服务端已有该事件的持久化 Reality 收据，则收据绑定的区域/线索校验通过后，可在事件过期后恢复其他未完成账本，并以原收据时间归属活动日期。
+- 工作区事件 ACK 现在区分 `eventId` 重放与 `origin:sequence` 冲突。相同 `eventId` 的探索事件可重放完成独立奖励账本；相同序号但不同事件 ID 不执行、不返回业务成功，避免 Android 误发本地成长。HTTP 与 WebSocket 使用同一 ACK 规则。
+- Android 线索解锁按 Asia/Shanghai 活动日期记录，旧 `place`/永久线索值只迁移为当天状态。线索进入“角色推测 → 用户选择”对话，再经 outbox 结算；仅业务 ACK 成功后记为已发现，随后查询 `/api/reality/receipts/:eventId` 展示实际道具或经验。ACK 拒绝优先于传输层 duplicate。
+- AR 视图增加锚点重新放置/传感器重新校准入口；替换锚点需先拿到有效平面命中并创建新锚点，失败时保留旧锚点。丢失追踪显示重定位提示。无相机/位置权限时仍能手动探索；不保存原图或精确轨迹。
+- TDD 回归证据：序号冲突 API 测试先以 `businessStatus='duplicate'` 错误失败，HTTP/WS 共用 ACK 映射后通过；持久化 Reality 收据过期恢复测试先因 `reality event is expired or invalid` 失败，增加既有收据校验后通过。
+- 自动验收：Node **154/154**；Android JVM **136 tests / 0 failures**，`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` **BUILD SUCCESSFUL**；`node --check`、`git diff --check`、`scan_secrets.ps1`、`test_apk_signer_output.ps1`、`verify_release_gates.ps1 -Channel internal-debug -AllowProtectedBranch` 均通过。性能预算：`elapsedMs=1.775`、完整快照 `1694 bytes`、摘要 `48 bytes`、快照缓存命中 `10000`、突发广播 `1`。
+- 实机证据：Xperia XZ2 / Android 15 以 USB serial `QV7017NH1F` 在线；无线调试地址 `192.168.101.68:39663` 的 TCP 探测失败。通过 `adb install -r` 将本机内部 Debug `2.2.0` / code `4` 升级覆盖设备上的 `2.1.0` / code `3`，保留应用数据。`am start -W` 返回 `Status: ok`、`LaunchState: COLD`、`TotalTime: 1492 ms`；舞台实际进入前台，采集的 `AndroidRuntime:E` 无崩溃记录。镜头仍关闭，本轮没有证明真实线索点击、定位采样、遭遇奖励、AR 平面重定位或无线断线恢复；这些保持待验收。Debug APK SHA-256：`F52F299811667EDBE31088C005B29D07EFC3DE52192633EA90109BEF6B16B2CD`，仅内部候选，不能作为正式签名发布。
+- 本批提交与 GitHub Actions 状态待 push 后补录。正式 Release 签名仍不得启用，除非独立加密恢复副本已实际验证；APK 不进入源码历史。

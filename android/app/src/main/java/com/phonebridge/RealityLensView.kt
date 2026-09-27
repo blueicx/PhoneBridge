@@ -97,6 +97,7 @@ class RealityLensView @JvmOverloads constructor(
     private var petState: PetState = PetState()
     @Volatile private var realityTrackingSnapshot = RealityTrackingSnapshot(RealityTrackingStatus.STOPPED)
     private var pendingPlacementDown: Pair<Float, Float>? = null
+    private var anchorRepositioning = false
     private val moteAzimuthDeg = 0f
     private val motePitchDeg = -14f // Anchored on the floor/desk about 1.5m in front of camera
     private var renderedMoteX = 0f
@@ -110,6 +111,8 @@ class RealityLensView @JvmOverloads constructor(
     private var petJoyTimer = 0f     // 0f..1f spawns hearts & sparkles
     private var petSpeechBubble: String? = null
     private var petSpeechTimer = 0f
+    private var encounterRewardLabel: String? = null
+    private var encounterRewardTimer = 0f
     private var frameFps = 30f
     private var frameTemperatureCelsius = 25f
     private var coarseRegion: String? = null
@@ -183,6 +186,28 @@ class RealityLensView @JvmOverloads constructor(
         invalidate()
     }
 
+    fun setAnchorRepositioning(enabled: Boolean) {
+        anchorRepositioning = enabled
+        invalidate()
+    }
+
+    fun showEncounterReward(itemName: String, amount: Int = 1) {
+        encounterRewardLabel = "获得：$itemName ×$amount"
+        encounterRewardTimer = 3.2f
+        petJoyTimer = 1f
+        petSpeechBubble = "这份发现已经收进背包啦。"
+        petSpeechTimer = 2.8f
+        triggerHaptic(70)
+        invalidate()
+    }
+
+    fun showPendingClue(title: String) {
+        petSpeechBubble = "${title}已暂存，等待节点确认。"
+        petSpeechTimer = 2.8f
+        petJoyTimer = .55f
+        invalidate()
+    }
+
     fun setBehaviorHint(hint: MoteBehaviorOutput) {
         behaviorHint = hint
         invalidate()
@@ -220,6 +245,14 @@ class RealityLensView @JvmOverloads constructor(
         if (!isTracking) return
         sensorManager?.unregisterListener(this)
         isTracking = false
+    }
+
+    fun recalibrateSpatialSensors() {
+        calibrated = false
+        if (rotationSensor != null && !isTracking && visibility == View.VISIBLE) startSpatialSensors()
+        petSpeechBubble = "我会重新校准方向。"
+        petSpeechTimer = 2.2f
+        invalidate()
     }
 
     override fun onAttachedToWindow() {
@@ -329,6 +362,10 @@ class RealityLensView @JvmOverloads constructor(
             petSpeechTimer -= 0.032f
             if (petSpeechTimer <= 0f) petSpeechBubble = null
         }
+        if (encounterRewardTimer > 0f) {
+            encounterRewardTimer -= 0.032f
+            if (encounterRewardTimer <= 0f) encounterRewardLabel = null
+        }
 
         renderedPositions.clear()
 
@@ -338,17 +375,12 @@ class RealityLensView @JvmOverloads constructor(
         if (localCueHints.isNotEmpty()) {
             drawChip(canvas, "本地观察 · ${localCueHints.joinToString("/")}", width * .5f, margin + 76f, 0xCC081410.toInt(), 0xFF8FF0C4.toInt())
         }
-        val realityStatus = when (realityTrackingSnapshot.status) {
-            RealityTrackingStatus.CHECKING -> "正在检查 AR 能力"
-            RealityTrackingStatus.INSTALLING -> "等待系统安装确认"
-            RealityTrackingStatus.STARTING -> "正在启动现实镜头"
-            RealityTrackingStatus.SEARCHING -> "移动设备寻找平面"
-            RealityTrackingStatus.TRACKING -> if (realityTrackingSnapshot.anchorPlaced) "Mote 已锚定 · 轻触伙伴互动" else "找到平面后轻触空白处放置 Mote"
-            RealityTrackingStatus.FALLBACK -> realityTrackingSnapshot.fallbackReason
-            RealityTrackingStatus.STOPPED -> null
-        }
-        realityStatus?.takeIf { it.isNotBlank() }?.let {
+        val realityStatus = RealityEncounterPolicy.trackingHint(realityTrackingSnapshot, anchorRepositioning)
+        realityStatus.takeIf { it.isNotBlank() && realityTrackingSnapshot.status != RealityTrackingStatus.STOPPED }?.let {
             drawChip(canvas, it, width * .5f, height - margin, 0xDD081410.toInt(), 0xFFB8D9FF.toInt())
+        }
+        encounterRewardLabel?.let { reward ->
+            drawChip(canvas, reward, width * .5f, height - margin - 54f, 0xEE182D23.toInt(), 0xFFFFD879.toInt())
         }
 
         // 1. Draw In-World Clue Relics
@@ -938,7 +970,7 @@ class RealityLensView @JvmOverloads constructor(
             return true
         }
 
-        if (realityTrackingSnapshot.isTracking && !realityTrackingSnapshot.anchorPlaced) {
+        if (anchorRepositioning || realityTrackingSnapshot.isTracking && !realityTrackingSnapshot.anchorPlaced) {
             pendingPlacementDown = event.x to event.y
             return true
         }

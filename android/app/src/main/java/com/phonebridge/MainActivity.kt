@@ -153,6 +153,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var companionView: CompanionView
     private lateinit var previewView: PreviewView
     private lateinit var realityLensView: RealityLensView
+    private lateinit var realityRepositionButton: Button
     private lateinit var cameraStateOverlay: View
     private lateinit var cameraStateBadge: TextView
     private lateinit var cameraStateTitle: TextView
@@ -361,6 +362,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private val realityLocationSampler by lazy { RealityLocationSampler(this) }
     private val realityExplorationCoordinator = RealityExplorationCoordinator()
     private var realityRegion: String? = null
+    private var realityAnchorRepositioning = false
     private var normalPreviewParams: androidx.constraintlayout.widget.ConstraintLayout.LayoutParams? = null
     private var focusToolsExpanded = false
     private var normalHeroParams: androidx.constraintlayout.widget.ConstraintLayout.LayoutParams? = null
@@ -524,6 +526,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         previewView.clipToOutline = true
         realityLensView = findViewById(R.id.realityLensView)
         arCoreRenderView = findViewById(R.id.arCoreRenderView)
+        realityRepositionButton = findViewById(R.id.realityRepositionButton)
         arCoreRenderView.setListener(object : ArCoreRealityRenderView.Listener {
             override fun onTrackingSnapshot(snapshot: RealityTrackingSnapshot) {
                 if (realityLensActive) realityLensView.setRealityTrackingSnapshot(snapshot)
@@ -531,6 +534,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
             override fun onSessionStarted() {
                 if (!realityLensActive || realityCaptureController.snapshot().owner != RealityCameraOwner.ARCORE) return
+                realityRepositionButton.text = "重新放置"
                 window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 renderCameraHeroState()
                 renderFocusTools()
@@ -564,7 +568,14 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
             override fun onAnchorPlacementResult(placed: Boolean) {
                 if (!realityLensActive) return
-                if (placed) say("Mote 已放到这个平面上。") else setStatus("还没找到可用平面，请缓慢移动镜头")
+                if (placed) {
+                    realityAnchorRepositioning = false
+                    realityLensView.setAnchorRepositioning(false)
+                    realityRepositionButton.text = "重新放置"
+                    say("Mote 已放到这个平面上。")
+                } else {
+                    setStatus("还没找到可用平面；原位置保持不变，请缓慢移动镜头后重试")
+                }
             }
 
             override fun currentTemperatureCelsius(): Float? =
@@ -581,7 +592,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 handleRealityPetTapped()
             }
             override fun onBlankAreaTapped(x: Float, y: Float) {
-                arCoreRenderView.requestMotePlacement(x, y)
+                arCoreRenderView.requestMotePlacement(x, y, replaceExisting = realityAnchorRepositioning)
             }
         })
         normalPreviewParams = findViewById<View>(R.id.previewFrame).layoutParams as?
@@ -612,6 +623,18 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusRealityButton = findViewById(R.id.focusRealityButton)
         focusCommandButton = findViewById(R.id.focusCommandButton)
         focusStageButton = findViewById(R.id.focusStageButton)
+        realityRepositionButton.setOnClickListener {
+            if (!realityLensActive) return@setOnClickListener
+            if (realityCaptureController.snapshot().owner == RealityCameraOwner.ARCORE) {
+                realityAnchorRepositioning = !realityAnchorRepositioning
+                realityLensView.setAnchorRepositioning(realityAnchorRepositioning)
+                realityRepositionButton.text = if (realityAnchorRepositioning) "轻触新位置" else "重新放置"
+                setStatus(if (realityAnchorRepositioning) "轻触新的可见平面，成功后才替换旧锚点" else "已取消锚点调整")
+            } else {
+                realityLensView.recalibrateSpatialSensors()
+                setStatus("方向已重新校准 · 仍可手动探索")
+            }
+        }
         pttButton = findViewById(R.id.pttButton)
         panelTabs = findViewById(R.id.panelTabs)
         consolePanel = findViewById(R.id.consolePanel)
@@ -2297,6 +2320,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         if (capture.owner != RealityCameraOwner.NONE) realityCaptureController.releaseCamera(capture.owner, entryId)
         if (!realityCaptureController.markFallback(entryId, reason, thermal)) return
+        realityAnchorRepositioning = false
+        realityLensView.setAnchorRepositioning(false)
+        realityRepositionButton.text = "重新校准"
         previewView.visibility = View.INVISIBLE
         previewView.alpha = 0f
         realityLensView.setRealityTrackingSnapshot(
@@ -2327,6 +2353,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         val entryId = realityArEntryId ?: return
         arCoreRenderView.closeSession()
         arCoreRenderView.visibility = View.GONE
+        realityAnchorRepositioning = false
+        realityLensView.setAnchorRepositioning(false)
+        realityRepositionButton.text = "重新校准"
         realityCaptureController.releaseCamera(RealityCameraOwner.ARCORE, entryId)
         realityCaptureController.markFallback(entryId, "相机已由用户关闭", thermal = false)
         realityLensView.setRealityTrackingSnapshot(
@@ -2614,6 +2643,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         realityLensView.setPetState(pet)
         realityLensView.setRealityTrackingSnapshot(RealityTrackingSnapshot(RealityTrackingStatus.CHECKING))
         realityLensView.visibility = View.VISIBLE
+        realityAnchorRepositioning = false
+        realityLensView.setAnchorRepositioning(false)
+        realityRepositionButton.text = "重新校准"
+        realityRepositionButton.visibility = View.VISIBLE
         requestRealityLocationIfNeeded()
         realityThermalHandler.removeCallbacks(realityThermalMonitor)
         realityThermalHandler.post(realityThermalMonitor)
@@ -2665,6 +2698,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             frame.layoutParams = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(it)
         }
         realityLensView.visibility = View.GONE
+        realityRepositionButton.visibility = View.GONE
+        realityAnchorRepositioning = false
+        realityLensView.setAnchorRepositioning(false)
         realityLensView.setCoarseRegion(null)
         realityLensView.setNearbyEvents(emptyList())
         realityLensView.setLocalCueHints(emptySet())
@@ -2689,29 +2725,121 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun handleRealityNode(node: RealityLensView.LensNode) {
         val discovered = loadDiscoveredRealityNodes()
         if (node.id in discovered) {
-            say("${node.title}已经记录过了。${node.detail}")
+            say("今天已经收集过${node.title}。${node.detail}")
             return
         }
 
-        val submission = realityExplorationCoordinator.submitClue(node.id, online = BridgeLink.isOnline)
+        val online = BridgeLink.isOnline
+        val event = if (online) realityExplorationCoordinator.eventForClue(node.id) else null
+        val submission = realityExplorationCoordinator.submitClue(node.id, online = online)
         if (submission.duplicate) {
             say("这个线索正在同步，稍等一下。")
             return
         }
-        realityLensView.markDiscovered(node.id)
-        val activityAt = System.currentTimeMillis()
+
+        val observation = RealityEncounterPolicy.observationPrompt(
+            appearance = pet.appearance,
+            clueType = node.id,
+            relationshipLevel = moteRelationship.level,
+        )
+        if (event != null && event.id == submission.eventId) {
+            workspaceRequest(
+                "/api/reality/events/${android.net.Uri.encode(event.id)}/start",
+                "POST",
+                JSONObject().put("region", event.region),
+                onSuccess = { response ->
+                    val receipt = response.optJSONObject("receipt")
+                    if (receipt != null) {
+                        realityExplorationCoordinator.acknowledge(submission.eventId, accepted = true)
+                        confirmRealityClueLocally(node.id)
+                        loadRealityRewardReceipt(submission.eventId)
+                    } else {
+                        showRealityEncounterChoices(node, submission, observation, null)
+                    }
+                },
+                onError = { error ->
+                    showRealityEncounterChoices(node, submission, observation, "遭遇暂不可用（$error），仍可手动完成观察。")
+                },
+            )
+        } else {
+            showRealityEncounterChoices(
+                node,
+                submission,
+                observation,
+                if (submission.offline) "离线线索会先暂存，恢复连接后再确认奖励。" else "当前没有有效区域遭遇，可继续手动观察。",
+            )
+        }
+    }
+
+    private fun showRealityEncounterChoices(
+        node: RealityLensView.LensNode,
+        submission: RealityClueSubmission,
+        observation: String,
+        statusMessage: String?,
+    ) {
+        val actions = listOf("observe", "soothe", "dodge", "skill")
+        val labels = listOf("仔细观察", "与 Mote 共鸣", "绕开干扰", "使用 Mote 特长")
+        val message = buildString {
+            append(observation)
+            if (!statusMessage.isNullOrBlank()) append("\n\n$statusMessage")
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("${node.title} · 现实遭遇")
+            .setMessage(message)
+            .setItems(labels.toTypedArray()) { _, index ->
+                val action = RealityEncounterPolicy.wireAction(actions.getOrNull(index)) ?: return@setItems
+                queueRealityClueChoice(node, submission, action)
+            }
+            .setOnCancelListener {
+                realityExplorationCoordinator.acknowledge(submission.eventId, accepted = false)
+                say("好，我们先不结算这条线索。")
+            }
+            .show()
+    }
+
+    private fun queueRealityClueChoice(node: RealityLensView.LensNode, submission: RealityClueSubmission, action: String) {
+        val payload = JSONObject()
+            .put("eventId", submission.eventId)
+            .put("clueType", submission.clueType)
+            .put("region", submission.region)
+            .put("offline", submission.offline)
+            .put("nodeId", node.id)
+            .put("actions", JSONArray().put(action))
+        if (submission.offline) payload.put("activityAt", System.currentTimeMillis())
         enqueueWorkspaceEvent(
             WorkspaceEventTypes.MOTE_EXPLORATION,
-            JSONObject()
-                .put("eventId", submission.eventId)
-                .put("clueType", submission.clueType)
-                .put("region", submission.region)
-                .put("activityAt", activityAt)
-                .put("offline", submission.offline)
-                .put("nodeId", node.id)
+            payload
         )
-        logAdapter.add("info", "现实线索已暂存，等待节点确认：${node.title}")
-        say("${node.title}已暂存，联网后确认奖励。")
+        realityLensView.showPendingClue(node.title)
+        logAdapter.add("info", "现实遭遇已选择 $action，等待业务确认：${node.title}")
+        say(if (submission.offline) "${node.title}已暂存，联网后确认奖励。" else "我记下你的选择了，正在结算这次发现。")
+    }
+
+    private fun confirmRealityClueLocally(nodeId: String) {
+        val discovered = loadDiscoveredRealityNodes().toMutableSet()
+        if (discovered.add(nodeId)) {
+            saveDiscoveredRealityNodes(discovered)
+            if (::realityLensView.isInitialized && realityLensActive) realityLensView.setDiscovered(discovered)
+        }
+    }
+
+    private fun loadRealityRewardReceipt(eventId: String) {
+        workspaceRequest(
+            "/api/reality/receipts/${android.net.Uri.encode(eventId)}",
+            onSuccess = { response ->
+                val realityReceipt = response.optJSONObject("realityReceipt")
+                val growthReceipt = response.optJSONObject("growthReceipt")
+                val reward = realityReceipt?.optJSONObject("reward")
+                val itemName = reward?.optJSONObject("item")?.optString("name")?.takeIf { it.isNotBlank() }
+                val xp = reward?.optInt("xp") ?: growthReceipt?.optJSONObject("reward")?.optInt("xp") ?: 0
+                val label = itemName ?: if (xp > 0) "经验 +$xp" else "线索已确认"
+                if (::realityLensView.isInitialized && realityLensActive) realityLensView.showEncounterReward(label)
+                say(if (itemName != null) "发现了$itemName，已经放进背包。" else "这条现实线索已经确认。")
+            },
+            onError = { error ->
+                if (realityLensActive) setStatus("线索已确认；奖励详情暂时读取失败：$error")
+            },
+        )
     }
 
     private fun handleRealityPetTapped() {
@@ -2737,14 +2865,21 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun loadDiscoveredRealityNodes(): Set<String> =
-        getSharedPreferences("reality_lens", Context.MODE_PRIVATE)
-            .getStringSet("discovered", emptySet())?.toSet() ?: emptySet()
+        run {
+            val prefs = getSharedPreferences("reality_lens", Context.MODE_PRIVATE)
+            val saved = prefs.getStringSet("discovered", emptySet())?.toSet().orEmpty()
+            RealityDiscoveryProgress.forDate(saved, realityActivityDate())
+        }
 
     private fun saveDiscoveredRealityNodes(ids: Set<String>) {
         getSharedPreferences("reality_lens", Context.MODE_PRIVATE).edit()
-            .putStringSet("discovered", ids)
+            .putStringSet("discovered", RealityDiscoveryProgress.encode(ids, realityActivityDate()))
             .apply()
     }
+
+    private fun realityActivityDate(): String = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).apply {
+        timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+    }.format(Date())
 
     private fun sendCameraFrame(image: ImageProxy) {
         var bitmap: Bitmap? = null
@@ -3151,7 +3286,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         resultRevision: Long?
     ) {
         if (eventId.isBlank()) return
-        val businessAccepted = accepted && businessStatus != "rejected" || status == "duplicate" || businessStatus == "duplicate"
+        val businessAccepted = WorkspaceBusinessAckPolicy.isAccepted(accepted, status, businessStatus)
         appScope.launch(Dispatchers.IO) {
             val event = workspaceRepository.outboxEvent(eventId)
             workspaceRepository.acknowledge(
@@ -3173,6 +3308,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                                 val discovered = loadDiscoveredRealityNodes().toMutableSet()
                                 if (discovered.add(nodeId)) {
                                     saveDiscoveredRealityNodes(discovered)
+                                    if (::realityLensView.isInitialized && realityLensActive) realityLensView.setDiscovered(discovered)
                                     pet = pet.copy(experience = pet.experience + 4)
                                     checkLevelUp()
                                     savePet()
@@ -3187,6 +3323,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                                     )
                                 }
                             }
+                            loadRealityRewardReceipt(clueEventId)
                         }
                     }
                 }

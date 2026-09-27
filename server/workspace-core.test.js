@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { WorkspaceStore, createEventEnvelope } = require('./workspace-core');
+const { WorkspaceStore, createEventEnvelope, shouldApplyWorkspaceEvent } = require('./workspace-core');
 
 test('protocol fixture uses the shared event envelope', () => {
   const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'protocol-fixtures', 'workspace-event.json'), 'utf8'));
@@ -222,6 +222,14 @@ test('blocks automation actions only for hard-stop conditions, not ordinary offl
     /emergency|expired/i,
   );
   assert.ok(store.listActionRuns().some(run => run.origin === 'automation' && (run.state === 'blocked' || run.state === 'cancelled')));
+});
+
+test('replays duplicate exploration events for per-ledger recovery but skips non-idempotent duplicates', () => {
+  assert.equal(shouldApplyWorkspaceEvent({ type: 'mote.exploration' }, { accepted: true, status: 'accepted' }), true);
+  assert.equal(shouldApplyWorkspaceEvent({ type: 'mote.exploration' }, { accepted: false, status: 'duplicate', duplicateBy: 'event_id' }), true);
+  assert.equal(shouldApplyWorkspaceEvent({ type: 'mote.exploration' }, { accepted: false, status: 'duplicate', duplicateBy: 'origin_sequence' }), false);
+  assert.equal(shouldApplyWorkspaceEvent({ type: 'workspace.message' }, { accepted: false, status: 'duplicate' }), false);
+  assert.equal(shouldApplyWorkspaceEvent({ type: 'workspace.message' }, { accepted: true, status: 'accepted' }), true);
 });
 
 test('global autonomy defaults to read-only tools and never allows hard-denied tools', () => {

@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const QRCode = require('qrcode');
-const { WorkspaceStore, createEventEnvelope } = require('./workspace-core');
+const { WorkspaceStore, createEventEnvelope, shouldApplyWorkspaceEvent, workspaceBusinessAck } = require('./workspace-core');
 const { DeviceHealthStore } = require('./device-health');
 const { MoteStore, deriveMoteBehavior } = require('./mote-profiles');
 const { TaskRunner } = require('./task-runner');
@@ -394,6 +394,27 @@ function progressMoteStory(eventId, extra = {}, { emit = true } = {}) {
       state: result.state,
     });
   }
+  return result;
+}
+
+function completeRealityEncounter(eventId, payload, result) {
+  if (!result || result.businessStatus === 'rejected') return result;
+  const previousRelationshipLevel = moteRelationshipStore.snapshot().level;
+  const relationship = moteRelationshipStore.recordInteraction({
+    eventId: `reality:${eventId}`,
+    kind: 'reality',
+    amount: Number(result.reward?.xp || result.growth?.reward?.xp) || 1,
+  });
+  result.relationship = relationship;
+  result.story = progressMoteStory(`reality:${eventId}`, {
+    explorationCount: 1,
+    clueCounts: { [String(payload.clueType || result.event?.clueType || '').toLowerCase()]: 1 },
+    boostCount: result.growth?.reward?.boost ? 1 : 0,
+    relationshipLevel: relationship.level,
+    previousRelationshipLevel,
+  });
+  result.state = realityEngine.snapshot();
+  if (!result.duplicate) broadcast({ type: 'reality.progress', result, state: result.state });
   return result;
 }
 
@@ -874,7 +895,7 @@ function applyWorkspaceEvent(event) {
     updateDeviceHealth(payload.state || payload);
   }
   if (event.type === 'mote.exploration' && payload.eventId && payload.clueType) {
-    return applyMoteClue(payload);
+    return completeRealityEncounter(payload.eventId, payload, applyMoteClue(payload));
   }
   return { businessStatus: 'accepted', reason: 'event_applied', resultRevision: event.revision || workspaceStore.eventRevision };
 }
@@ -2167,9 +2188,15 @@ const handleHttpRequest = async (req, res) => {
     const realityReceiptMatch = parsedUrl.pathname.match(/^\/api\/reality\/receipts\/([^/]+)$/);
     if (realityReceiptMatch && req.method === 'GET') {
       const eventId = decodeURIComponent(realityReceiptMatch[1]);
-      const receipt = moteGrowthStore.getReceipt(eventId);
-      if (!receipt) return sendJson(res, 404, { ok: false, error: 'receipt not found' });
-      return sendJson(res, 200, { ok: true, receipt });
+      const growthReceipt = moteGrowthStore.getReceipt(eventId);
+      const realityReceipt = realityEngine.getReceipt(eventId);
+      if (!growthReceipt && !realityReceipt) return sendJson(res, 404, { ok: false, error: 'receipt not found' });
+      return sendJson(res, 200, {
+        ok: true,
+        receipt: growthReceipt || realityReceipt,
+        growthReceipt,
+        realityReceipt,
+      });
     }
     if (parsedUrl.pathname === '/api/reality/events' && req.method === 'GET') {
       const region = parsedUrl.searchParams.get('region') || realityEngine.snapshot().region || '';
@@ -2186,30 +2213,23 @@ const handleHttpRequest = async (req, res) => {
             eventId,
             clueType: payload.clueType,
             region: payload.region,
+            activityAt: payload.activityAt,
           });
         }
+        const activityAt = Number(payload.activityAt) || Date.now();
         const result = realityEventMatch[2] === 'start'
-          ? realityEngine.startEncounter({ eventId, region: payload.region })
-          : realityEngine.resolve({ eventId, region: payload.region, clueType: payload.clueType, actions: payload.actions });
-        if (realityEventMatch[2] === 'start' && !result.duplicate) {
+          ? realityEngine.startEncounter({ eventId, region: payload.region, at: activityAt })
+          : applyMoteClue({
+            ...payload,
+            eventId,
+            activityAt,
+            offline: payload.offline === true,
+          });
+        if (realityEventMatch[2] === 'start') {
           result.story = progressMoteStory(`exploration-start:${eventId}`, { explorationCount: 1 });
         }
-        if (realityEventMatch[2] === 'resolve' && !result.duplicate) {
-          const previousRelationshipLevel = moteRelationshipStore.snapshot().level;
-          const relationship = moteRelationshipStore.recordInteraction({ eventId: `reality:${eventId}`, kind: 'reality', amount: result.reward?.xp || 1 });
-          result.growth = moteGrowthStore.recordClue({
-            eventId,
-            clueType: payload.clueType || result.event.clueType,
-            region: payload.region,
-          });
-          result.story = progressMoteStory(`reality:${eventId}`, {
-            explorationCount: 1,
-            clueCounts: { [String(payload.clueType || result.event.clueType).toLowerCase()]: 1 },
-            boostCount: result.growth?.reward?.boost ? 1 : 0,
-            relationshipLevel: relationship.level,
-            previousRelationshipLevel,
-          });
-          broadcast({ type: 'reality.progress', result, state: realityEngine.snapshot() });
+        if (realityEventMatch[2] === 'resolve') {
+          completeRealityEncounter(eventId, payload, result);
         }
         const status = result.growth?.businessStatus === 'rejected'
           ? 409
@@ -2260,9 +2280,24 @@ const handleHttpRequest = async (req, res) => {
       const accepted = workspaceStore.acceptEvent(event && event.type
         ? event
         : createEventEnvelope({ origin: String(payload.origin || 'phone'), sequence: Number(payload.sequence || 0), type: String(payload.type || 'workspace.event'), payload: payload.payload || payload }));
-      if (accepted.accepted) applyWorkspaceEvent(accepted.event);
+      let business = {
+        ...workspaceBusinessAck(accepted),
+        resultRevision: accepted.event.revision || workspaceStore.eventRevision,
+      };
+      if (shouldApplyWorkspaceEvent(accepted.event, accepted)) {
+        try { business = applyWorkspaceEvent(accepted.event) || business; }
+        catch (error) { business = { ...business, businessStatus: 'rejected', reason: error.message }; }
+      }
       broadcast({ type: 'workspace.event', event: accepted.event });
-      return sendJson(res, accepted.accepted ? 202 : 200, { ok: true, ...accepted });
+      return sendJson(res, accepted.accepted ? 202 : 200, {
+        ok: true,
+        ...accepted,
+        businessAccepted: business.businessStatus === 'accepted' || business.businessStatus === 'duplicate',
+        businessStatus: business.businessStatus,
+        businessReason: business.reason || null,
+        resultRevision: business.resultRevision || accepted.event.revision || workspaceStore.eventRevision,
+        businessResult: business,
+      });
     }
     if (parsedUrl.pathname === '/api/workspace/providers' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, providers: codexInfo.providers || [], currentProviderId: codexInfo.currentProviderId, currentProviderName: codexInfo.currentProviderName, currentModel: codexInfo.currentModel });
@@ -2670,8 +2705,11 @@ wss.on('connection', (ws, req) => {
               ack: false,
             });
             const accepted = workspaceStore.acceptEvent(event);
-            let business = { businessStatus: accepted.accepted ? 'accepted' : 'rejected', reason: accepted.status, resultRevision: accepted.event.revision || workspaceStore.eventRevision };
-            if (accepted.accepted) {
+            let business = {
+              ...workspaceBusinessAck(accepted),
+              resultRevision: accepted.event.revision || workspaceStore.eventRevision,
+            };
+            if (shouldApplyWorkspaceEvent(accepted.event, accepted)) {
               try {
                 business = applyWorkspaceEvent(accepted.event) || business;
               } catch (error) {
@@ -2684,7 +2722,7 @@ wss.on('connection', (ws, req) => {
               accepted: accepted.accepted,
               status: accepted.status,
               businessStatus: business.businessStatus || (accepted.accepted ? 'accepted' : 'rejected'),
-              businessAccepted: business.businessStatus === 'accepted',
+              businessAccepted: business.businessStatus === 'accepted' || business.businessStatus === 'duplicate',
               reason: business.reason || null,
               resultRevision: business.resultRevision || accepted.event.revision || workspaceStore.eventRevision,
               revision: accepted.event.revision || workspaceStore.eventRevision,

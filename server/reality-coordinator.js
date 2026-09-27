@@ -16,45 +16,78 @@ function createRealityCoordinator({
   }
 
   function applyMoteClue(payload = {}) {
-    validateGeneratedRealityEvent(payload);
+    const eventId = String(payload?.eventId || '');
+    const generatedEvent = eventId.startsWith('reality:v2:');
+    const priorRealityReceipt = generatedEvent ? realityEngine.getReceipt?.(eventId) || null : null;
+    const replayPayload = priorRealityReceipt
+      ? { ...payload, activityAt: priorRealityReceipt.resolvedAt, offline: false }
+      : payload;
+    validateGeneratedRealityEvent(payload, priorRealityReceipt);
     const growthEligible = Boolean(payload?.region)
-      || String(payload?.eventId || '').startsWith('reality:')
-      || String(payload?.eventId || '').startsWith('reality-lens:');
-    if (growthEligible) MoteGrowthStore.validatePayload({ ...payload, region: payload.region || 'camera' });
-    const result = moteStore.collectClue({ eventId: payload.eventId, clueType: payload.clueType });
+      || eventId.startsWith('reality:')
+      || eventId.startsWith('reality-lens:');
+    if (growthEligible) MoteGrowthStore.validatePayload({ ...replayPayload, region: payload.region || 'camera' });
+    const activityAt = replayPayload.offline === true ? Number(replayPayload.activityAt) : Number(now());
+    const realityReward = generatedEvent
+      ? realityEngine.resolve({
+        eventId: payload.eventId,
+        region: payload.region,
+        clueType: payload.clueType,
+        actions: payload.actions,
+        at: activityAt,
+      })
+      : null;
+    const moteState = typeof moteStore.getState === 'function' ? moteStore.getState() : null;
+    const hasExplorationTarget = moteState == null || Boolean(moteState.exploration?.targetId);
+    const moteResult = hasExplorationTarget
+      ? moteStore.collectClue({ eventId: payload.eventId, clueType: payload.clueType })
+      : { duplicate: false, unlockedId: null, state: moteState };
+    const result = { ...moteResult, mote: moteResult };
+    result.reality = realityReward;
+    if (realityReward) {
+      result.reward = realityReward.reward;
+      result.event = realityReward.event;
+      result.state = realityReward.state;
+    }
+    // Each ledger owns its own event-idempotency receipt. Always replay all
+    // ledgers: a prior ledger may have committed before a later one failed.
     result.growth = !growthEligible
       ? { duplicate: result.duplicate, reward: { xp: 0, dailyCompleted: false, boost: null }, state: moteGrowthStore.snapshot() }
-      : result.duplicate
-        ? {
-          duplicate: true,
-          businessStatus: 'duplicate',
-          reason: 'event_already_processed',
-          reward: { xp: 0, dailyCompleted: false, boost: null },
-          state: moteGrowthStore.snapshot(),
-        }
-        : moteGrowthStore.recordClue({
+      : moteGrowthStore.recordClue({
           eventId: payload.eventId,
           clueType: payload.clueType,
           region: payload.region || 'camera',
-          activityAt: payload.activityAt,
-          offline: payload.offline === true,
+          activityAt: replayPayload.activityAt,
+          offline: replayPayload.offline === true,
         });
-    if (!result.duplicate && result.growth?.businessStatus !== 'rejected') broadcastMoteState();
-    result.businessStatus = result.growth?.businessStatus || (result.duplicate ? 'duplicate' : 'accepted');
+    const realityDuplicate = !realityReward || realityReward.duplicate === true;
+    const moteDuplicate = !hasExplorationTarget || moteResult.duplicate === true;
+    const growthDuplicate = !growthEligible || result.growth.duplicate === true || result.growth.businessStatus === 'duplicate';
+    result.duplicate = realityDuplicate && moteDuplicate && growthDuplicate;
+    const rejected = result.growth?.businessStatus === 'rejected';
+    if (!rejected && !result.duplicate) broadcastMoteState();
+    result.businessStatus = rejected ? 'rejected' : result.duplicate ? 'duplicate' : 'accepted';
     result.reason = result.growth?.reason || (result.duplicate ? 'event_already_processed' : 'clue_collected');
     result.resultRevision = result.growth?.revision || 0;
     syncBoosts();
     return result;
   }
 
-  function validateGeneratedRealityEvent(payload = {}) {
+  function validateGeneratedRealityEvent(payload = {}, priorReceipt = null) {
     const eventId = String(payload.eventId || '');
     if (!eventId.startsWith('reality:v2:')) return;
+    if (priorReceipt) {
+      if (String(priorReceipt.region || '') !== String(payload.region || '')
+        || String(priorReceipt.clueType || '').toLowerCase() !== String(payload.clueType || '').toLowerCase()) {
+        throw new Error('replay does not match the accepted reality receipt');
+      }
+      return;
+    }
     if (typeof realityEngine.eventsFor !== 'function') throw new Error('reality event validation unavailable');
-    const activityAt = payload.offline === true ? Number(payload.activityAt) : Number(now());
-    if (!Number.isFinite(activityAt)) throw new Error('invalid activity time');
-    const event = realityEngine.eventsFor(payload.region, activityAt).find(item => item.id === eventId);
-    if (!event || Number(event.expiresAt) <= activityAt) throw new Error('reality event is expired or invalid');
+    const currentAt = Number(now());
+    if (!Number.isFinite(currentAt)) throw new Error('invalid server time');
+    const event = realityEngine.eventsFor(payload.region, currentAt).find(item => item.id === eventId);
+    if (!event || Number(event.expiresAt) <= currentAt) throw new Error('reality event is expired or invalid');
     if (String(payload.clueType || '').toLowerCase() !== String(event.clueType).toLowerCase()) {
       throw new Error('clue type does not match event');
     }

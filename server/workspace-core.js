@@ -58,6 +58,20 @@ function createEventEnvelope({
   return { eventId, origin, sequence, type, payload, createdAt, revision, ack };
 }
 
+function shouldApplyWorkspaceEvent(event, acceptance) {
+  if (acceptance?.accepted === true) return true;
+  // Exploration has receipts in each reward ledger, so replaying the same
+  // business event can safely finish work after a process interruption.
+  return acceptance?.duplicateBy === 'event_id' && event?.type === 'mote.exploration';
+}
+
+function workspaceBusinessAck(acceptance) {
+  if (acceptance?.accepted === true) return { businessStatus: 'accepted', reason: acceptance.status || 'accepted' };
+  if (acceptance?.duplicateBy === 'event_id') return { businessStatus: 'duplicate', reason: 'event_already_processed' };
+  if (acceptance?.duplicateBy === 'origin_sequence') return { businessStatus: 'rejected', reason: 'origin_sequence_conflict' };
+  return { businessStatus: 'rejected', reason: acceptance?.status || 'event_rejected' };
+}
+
 function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
@@ -570,7 +584,8 @@ class WorkspaceStore {
   acceptEvent(event) {
     const normalized = createEventEnvelope(event);
     const key = `${normalized.origin}:${normalized.sequence}`;
-    if (this.eventKeys.has(key) || this.eventKeys.has(`event:${normalized.eventId}`)) return { accepted: false, status: 'duplicate', event: clone(normalized) };
+    if (this.eventKeys.has(`event:${normalized.eventId}`)) return { accepted: false, status: 'duplicate', duplicateBy: 'event_id', event: clone(normalized) };
+    if (this.eventKeys.has(key)) return { accepted: false, status: 'duplicate', duplicateBy: 'origin_sequence', event: clone(normalized) };
     normalized.revision = ++this.eventRevision;
     this.eventKeys.add(key);
     this.eventKeys.add(`event:${normalized.eventId}`);
@@ -1065,4 +1080,4 @@ class WorkspaceStore {
   }
 }
 
-module.exports = { WorkspaceStore, createEventEnvelope, TASK_STATES };
+module.exports = { WorkspaceStore, createEventEnvelope, shouldApplyWorkspaceEvent, workspaceBusinessAck, TASK_STATES };

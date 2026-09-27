@@ -167,7 +167,7 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ region: 'cell:1:2', clueType: event.clueType, actions: ['observe'] })
     });
-    assert.equal(resolved.response.status, 201);
+    assert.equal(resolved.response.status, 201, JSON.stringify(resolved.body));
     const duplicate = await request(`/api/reality/events/${encodeURIComponent(event.id)}/resolve`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ region: 'cell:1:2', clueType: event.clueType })

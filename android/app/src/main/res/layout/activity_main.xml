@@ -228,6 +228,17 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:visibility="gone" />
+
+            <Button
+                android:id="@+id/realityRepositionButton"
+                style="@style/PetAction"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_gravity="bottom|center_horizontal"
+                android:layout_marginBottom="10dp"
+                android:contentDescription="重新放置或校准现实伙伴"
+                android:text="重新放置"
+                android:visibility="gone" />
         </com.google.android.material.card.MaterialCardView>
 
         <TextView

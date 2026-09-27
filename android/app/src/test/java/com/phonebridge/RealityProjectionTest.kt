@@ -34,4 +34,20 @@ class RealityProjectionTest {
         assertFalse(RealityPlanePlacementPolicy.canPlace(tracking = true, anchorAlreadyPlaced = true, planeHit = true))
         assertFalse(RealityPlanePlacementPolicy.canPlace(tracking = true, anchorAlreadyPlaced = false, planeHit = false))
     }
+
+    @Test
+    fun explicitRepositionMayReplaceAnAnchorOnlyAfterAValidPlaneHit() {
+        assertTrue(RealityPlanePlacementPolicy.canPlace(
+            tracking = true,
+            anchorAlreadyPlaced = true,
+            planeHit = true,
+            replacingAnchor = true,
+        ))
+        assertFalse(RealityPlanePlacementPolicy.canPlace(
+            tracking = true,
+            anchorAlreadyPlaced = true,
+            planeHit = false,
+            replacingAnchor = true,
+        ))
+    }
 }
