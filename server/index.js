@@ -2085,6 +2085,16 @@ const handleHttpRequest = async (req, res) => {
       const story = progressMoteStory('story:snapshot');
       return sendJson(res, 200, { ok: true, story: story.events, state: story.state });
     }
+    const storyBranchMatch = parsedUrl.pathname.match(/^\/api\/motes\/story\/([^/]+)\/branch$/);
+    if (storyBranchMatch && req.method === 'POST') {
+      try {
+        const eventId = decodeURIComponent(storyBranchMatch[1]);
+        const payload = await readJson(req);
+        const result = moteStoryStore.chooseBranch(eventId, payload.choiceId);
+        broadcast({ type: 'mote.story', story: moteStoryStore.list(), branch: result.branch, state: result.state });
+        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result, story: moteStoryStore.list() });
+      } catch (error) { return sendJson(res, /not complete|already chosen|already claimed|not found/i.test(error.message) ? 409 : 400, { ok: false, error: error.message }); }
+    }
     const storyClaimMatch = parsedUrl.pathname.match(/^\/api\/motes\/story\/([^/]+)\/claim$/);
     if (storyClaimMatch && req.method === 'POST') {
       try {

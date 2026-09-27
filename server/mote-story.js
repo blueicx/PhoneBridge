@@ -2,7 +2,7 @@
 
 const { MOTE_PROFILES } = require('./mote-profiles');
 
-const STORY_VERSION = 2;
+const STORY_VERSION = 3;
 const MAX_SEEN_EVENTS = 1024;
 
 const SHARED_STORY_EVENTS = Object.freeze([
@@ -44,13 +44,41 @@ const EXCLUSIVE_STORY_DEFINITIONS = Object.freeze([
 ]);
 
 const PROFILE_BY_ID = new Map(MOTE_PROFILES.map(profile => [profile.id, profile]));
-const MOTE_EXCLUSIVE_STORIES = Object.freeze(EXCLUSIVE_STORY_DEFINITIONS.map((event, index) => Object.freeze({
-  ...event,
-  id: `exclusive-${event.moteId}`,
-  moteName: PROFILE_BY_ID.get(event.moteId)?.name || event.moteId,
-  exclusive: true,
-  sortOrder: index,
-})));
+const AFFINITY_LABELS = Object.freeze({
+  planning: '计划', analysis: '分析', exploration: '探索', creative: '创意', reflection: '回顾',
+  conversation: '交谈', monitoring: '守望', debugging: '排查', 'long-form': '长线计划', adaptation: '适应',
+  execution: '行动', momentum: '推进', observation: '观察', triage: '判断', health: '健康',
+  maintenance: '维护', 'remote-status': '远程状态', scanning: '扫描', 'social-care': '陪伴', flow: '节奏',
+  night: '夜色', collection: '收集', speed: '速度', devices: '设备', alerts: '提醒', precision: '细节',
+  habitat: '家园', growth: '成长', light: '光线', endurance: '耐力', field: '现场', stealth: '静默观察',
+});
+
+const MOTE_EXCLUSIVE_STORIES = Object.freeze(EXCLUSIVE_STORY_DEFINITIONS.map((event, index) => {
+  const profile = PROFILE_BY_ID.get(event.moteId);
+  const moteName = profile?.name || event.moteId;
+  const affinity = AFFINITY_LABELS[profile?.taskAffinity?.[0]] || '下一步';
+  return Object.freeze({
+    ...event,
+    id: `exclusive-${event.moteId}`,
+    moteName,
+    exclusive: true,
+    sortOrder: index,
+    branches: Object.freeze([
+      Object.freeze({
+        id: 'go-further',
+        title: `带着${moteName}继续行动`,
+        outcome: `${moteName}把这段经历化成${affinity}的新线索。`,
+        bonusXp: 3,
+      }),
+      Object.freeze({
+        id: 'keep-at-home',
+        title: '把故事留在家园',
+        outcome: `${moteName}将这段经历安放在家园，成为只属于你们的回忆。`,
+        bonusXp: 0,
+      }),
+    ]),
+  });
+}));
 const MOTE_STORY_EVENTS = Object.freeze([...SHARED_STORY_EVENTS, ...MOTE_EXCLUSIVE_STORIES]);
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
@@ -60,6 +88,7 @@ function initialState(now) {
     version: STORY_VERSION,
     completed: [],
     claimed: [],
+    branchChoices: [],
     seenEventIds: [],
     revision: 0,
     updatedAt: Number(now),
@@ -82,14 +111,35 @@ function normalizeState(value, now) {
       claimId: String(item.claimId || item.eventId || ''),
       claimedAt: Number(item.claimedAt) || Number(now),
       reward: clone(item.reward || MOTE_STORY_EVENTS.find(event => event.id === item.id)?.reward || { xp: 0 }),
+      ...(item.branchChoiceId ? { branchChoiceId: String(item.branchChoiceId) } : {}),
+      ...(item.branchOutcome ? { branchOutcome: String(item.branchOutcome) } : {}),
     })).filter(item => MOTE_STORY_EVENTS.some(event => event.id === item.id))
     : [];
+  const exclusiveEventById = new Map(MOTE_EXCLUSIVE_STORIES.map(event => [event.id, event]));
+  const branchChoices = Array.isArray(source.branchChoices)
+    ? source.branchChoices.filter(item => item && item.id && item.choiceId).map(item => ({
+      id: String(item.id),
+      choiceId: String(item.choiceId),
+      chosenAt: Number(item.chosenAt) || Number(now),
+    })).filter(item => exclusiveEventById.get(item.id)?.branches.some(branch => branch.id === item.choiceId))
+    : [];
+  const chosenIds = new Set(branchChoices.map(item => item.id));
+  for (const item of claimed) {
+    const event = exclusiveEventById.get(item.id);
+    if (!event || chosenIds.has(item.id)) continue;
+    const migratedChoiceId = item.branchChoiceId || 'keep-at-home';
+    if (event.branches.some(branch => branch.id === migratedChoiceId)) {
+      branchChoices.push({ id: item.id, choiceId: migratedChoiceId, chosenAt: item.claimedAt });
+      chosenIds.add(item.id);
+    }
+  }
   return {
     ...defaults,
     ...source,
     version: STORY_VERSION,
     completed: [...new Map(completed.map(item => [item.id, item])).values()],
     claimed: [...new Map(claimed.map(item => [item.id, item])).values()],
+    branchChoices: [...new Map(branchChoices.map(item => [item.id, item])).values()],
     seenEventIds: [...new Set((Array.isArray(source.seenEventIds) ? source.seenEventIds : []).map(String).filter(Boolean))].slice(-MAX_SEEN_EVENTS),
     revision: Math.max(0, Number(source.revision) || 0),
     updatedAt: Number(source.updatedAt) || Number(now),
@@ -166,12 +216,17 @@ class MoteStoryStore {
   list() {
     const completed = new Map(this.state.completed.map(item => [item.id, item]));
     const claimed = new Map(this.state.claimed.map(item => [item.id, item]));
+    const branchChoices = new Map(this.state.branchChoices.map(item => [item.id, item]));
     return MOTE_STORY_EVENTS.map(event => ({
       ...clone(event),
       completed: completed.has(event.id),
       completedAt: completed.get(event.id)?.completedAt || null,
       claimed: claimed.has(event.id),
       claimedAt: claimed.get(event.id)?.claimedAt || null,
+      branchChoiceId: branchChoices.get(event.id)?.choiceId || claimed.get(event.id)?.branchChoiceId || '',
+      branchOutcome: branchChoices.get(event.id)
+        ? event.branches?.find(branch => branch.id === branchChoices.get(event.id).choiceId)?.outcome || claimed.get(event.id)?.branchOutcome || ''
+        : claimed.get(event.id)?.branchOutcome || '',
     }));
   }
 
@@ -209,12 +264,74 @@ class MoteStoryStore {
     const normalizedClaimId = String(claimId || '').trim();
     if (!normalizedClaimId) throw new Error('claimId is required');
     const existing = this.state.claimed.find(item => item.id === normalizedId);
-    if (existing) return { duplicate: true, event: { ...clone(event), claimed: true }, reward: { xp: 0 }, state: this.snapshot() };
-    const claimed = { id: normalizedId, claimId: normalizedClaimId, claimedAt: Number(this.now()), reward: clone(event.reward) };
+    if (existing) {
+      const listedEvent = this.list().find(item => item.id === normalizedId);
+      return { duplicate: true, event: { ...clone(event), ...listedEvent }, reward: { xp: 0 }, receipt: clone(existing), state: this.snapshot() };
+    }
+    let branchChoice = this.state.branchChoices.find(item => item.id === normalizedId);
+    let addedDefaultChoice = false;
+    if (event.exclusive && !branchChoice) {
+      branchChoice = { id: normalizedId, choiceId: 'keep-at-home', chosenAt: Number(this.now()) };
+      this.state.branchChoices.push(branchChoice);
+      addedDefaultChoice = true;
+    }
+    const branch = event.branches?.find(item => item.id === branchChoice?.choiceId);
+    const reward = {
+      ...clone(event.reward),
+      xp: Math.max(0, Number(event.reward?.xp) || 0) + Math.max(0, Number(branch?.bonusXp) || 0),
+    };
+    const claimed = {
+      id: normalizedId,
+      claimId: normalizedClaimId,
+      claimedAt: Number(this.now()),
+      reward,
+      ...(branchChoice ? { branchChoiceId: branchChoice.choiceId, branchOutcome: branch?.outcome || '' } : {}),
+    };
+    const previousRevision = this.state.revision;
+    const previousUpdatedAt = this.state.updatedAt;
     this.state.claimed.push(claimed);
-    this.state.revision += 1;
-    this._save();
-    return { duplicate: false, event: { ...clone(event), claimed: true }, reward: clone(event.reward), state: this.snapshot() };
+    this.state.revision = previousRevision + 1;
+    try {
+      this._save();
+    } catch (error) {
+      this.state.claimed = this.state.claimed.filter(item => item !== claimed);
+      if (addedDefaultChoice) this.state.branchChoices = this.state.branchChoices.filter(item => item !== branchChoice);
+      this.state.revision = previousRevision;
+      this.state.updatedAt = previousUpdatedAt;
+      throw error;
+    }
+    const listedEvent = this.list().find(item => item.id === normalizedId);
+    return { duplicate: false, event: { ...clone(event), ...listedEvent }, reward: clone(reward), receipt: clone(claimed), state: this.snapshot() };
+  }
+
+  chooseBranch(id, choiceId) {
+    const normalizedId = String(id || '').trim();
+    const normalizedChoiceId = String(choiceId || '').trim();
+    const event = MOTE_STORY_EVENTS.find(item => item.id === normalizedId);
+    if (!event || !event.exclusive) throw new Error('exclusive story event not found');
+    if (!this.state.completed.some(item => item.id === normalizedId)) throw new Error('story event is not complete');
+    const branch = event.branches.find(item => item.id === normalizedChoiceId);
+    if (!branch) throw new Error('story branch not found');
+    const existing = this.state.branchChoices.find(item => item.id === normalizedId);
+    if (existing) {
+      if (existing.choiceId !== normalizedChoiceId) throw new Error('story branch already chosen');
+      return { duplicate: true, event: this.list().find(item => item.id === normalizedId), branch: clone(branch), state: this.snapshot() };
+    }
+    if (this.state.claimed.some(item => item.id === normalizedId)) throw new Error('story branch already claimed');
+    const choice = { id: normalizedId, choiceId: normalizedChoiceId, chosenAt: Number(this.now()) };
+    const previousRevision = this.state.revision;
+    const previousUpdatedAt = this.state.updatedAt;
+    this.state.branchChoices.push(choice);
+    this.state.revision = previousRevision + 1;
+    try {
+      this._save();
+    } catch (error) {
+      this.state.branchChoices = this.state.branchChoices.filter(item => item !== choice);
+      this.state.revision = previousRevision;
+      this.state.updatedAt = previousUpdatedAt;
+      throw error;
+    }
+    return { duplicate: false, event: this.list().find(item => item.id === normalizedId), branch: clone(branch), state: this.snapshot() };
   }
 }
 
@@ -222,7 +339,8 @@ function claimMoteStoryWithReward({ storyStore, relationshipStore, eventId, clai
   if (!storyStore || !relationshipStore) throw new Error('storyStore and relationshipStore are required');
   const result = storyStore.claim(eventId, claimId);
   const definition = MOTE_STORY_EVENTS.find(event => event.id === String(eventId || '').trim());
-  const xp = Math.max(0, Math.round(Number(definition?.reward?.xp) || 0));
+  const receipt = storyStore.snapshot().claimed.find(item => item.id === String(eventId || '').trim());
+  const xp = Math.max(0, Math.round(Number(receipt?.reward?.xp ?? definition?.reward?.xp) || 0));
   const relationship = xp > 0
     ? relationshipStore.recordInteraction({ eventId: `story:${definition.id}`, kind: 'story', amount: xp })
     : null;

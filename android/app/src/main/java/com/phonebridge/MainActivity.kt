@@ -271,6 +271,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var moteStateJson = JSONObject()
     private var moteStoryJson = JSONArray()
     private var moteDexDialog: AlertDialog? = null
+    private var activeMoteMoment = MoteMoment.IDLE
+    private var moteMomentExpiresAtMs = 0L
     private var companionSummary = CompanionSummary()
     private var workspaceRevision: Long = 0L
     private val timelineProjection = TimelineProjection()
@@ -2602,7 +2604,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         findViewById<View>(R.id.previewFrame).post {
             if (realityLensActive) beginArCoreForCurrentEntry()
         }
-        say("现实镜头开启，和我一起找线索。")
+        setMoteMoment(MoteMoment.EXPLORATION)
+        say(MoteCharacterizationEngine.resolve(pet.appearance, MoteMoment.EXPLORATION, moteRelationship.level).line)
     }
 
     private fun exitRealityLens() {
@@ -3566,6 +3569,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         applyLegacyTaskToCompanion(task)
         runOnUiThread {
             val taskId = task.optString("id")
+            val previousState = workspaceTaskMirror[taskId]
+                ?.let { it.optString("state", it.optString("status")) }
+                ?.lowercase(Locale.ROOT)
+                .orEmpty()
+            val nextState = task.optString("state", task.optString("status")).lowercase(Locale.ROOT)
+            val terminalStates = setOf("succeeded", "success", "completed", "done", "failed", "error")
+            val taskFinished = previousState.isNotBlank() && previousState !in terminalStates && nextState in terminalStates
             workspaceTaskMirror[taskId] = task
             persistWorkspaceTask(task)
             rebuildAttentionItems()
@@ -3573,6 +3583,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             renderCockpitSummary()
             renderCompanionSessionSnapshot()
             refreshAiTasks()
+            if (taskFinished) {
+                setMoteMoment(MoteMoment.TASK)
+                say(MoteCharacterizationEngine.resolve(pet.appearance, MoteMoment.TASK, moteRelationship.level).line)
+            }
         }
     }
 
@@ -4614,10 +4628,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             yesterday -> pet.careStreak + 1
             else -> 1
         }
-        val message = when (kind) {
+        val careMessage = when (kind) {
             "feed" -> {
                 pet = pet.copy(energy = min(100, pet.energy + 16), experience = pet.experience + 5, mood = PetMood.HAPPY)
-                listOf("能量补上了。", "很好吃。", "感觉亮了一点。").random()
+                "能量补上了。"
             }
             "play" -> {
                 pet = pet.copy(
@@ -4626,11 +4640,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     experience = pet.experience + 9,
                     mood = PetMood.HAPPY
                 )
-                listOf("再来一次！", "信号在跳舞。", "这很有趣。").random()
+                "再来一次！"
             }
             else -> {
                 pet = pet.copy(affection = min(100, pet.affection + 3), experience = pet.experience + 2, mood = PetMood.CALM)
-                listOf("很舒服。", "我在这里。", "别担心，我看着呢。").random()
+                "我在这里。"
             }
         }
         val levelUpMessage = checkLevelUp()
@@ -4642,6 +4656,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         )
         savePet()
         companionView.poke()
+        setMoteMoment(MoteMoment.TOUCH)
+        val characterLine = MoteCharacterizationEngine.resolve(pet.appearance, MoteMoment.TOUCH, moteRelationship.level).line
+        val message = "$careMessage $characterLine"
         say(if (levelUpMessage.isBlank()) message else "$message $levelUpMessage")
         renderPet()
         sendJson(JSONObject().put("type", "pet").put("action", kind).put("state", petJson()))
@@ -4733,27 +4750,113 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             setTextColor(Color.parseColor("#D9F5E6"))
             setPadding(0, 0, 0, dp(8))
         })
+        val storyRecap = storyEntries.filter { it.completed }
+            .sortedByDescending { it.completedAtMs }
+            .take(5)
+        if (storyRecap.isNotEmpty()) {
+            container.addView(TextView(this).apply {
+                text = "最近剧情回顾\n" + storyRecap.joinToString("\n") { entry ->
+                    "· ${entry.title}" + entry.branchOutcome.takeIf { it.isNotBlank() }?.let { "：$it" }.orEmpty()
+                }
+                textSize = 12f
+                setTextColor(Color.parseColor("#C7D6E7"))
+                setPadding(0, 0, 0, dp(8))
+            })
+        }
         val exclusiveStories = storyEntries
             .filter { it.exclusive }
             .associateBy { it.moteId }
+        val previewView = CompanionView(this).apply {
+            setPalette(activeTheme.accent, activeTheme.secondary)
+            setStageState(
+                CompanionStageEngine.resolve(
+                    CompanionStageInput(
+                        hourOfDay = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY),
+                        energy = pet.energy,
+                        reduceMotion = stagePreferences.reduceMotion,
+                        decorations = stageDecorations,
+                    )
+                )
+            )
+        }
+        val previewCaption = TextView(this).apply {
+            setTextColor(Color.parseColor("#D9F5E6"))
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        fun previewMote(id: String, name: String, moment: MoteMoment = MoteMoment.IDLE) {
+            val appearance = PetAppearance.fromWire(id)
+            val cue = MoteCharacterizationEngine.resolve(appearance, moment, moteRelationship.level)
+            previewView.update(pet.copy(name = name, appearance = appearance, connected = false, cameraActive = false, listening = false, speaking = false))
+            previewView.setBehaviorHint(
+                MoteBehaviorEngine.resolve(
+                    MoteProfiles.profile(appearance),
+                    MoteBehaviorInput(relationshipLevel = moteRelationship.level),
+                )
+            )
+            previewView.setCharacterCue(cue)
+            previewCaption.text = "$name · ${cue.gesture}\n${cue.line}"
+        }
+        val activeProfileId = moteStateJson.optString("activeId", "mote")
+        val activeProfileName = MoteProfiles.profile(PetAppearance.fromWire(activeProfileId)).name
+        previewMote(activeProfileId, activeProfileName)
+        container.addView(previewView, LinearLayout.LayoutParams(-1, dp(164)))
+        container.addView(previewCaption)
         for (index in 0 until moteRosterJson.length()) {
             val profile = moteRosterJson.optJSONObject(index) ?: continue
             val id = profile.optString("id")
             val unlocked = profile.optBoolean("unlocked")
-            val button = Button(this).apply {
+            val actionButton = Button(this).apply {
                 text = if (unlocked) "${profile.optString("name")} · ${profile.optString("voice")}" else "${profile.optString("name")} · 未解锁（设为探索目标）"
                 isAllCaps = false
                 isEnabled = true
                 setOnClickListener {
                     if (unlocked) {
-                        workspaceRequest("/api/motes/active", "PATCH", JSONObject().put("id", id), onSuccess = { handleMoteSnapshot(it); say("已切换到${profile.optString("name")}") })
+                        workspaceRequest("/api/motes/active", "PATCH", JSONObject().put("id", id), onSuccess = {
+                            handleMoteSnapshot(it)
+                            val selected = MoteProfiles.profile(PetAppearance.fromWire(id))
+                            renderMoteDexDialog()
+                            Toast.makeText(this@MainActivity, "现在由${selected.name}陪伴", Toast.LENGTH_SHORT).show()
+                        })
                     } else {
-                        workspaceRequest("/api/motes/exploration", "PATCH", JSONObject().put("targetId", id), onSuccess = { handleMoteSnapshot(it); say("开始探索${profile.optString("name")}") })
+                        workspaceRequest("/api/motes/exploration", "PATCH", JSONObject().put("targetId", id), onSuccess = {
+                            handleMoteSnapshot(it)
+                            val explorationTarget = MoteProfiles.profile(PetAppearance.fromWire(id))
+                            renderMoteDexDialog()
+                            Toast.makeText(this@MainActivity, "已设${explorationTarget.name}为探索目标", Toast.LENGTH_SHORT).show()
+                        })
                     }
                 }
             }
-            container.addView(button)
-            val story = exclusiveStories[id] ?: continue
+            var rowPreviewMoment = MoteMoment.IDLE
+            val previewButton = Button(this).apply {
+                text = "预览互动"
+                isAllCaps = false
+            }
+            previewButton.setOnClickListener {
+                rowPreviewMoment = when (rowPreviewMoment) {
+                    MoteMoment.IDLE -> MoteMoment.TOUCH
+                    MoteMoment.TOUCH -> MoteMoment.TASK
+                    MoteMoment.TASK -> MoteMoment.EXPLORATION
+                    MoteMoment.EXPLORATION -> MoteMoment.IDLE
+                }
+                val previewLabel = when (rowPreviewMoment) {
+                    MoteMoment.IDLE -> "待机"
+                    MoteMoment.TOUCH -> "互动"
+                    MoteMoment.TASK -> "任务"
+                    MoteMoment.EXPLORATION -> "探索"
+                }
+                previewMote(id, profile.optString("name", id), rowPreviewMoment)
+                previewButton.text = "预览${previewLabel}"
+                previewButton.contentDescription = "预览${profile.optString("name")}的${previewLabel}动作和关系语气"
+            }
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(actionButton, LinearLayout.LayoutParams(0, dp(52), 2f))
+                addView(previewButton, LinearLayout.LayoutParams(0, dp(52), 1f))
+            }
+            container.addView(row)
+            val story = exclusiveStories[id]
+            if (story == null) continue
             container.addView(TextView(this).apply {
                 val progress = when {
                     story.claimed -> "已完成 · 已领取"
@@ -4765,9 +4868,31 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 setTextColor(Color.parseColor("#AFC9C0"))
                 setPadding(dp(12), 0, dp(12), dp(6))
             })
-            if (story.completed && !story.claimed) {
+            if (story.branchOutcome.isNotBlank()) {
+                container.addView(TextView(this).apply {
+                    text = "结局：${story.branchOutcome}"
+                    textSize = 12f
+                    setTextColor(Color.parseColor("#D7C8FF"))
+                    setPadding(dp(12), 0, dp(12), dp(6))
+                })
+            }
+            if (story.completed && !story.claimed && story.branchChoiceId.isBlank()) {
+                story.branches.forEach { branch ->
+                    val branchButton = Button(this).apply {
+                        text = "${branch.title} · ${if (branch.bonusXp > 0) "额外 +${branch.bonusXp} XP" else "无额外 XP"}"
+                        isAllCaps = false
+                        setOnClickListener {
+                            isEnabled = false
+                            chooseMoteStoryBranch(story.id, branch.id)
+                        }
+                    }
+                    container.addView(branchButton)
+                }
+            }
+            if (story.completed && !story.claimed && (!story.exclusive || story.branchChoiceId.isNotBlank())) {
                 val claimButton = Button(this).apply {
-                    text = "领取 ${story.title} · +${story.rewardXp} XP"
+                    val bonusXp = story.branches.firstOrNull { it.id == story.branchChoiceId }?.bonusXp ?: 0
+                    text = "领取 ${story.title} · +${story.rewardXp + bonusXp} XP"
                     isAllCaps = false
                 }
                 claimButton.setOnClickListener {
@@ -4798,6 +4923,27 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             .setView(scrollableContent)
             .setPositiveButton("关闭", null)
             .show()
+    }
+
+    private fun chooseMoteStoryBranch(storyId: String, choiceId: String) {
+        workspaceRequest(
+            "/api/motes/story/${android.net.Uri.encode(storyId)}/branch",
+            "POST",
+            JSONObject().put("choiceId", choiceId),
+            onSuccess = { response ->
+                response.optJSONArray("story")?.let { stories ->
+                    moteStoryJson = JSONArray(stories.toString())
+                    getSharedPreferences("mote_roster", Context.MODE_PRIVATE).edit()
+                        .putString("story", moteStoryJson.toString())
+                        .apply()
+                    renderMoteDexDialog()
+                }
+            },
+            onError = { error ->
+                Toast.makeText(this, "剧情选择失败：$error", Toast.LENGTH_LONG).show()
+                renderMoteDexDialog()
+            },
+        )
     }
 
     private fun showSignalGameDialog() {
@@ -4970,6 +5116,20 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 }
             }, 5_050L)
         }
+    }
+
+    private fun setMoteMoment(moment: MoteMoment) {
+        activeMoteMoment = moment
+        val expiresAt = System.currentTimeMillis() + 3_600L
+        moteMomentExpiresAtMs = expiresAt
+        renderPet()
+        companionView.postDelayed({
+            if (moteMomentExpiresAtMs == expiresAt) {
+                activeMoteMoment = MoteMoment.IDLE
+                moteMomentExpiresAtMs = 0L
+                renderPet()
+            }
+        }, 3_650L)
     }
 
     private fun setStatus(text: String) {
@@ -5408,6 +5568,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         )
         if (stageMessageExpiresAtMs <= nowWallMs) stageMessage = null
         companionView.setStageState(stageState)
+        val moment = if (moteMomentExpiresAtMs > nowWallMs) activeMoteMoment else MoteMoment.IDLE
+        companionView.setCharacterCue(MoteCharacterizationEngine.resolve(pet.appearance, moment, moteRelationship.level))
         renderFocusTools()
         linkMetric.text = if (online) "链路 在线" else "链路 离线"
         audioMetric.text = when {
@@ -5732,7 +5894,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     override fun onDecorationTouched(decorationId: String) {
         val decoration = stageDecorations.firstOrNull { it.id == decorationId } ?: return
         companionView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-        say("我喜欢这里的${decoration.name}。")
+        setMoteMoment(MoteMoment.TOUCH)
+        val cue = MoteCharacterizationEngine.resolve(pet.appearance, MoteMoment.TOUCH, moteRelationship.level)
+        say("我喜欢这里的${decoration.name}。${cue.line}")
     }
 
     override fun onCompanionLongPressed() {

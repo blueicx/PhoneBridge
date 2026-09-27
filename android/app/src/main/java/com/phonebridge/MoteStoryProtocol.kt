@@ -2,6 +2,13 @@ package com.phonebridge
 
 import org.json.JSONArray
 
+data class MoteStoryBranch(
+    val id: String,
+    val title: String,
+    val outcome: String,
+    val bonusXp: Int,
+)
+
 data class MoteStoryEntry(
     val id: String,
     val title: String,
@@ -14,6 +21,10 @@ data class MoteStoryEntry(
     val moteName: String = "",
     val exclusive: Boolean = false,
     val completion: String = "",
+    val branches: List<MoteStoryBranch> = emptyList(),
+    val branchChoiceId: String = "",
+    val branchOutcome: String = "",
+    val completedAtMs: Long = 0L,
 )
 
 object MoteStoryProtocol {
@@ -36,6 +47,22 @@ object MoteStoryProtocol {
                         "moteName" to value.optString("moteName"),
                         "exclusive" to value.optBoolean("exclusive", false),
                         "completion" to value.optString("completion"),
+                        "branches" to value.optJSONArray("branches")?.let { branches ->
+                            buildList {
+                                for (branchIndex in 0 until branches.length()) {
+                                    val branch = branches.optJSONObject(branchIndex) ?: continue
+                                    add(mapOf(
+                                        "id" to branch.optString("id"),
+                                        "title" to branch.optString("title"),
+                                        "outcome" to branch.optString("outcome"),
+                                        "bonusXp" to branch.optInt("bonusXp", 0),
+                                    ))
+                                }
+                            }
+                        },
+                        "branchChoiceId" to value.optString("branchChoiceId"),
+                        "branchOutcome" to value.optString("branchOutcome"),
+                        "completedAtMs" to value.optLong("completedAt", 0L),
                     )
                 )
                 if (entry != null) add(entry)
@@ -47,6 +74,17 @@ object MoteStoryProtocol {
 
     private fun parseRow(value: Map<String, Any?>): MoteStoryEntry? {
         val id = value["id"].toString().trim().takeIf { it.isNotBlank() && it != "null" } ?: return null
+        val branches = (value["branches"] as? List<*>)?.mapNotNull { raw ->
+            val row = raw as? Map<*, *> ?: return@mapNotNull null
+            val branchId = row["id"]?.toString()?.trim().orEmpty()
+            if (branchId.isBlank()) return@mapNotNull null
+            MoteStoryBranch(
+                id = branchId,
+                title = row["title"]?.toString().orEmpty(),
+                outcome = row["outcome"]?.toString().orEmpty(),
+                bonusXp = (row["bonusXp"] as? Number)?.toInt()?.coerceAtLeast(0) ?: 0,
+            )
+        } ?: emptyList()
         return MoteStoryEntry(
             id = id,
             title = value["title"].toString().takeIf { it.isNotBlank() && it != "null" } ?: id,
@@ -59,6 +97,10 @@ object MoteStoryProtocol {
             moteName = value["moteName"].toString().takeUnless { it == "null" }.orEmpty(),
             exclusive = value["exclusive"] as? Boolean ?: false,
             completion = value["completion"].toString().takeUnless { it == "null" }.orEmpty(),
+            branches = branches,
+            branchChoiceId = value["branchChoiceId"].toString().takeUnless { it == "null" }.orEmpty(),
+            branchOutcome = value["branchOutcome"].toString().takeUnless { it == "null" }.orEmpty(),
+            completedAtMs = (value["completedAtMs"] as? Number)?.toLong()?.coerceAtLeast(0L) ?: 0L,
         )
     }
 

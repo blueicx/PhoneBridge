@@ -74,6 +74,7 @@ class CompanionView @JvmOverloads constructor(
 
     private var state = PetState()
     private var stageState = CompanionStageEngine.resolve(CompanionStageInput(hourOfDay = 12, energy = 82))
+    private var characterCue: MoteCharacterCue? = null
     private var displayedEmotion = PetEmotion()
     private var accentColor = Color.parseColor("#8FF0C4")
     private var secondaryColor = Color.parseColor("#FFC86B")
@@ -469,12 +470,32 @@ class CompanionView @JvmOverloads constructor(
     fun setStageState(value: CompanionStageState) {
         stageState = value
         appReduceMotion = value.reduceMotion
-        contentDescription = buildString {
-            append("${state.name} 伙伴舞台 · ${value.activity.name.lowercase()}")
-            if (value.decorations.isNotEmpty()) append(" · 家园：${value.decorations.joinToString { it.name }}")
-            value.message?.let { append(" · $it") }
-        }
+        updateStageContentDescription()
         requestRedraw()
+    }
+
+    fun setCharacterCue(value: MoteCharacterCue) {
+        if (characterCue == value) return
+        characterCue = value
+        updateStageContentDescription()
+        requestRedraw()
+    }
+
+    private fun updateStageContentDescription() {
+        contentDescription = buildString {
+            append("${state.name} 伙伴舞台 · ${stageState.activity.name.lowercase()}")
+            characterCue?.let { cue ->
+                val stageLabel = when (cue.relationshipStage) {
+                    MoteRelationshipStage.FIRST_MEETING -> "初识"
+                    MoteRelationshipStage.FAMILIAR -> "熟悉"
+                    MoteRelationshipStage.TRUSTED -> "默契"
+                    MoteRelationshipStage.BONDED -> "相伴"
+                }
+                append(" · $stageLabel · ${cue.gesture}")
+            }
+            if (stageState.decorations.isNotEmpty()) append(" · 家园：${stageState.decorations.joinToString { it.name }}")
+            stageState.message?.let { append(" · $it") }
+        }
     }
 
     fun setBehaviorHint(hint: MoteBehaviorOutput) {
@@ -704,7 +725,9 @@ class CompanionView @JvmOverloads constructor(
                 CompanionStageActivity.INTERACTION -> 1.25f
                 CompanionStageActivity.IDLE -> 1f
             }
-            lifePhase += dt / 1000f * liveliness * MoteVisualProfiles.fromBehavior(state.appearance, behaviorHint).motionScale * activityScale
+            lifePhase += dt / 1000f * liveliness *
+                MoteVisualProfiles.fromBehavior(state.appearance, behaviorHint).motionScale *
+                activityScale * (characterCue?.movementIntensity ?: 1f)
             idlePhase += dt / 1000f
             if (touchActive) {
                 idleGazeX += (0f - idleGazeX) * min(1f, dt / 260f)

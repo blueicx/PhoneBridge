@@ -431,3 +431,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - `scan_secrets.ps1`、APK 内部 Debug 签名/版本门禁、workspace 性能预算和 `git diff --check` 均通过。性能预算输出 `elapsedMs=3.243`、`fullBytes=1694`、`summaryBytes=48`、缓存命中 `10000`、突发广播 `1`；Debug APK 是内部候选，不是正式签名版。
 - 未进行手机 UI 或声音验收：当前 ADB server 在前序检查中出现 protocol fault；实际家园摆件点击、单手可达性、静音交互与环境音听感须在设备恢复后验证。环境音默认关闭，未生成或上传声音素材。
 - 下一批继续深化现有 20 个 Mote 的可辨认动作/关系反馈、分支剧情状态与图鉴预览；后续聊天/语音、探索与性能/交付仍待完成。本节不代表六批计划整体完成。
+
+## 35. 全方向深化批次 3：Mote 角色差异与剧情分支（2026-09-28）
+
+- `MoteCharacterizationEngine` 覆盖现有 20 个形态的待机、触摸、任务、探索反馈；关系从初遇到羁绊会改变称呼和动作节奏。图鉴支持逐形态动作预览，预览不会切换当前激活角色；并显示最近完成剧情的回顾与结局。
+- 20 条专属剧情各增加“继续探索”与“留在家园”两个结局。选择只允许在故事完成后提交且不可变；继续探索额外 +3 XP，留在家园无额外 XP。分支选择与领奖快照持久化，奖励重放读取已保存收据，不重复发放；持久化写失败会回滚内存修改。旧客户端未传分支时走兼容结局并保持原基础 XP。
+- 新增 `POST /api/motes/story/:id/branch`，未知分支或未完成故事返回冲突；故事 DTO 增加可选分支、选择、结局和完成时间字段，Android 对旧字段缺失及未知扩展保持安全默认值。
+- 验证：Node `node --test` **145/145**；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon --console=plain` **BUILD SUCCESSFUL**，XML 汇总 **121 tests / 0 failures**。`scan_secrets.ps1`、`verify_release_gates.ps1 -Channel internal-debug -AllowProtectedBranch` 与 `git diff --check` 通过；性能预算 `elapsedMs=2.123`、`fullBytes=1694`、`summaryBytes=48`、缓存命中 `10000`、突发广播 `1`。
+- 实机不可用/未连接，本批没有对手机安装或视觉验收；角色动画辨识度、剧情交互、语音和沉浸舞台仍待 Xperia 实测。签名门禁验证的是内部 Debug APK，不是正式签名发布包。

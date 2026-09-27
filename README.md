@@ -235,3 +235,9 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - `CompanionView` 将家园摆件绘制到沉浸舞台并支持点击反馈；摆件仍通过已有 `/api/reality/catalog`、`/api/reality/state` 与 `/api/reality/habitat` 保存，离线时继续显示本机缓存。
 - 舞台抽屉可设置单手布局、减弱动画、安静模式和环境音。安静模式保留文字提醒并抑制语音；环境音由本机低音量合成，默认关闭，只在用户启用且舞台可见、Activity resumed 时播放，离开/后台/关闭时释放音频焦点与轨道。
 - 验证：Node **142/142**；Android 定向舞台/音频单测通过；完整 `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` **BUILD SUCCESSFUL**。无线 ADB 当前不可用，因此家园点击、音量和单手布局仍需实机观感验收。
+
+## 全方向深化批次 3：Mote 角色差异与剧情分支
+
+- 现有 20 个 Mote 均有可区分的待机、触摸、任务和探索提示；关系阶段会改变称呼与动作强度，图鉴可预览动作并回顾最近完成的专属剧情。
+- 每条专属剧情提供“继续探索”和“留在家园”两种持久化结局；选择不可变且按故事领奖收据幂等，继续探索额外奖励 3 XP。旧客户端不选择分支时沿用基础奖励与兼容结局。
+- 验证：Node **145/145**；Android **121 tests / 0 failures**，`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 全部通过；敏感扫描、Debug APK 门禁、性能预算与 `git diff --check` 通过。无线 ADB 不可用，20 只角色的视觉辨识度和触摸手感仍待实机验收。

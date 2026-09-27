@@ -37,6 +37,83 @@ test('story catalog retains twelve shared events and adds one exclusive event pe
   assert.equal(new Set(MOTE_EXCLUSIVE_STORIES.map(event => event.moteId)).size, 20);
   assert.deepEqual(new Set(MOTE_EXCLUSIVE_STORIES.map(event => event.moteId)), new Set(MOTE_PROFILES.map(profile => profile.id)));
   assert.ok(MOTE_EXCLUSIVE_STORIES.every(event => event.exclusive && event.moteName && event.completion && event.reward?.xp > 0));
+  assert.ok(MOTE_EXCLUSIVE_STORIES.every(event => event.branches?.length === 2));
+  assert.ok(MOTE_EXCLUSIVE_STORIES.every(event => new Set(event.branches.map(branch => branch.outcome)).size === 2));
+});
+
+test('exclusive stories persist one distinct branch and award its result exactly once', () => {
+  const persistence = memoryPersistence();
+  let now = 1_700_000_000_000;
+  const storyStore = new MoteStoryStore({ persistence, now: () => now });
+  const relationshipStore = new MoteRelationshipStore({ persistence, now: () => now });
+  const storyId = 'exclusive-mote';
+  assert.throws(() => storyStore.chooseBranch(storyId, 'go-further'), /not complete/i);
+  storyStore.evaluate({ eventId: 'branch-story-complete', activeId: 'mote', successfulTasks: 1, exclusiveTriggers: ['task_success'] });
+
+  const selected = storyStore.chooseBranch(storyId, 'go-further');
+  assert.equal(selected.duplicate, false);
+  assert.match(selected.event.branchOutcome, /星核/);
+  assert.throws(() => storyStore.chooseBranch(storyId, 'keep-at-home'), /already chosen/i);
+
+  now += 1_000;
+  const restored = new MoteStoryStore({ persistence, now: () => now });
+  assert.equal(restored.list().find(event => event.id === storyId).branchChoiceId, 'go-further');
+  const claim = claimMoteStoryWithReward({
+    storyStore: restored,
+    relationshipStore,
+    eventId: storyId,
+    claimId: 'branch-claim-once',
+  });
+  assert.equal(claim.reward.xp, 13);
+  assert.equal(claim.relationship.xp, 13);
+  assert.equal(restored.chooseBranch(storyId, 'go-further').duplicate, true);
+
+  const replay = claimMoteStoryWithReward({
+    storyStore: new MoteStoryStore({ persistence, now: () => now }),
+    relationshipStore,
+    eventId: storyId,
+    claimId: 'branch-claim-once',
+  });
+  assert.equal(replay.duplicate, true);
+  assert.equal(replay.relationship.duplicate, true);
+  assert.equal(relationshipStore.snapshot().xp, 13);
+});
+
+test('legacy story claim selects the no-bonus ending without changing its reward', () => {
+  const store = new MoteStoryStore({ persistence: memoryPersistence() });
+  store.evaluate({ eventId: 'legacy-story-complete', activeId: 'mote', successfulTasks: 1, exclusiveTriggers: ['task_success'] });
+  const result = claimMoteStoryWithReward({
+    storyStore: store,
+    relationshipStore: new MoteRelationshipStore(),
+    eventId: 'exclusive-mote',
+    claimId: 'legacy-client-claim',
+  });
+  assert.equal(result.reward.xp, 10);
+  assert.equal(result.event.branchChoiceId, 'keep-at-home');
+  assert.ok(result.event.branchOutcome);
+});
+
+test('failed branch or claim persistence rolls back in-memory choice and receipt state', () => {
+  const backing = memoryPersistence();
+  let failSave = false;
+  const persistence = {
+    load: (...args) => backing.load(...args),
+    save: (...args) => {
+      if (failSave && args[0] === 'mote-story') throw new Error('simulated story snapshot failure');
+      return backing.save(...args);
+    },
+  };
+  const store = new MoteStoryStore({ persistence });
+  store.evaluate({ eventId: 'rollback-branch-complete', activeId: 'mote', successfulTasks: 1, exclusiveTriggers: ['task_success'] });
+  const revision = store.snapshot().revision;
+  failSave = true;
+  assert.throws(() => store.chooseBranch('exclusive-mote', 'go-further'), /simulated story snapshot failure/);
+  assert.equal(store.list().find(event => event.id === 'exclusive-mote').branchChoiceId, '');
+  assert.equal(store.snapshot().revision, revision);
+  assert.throws(() => store.claim('exclusive-mote', 'claim-after-failure'), /simulated story snapshot failure/);
+  assert.equal(store.list().find(event => event.id === 'exclusive-mote').claimed, false);
+  assert.equal(store.list().find(event => event.id === 'exclusive-mote').branchChoiceId, '');
+  assert.equal(store.snapshot().revision, revision);
 });
 
 test('exclusive story completion requires its own Mote to be active', () => {
@@ -119,7 +196,7 @@ test('legacy story snapshots keep their shared progress after catalog expansion'
   const restored = new MoteStoryStore({ persistence, now: () => 200 });
   assert.equal(restored.list().find(event => event.id === 'first-conversation').completed, true);
   assert.equal(restored.list().find(event => event.id === 'exclusive-mote').completed, false);
-  assert.equal(restored.snapshot().version, 2);
+  assert.equal(restored.snapshot().version, 3);
 });
 
 test('story completion is idempotent and claim requires completion', () => {
