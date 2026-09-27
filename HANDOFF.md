@@ -459,4 +459,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - TDD 回归证据：序号冲突 API 测试先以 `businessStatus='duplicate'` 错误失败，HTTP/WS 共用 ACK 映射后通过；持久化 Reality 收据过期恢复测试先因 `reality event is expired or invalid` 失败，增加既有收据校验后通过。
 - 自动验收：Node **154/154**；Android JVM **136 tests / 0 failures**，`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` **BUILD SUCCESSFUL**；`node --check`、`git diff --check`、`scan_secrets.ps1`、`test_apk_signer_output.ps1`、`verify_release_gates.ps1 -Channel internal-debug -AllowProtectedBranch` 均通过。性能预算：`elapsedMs=1.775`、完整快照 `1694 bytes`、摘要 `48 bytes`、快照缓存命中 `10000`、突发广播 `1`。
 - 实机证据：Xperia XZ2 / Android 15 以 USB serial `QV7017NH1F` 在线；无线调试地址 `192.168.101.68:39663` 的 TCP 探测失败。通过 `adb install -r` 将本机内部 Debug `2.2.0` / code `4` 升级覆盖设备上的 `2.1.0` / code `3`，保留应用数据。`am start -W` 返回 `Status: ok`、`LaunchState: COLD`、`TotalTime: 1492 ms`；舞台实际进入前台，采集的 `AndroidRuntime:E` 无崩溃记录。镜头仍关闭，本轮没有证明真实线索点击、定位采样、遭遇奖励、AR 平面重定位或无线断线恢复；这些保持待验收。Debug APK SHA-256：`F52F299811667EDBE31088C005B29D07EFC3DE52192633EA90109BEF6B16B2CD`，仅内部候选，不能作为正式签名发布。
-- 本批提交与 GitHub Actions 状态待 push 后补录。正式 Release 签名仍不得启用，除非独立加密恢复副本已实际验证；APK 不进入源码历史。
+- 提交 `5399286` 已推送到 `feature/integrated-enhancement`；GitHub Actions run [36340549528](https://github.com/blueicx/PhoneBridge/actions/runs/36340549528) 全部成功，Debug APK artifact `phonebridge-debug-5399286df307ef74c05ffaa6ad81a893305b5314` 已上传。正式 Release 签名仍不得启用，除非独立加密恢复副本已实际验证；APK 不进入源码历史。
+
+## 38. 全方向深化批次 6：性能基线与可恢复交付（2026-09-28）
+
+- 实机性能采样来自已升级至 `2.2.0` / code `4` 的 Xperia XZ2（Android 15，USB ADB）。`am start -W` 首次冷启动 `TotalTime=1492 ms`。`dumpsys gfxinfo com.phonebridge` 报告 1225 帧、UI P95 `25 ms`、GPU P95 `19 ms`、Janky frames `0.49%`，当前舞台达到 2 秒 / 33.3 ms 目标。单次样本不用于声称优化前后百分比，也不代表两小时稳定性。
+- `dumpsys meminfo`：PSS `141821 KB`、RSS `244688 KB`。同次附近的电池快照为电量 `21%`、电池温度 `39.2°C`、状态充电。因电池接近既有 40°C 相机降级线且相机权限未授权，本轮不启动 CameraX/AR 负载；相机 permission 仍为未授权，没有通过 ADB 静默授予。
+- `scripts/test_runtime_backup.ps1` 已在随机命名且限定于 `%TEMP%` 的测试根目录运行成功。覆盖 v3 manifest、字节数和 SHA-256、VerifyOnly 无写入、节点未停止时拒绝恢复、替换失败回滚、正常恢复、损坏/缺失/空备份/路径穿越拒绝和 v2 迁移；脚本结束只清理由该测试创建的临时目录，没有操作真实运行时目录。
+- Pairing/TLS fingerprint 与 pin、一次性 claim / 错 nonce、Android QR/claim client、设备断线 reducer、timeline cursor 与 outbox retry 均在全量自动测试范围内；Node `154/154`、Android JVM `136/136`、Lint、Debug 构建、敏感扫描、APK 门禁和性能预算通过。实际无线 `192.168.101.68:39663` TCP 不可达，手机相机权限未授权，当前 Android 节点显示离线；因此尚无实机扫码、WSS pin、断线重连、事件同步延迟或现实线索业务结果证据。
+- 本地隔离备份恢复演练通过。批次 5 Actions run [36340549528](https://github.com/blueicx/PhoneBridge/actions/runs/36340549528) 成功（3m54s），artifact `phonebridge-debug-5399286df307ef74c05ffaa6ad81a893305b5314` 已上传，大小 `65,278,819 bytes`；APK 与签名密钥没有进入 Git。
+- 正式签名仍为受控待办：未确认密钥及独立加密恢复副本的存在和可解密性，因此没有创建/使用 Release 身份、没有生成正式签名 APK。当前 Debug APK 不能分发为正式版。
+- 本轮未完成两小时运行、连续电量/温度记录、实机配对/断线恢复、同步延迟测量、三类镜头线索与 ARCore 放置。重新开放这些测试前需确认无线/USB 设备可用、节点可连接、相机授权由设备用户明确完成；正式签名需先验证离线加密恢复副本。本批文档/代码状态在 GitHub Actions 通过后补录本节提交号。

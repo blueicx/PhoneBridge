@@ -256,3 +256,11 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - Android 线索记录改为按上海活动日期解锁，兼容旧线索名；用户先选观察方式，再通过持久化 outbox 等待业务 ACK。成功后查询服务端收据并显示道具/经验，拒绝时不记为已发现。AR 锚点可重新放置，追踪丢失时有明确提示；无相机或定位能力时继续提供手动探索。本流程不保存原图或精确轨迹。
 - 验证：Node **154/154**；Android JVM **136 项 / 0 失败**，`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 全部通过；敏感扫描、内部 Debug APK 门禁、签名解析测试、性能预算和 `git diff --check` 通过。性能预算结果：`elapsedMs=1.775`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。
 - Xperia XZ2 / Android 15 通过 USB 在线（无线地址 `192.168.101.68:39663` 不可达）。使用 `adb install -r` 将内部 Debug 版从 `2.1.0` 升级到 `2.2.0` / code `4`，未清除应用数据；冷启动 `1.492 s`，沉浸舞台进入前台且没有捕获到 Android 崩溃。镜头保持关闭，因此相机/定位线索、遭遇奖励、平面重定位和无线恢复仍待完整实机交互验收；该 APK 是 Debug 内部候选，不是正式签名发布版。
+
+## 全方向深化批次 6：性能基线与可恢复交付
+
+- Xperia 当前实测样本：冷启动 **1.492 s**；舞台 `dumpsys gfxinfo` 共 1225 帧，UI P95 **25 ms**、GPU P95 **19 ms**、Janky frames **0.49%**，达到“冷启动 2 秒内、帧耗时 P95 不超过 33.3 ms”的目标。`dumpsys meminfo` PSS **141821 KB**。采样时电量 **21%**、电池温度 **39.2°C** 且正在充电；这不是两小时稳定性或耗电测试。
+- `scripts/test_runtime_backup.ps1` 在隔离临时目录完成备份与恢复故障演练：校验 v3 清单/哈希、VerifyOnly 不写入、替换失败回滚、成功恢复、损坏/缺失/路径穿越/空备份拒绝，以及 v2 迁移。真实运行时目录未被覆盖。
+- Pairing/TLS pin、一次性 claim、拒绝错误 nonce、Android 二维码/claim 协议、断线状态与 outbox 恢复已由 Node/Android 自动测试覆盖。实机扫码、无线断线恢复和同步延迟尚未验收：无线 `39663` 不可达，应用相机权限未授权，当前界面处于离线状态。
+- 批次 5 GitHub Actions run [36340549528](https://github.com/blueicx/PhoneBridge/actions/runs/36340549528) 全部成功并上传内部 Debug APK artifact；APK 未加入源码历史。此构建不代表正式签名。
+- 正式 Release 签名保持关闭：尚无已验证的独立加密密钥恢复副本。待设备网络/相机权限可用后，补扫码配对、断线恢复、探索全流程和两小时稳定性/热/电量验收；同步延迟需在连接节点后采样。
