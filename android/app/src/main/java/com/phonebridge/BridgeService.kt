@@ -69,6 +69,8 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         const val ACTION_VOICE_START = "com.phonebridge.VOICE_START"
         const val ACTION_VOICE_STOP = "com.phonebridge.VOICE_STOP"
         const val ACTION_VOICE_STATE = "com.phonebridge.VOICE_STATE"
+        const val ACTION_SET_QUIET_MODE = "com.phonebridge.SET_QUIET_MODE"
+        const val EXTRA_QUIET_MODE = "quiet_mode"
         const val EXTRA_VOICE_RUNNING = "running"
         const val EXTRA_VOICE_LISTENING = "listening"
         const val EXTRA_VOICE_SPEAKING = "speaking"
@@ -107,6 +109,7 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
     @Volatile private var voiceListening = false
     @Volatile private var voiceWaitingForReply = false
     @Volatile private var voiceSpeaking = false
+    @Volatile private var quietMode = false
     @Volatile private var voiceReplyPreview = ""
     @Volatile private var foregroundState = VoiceForegroundState(
         serviceAlive = false,
@@ -135,6 +138,8 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         ensureBridgeLink()
         val power = getSystemService(PowerManager::class.java)
         val prefs = getSharedPreferences("phonebridge", Context.MODE_PRIVATE)
+        quietMode = getSharedPreferences("companion_stage", Context.MODE_PRIVATE)
+            .getBoolean("quiet_mode", false)
         screenOffExitMinutes = prefs.getInt(
             "screen_off_exit_minutes",
             DEFAULT_SCREEN_OFF_EXIT_MINUTES
@@ -563,10 +568,17 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         voiceWaitingForReply = false
         voiceReplyPreview = text
         updateQuickReply("Mote 回复", text)
+        if (!StageAudioPolicy.shouldPlayVoice(quietMode)) {
+            voiceSpeaking = false
+            refreshForegroundState()
+            resumeVoiceCapture()
+            return
+        }
         speakViaNode(text, fallbackToDevice = true)
     }
 
     private fun speakWithDeviceTts(text: String): Boolean {
+        if (!StageAudioPolicy.shouldPlayVoice(quietMode)) return false
         val queued = runCatching {
             textToSpeech?.setPitch(1.15f)
             textToSpeech?.setSpeechRate(.95f)
@@ -583,6 +595,7 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
     }
 
     private fun speakViaNode(text: String, fallbackToDevice: Boolean = false) {
+        if (!StageAudioPolicy.shouldPlayVoice(quietMode)) return
         Log.i(TAG, "Requesting neural speech")
         replyExecutor.execute {
             try {
@@ -613,6 +626,10 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
     }
 
     private fun playServerSpeech(text: String, pcm: ByteArray) {
+        if (!StageAudioPolicy.shouldPlayVoice(quietMode)) {
+            resumeVoiceCapture()
+            return
+        }
         if (!isVoiceChatRunning || !voiceCaptureRunning) return
         pauseVoiceCapture()
         voiceWaitingForReply = false
@@ -748,6 +765,7 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
             }
             ACTION_VOICE_START -> startVoiceChat()
             ACTION_VOICE_STOP -> stopVoiceChat()
+            ACTION_SET_QUIET_MODE -> setQuietMode(intent.getBooleanExtra(EXTRA_QUIET_MODE, false))
             else -> startForegroundCompat()
         }
         if (intent?.action == ACTION_SEND_REPLY) {
@@ -755,6 +773,23 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
             if (text.isNotEmpty()) replyExecutor.execute { answerReply(text) }
         }
         return START_STICKY
+    }
+
+    private fun setQuietMode(enabled: Boolean) {
+        quietMode = enabled
+        getSharedPreferences("companion_stage", Context.MODE_PRIVATE).edit()
+            .putBoolean("quiet_mode", enabled)
+            .apply()
+        if (enabled) {
+            runCatching { textToSpeech?.stop() }
+            runCatching { serverSpeechTrack?.pause() }
+            runCatching { serverSpeechTrack?.flush() }
+            runCatching { serverSpeechTrack?.stop() }
+            voiceSpeaking = false
+            voiceWaitingForReply = false
+            refreshForegroundState()
+            if (isVoiceChatRunning) voiceHandler.post { resumeVoiceCapture() }
+        }
     }
 
     private fun startForegroundCompat() {

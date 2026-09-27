@@ -182,6 +182,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var focusGameButton: Button
     private lateinit var focusRealityButton: Button
     private lateinit var focusCommandButton: Button
+    private lateinit var focusStageButton: Button
+    private lateinit var ambientSoundController: AmbientSoundController
+    private var stagePreferences = CompanionStagePreferences()
+    private var stageDecorations = emptyList<StageDecoration>()
+    private var stageMessage: String? = null
+    private var stageMessageExpiresAtMs = 0L
     private lateinit var pttButton: Button
     private lateinit var panelTabs: MaterialButtonToggleGroup
     private lateinit var consolePanel: android.view.View
@@ -418,6 +424,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
         bindViews()
+        ambientSoundController = AmbientSoundController(applicationContext)
+        stagePreferences = readCompanionStagePreferences()
+        stageDecorations = readCompanionStageDecorations()
         WindowCompat.setDecorFitsSystemWindows(window, true)
         focusBackCallback = object : OnBackPressedCallback(false) {
             override fun handleOnBackPressed() {
@@ -444,6 +453,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         onBackPressedDispatcher.addCallback(this, focusBackCallback)
         setupThemes()
+        applyCompanionStagePreferences(updateVoiceService = false)
         loadPet()
         setupInteractions()
         setupPanels()
@@ -588,6 +598,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusGameButton = findViewById(R.id.focusGameButton)
         focusRealityButton = findViewById(R.id.focusRealityButton)
         focusCommandButton = findViewById(R.id.focusCommandButton)
+        focusStageButton = findViewById(R.id.focusStageButton)
         pttButton = findViewById(R.id.pttButton)
         panelTabs = findViewById(R.id.panelTabs)
         consolePanel = findViewById(R.id.consolePanel)
@@ -1611,6 +1622,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             commandInput.requestFocus()
             say("回到工作台，可以直接输入指令。")
         }
+        focusStageButton.setOnClickListener { showCompanionStageSettings() }
         cockpitSummaryToggle.setOnClickListener {
             cockpitSummaryExpanded = !cockpitSummaryExpanded
             renderCockpitSummary()
@@ -2871,6 +2883,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         publishSensorState(force = true)
         sendJson(JSONObject().put("type", "hello").put("pet", petJson()))
         requestSnapshot()
+        refreshStageHabitat()
         flushWorkspaceOutbox()
         scheduleOutboxSync()
         drainChatOutbox()
@@ -4945,7 +4958,17 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         runOnUiThread {
             speechText.text = text
             showPetBubble(text)
+            stageMessage = text
+            val expiresAt = System.currentTimeMillis() + 5_000L
+            stageMessageExpiresAtMs = expiresAt
+            renderPet()
             companionView.speakPulse()
+            companionView.postDelayed({
+                if (stageMessageExpiresAtMs == expiresAt) {
+                    stageMessage = null
+                    renderPet()
+                }
+            }, 5_050L)
         }
     }
 
@@ -4995,6 +5018,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusSpeechLayer.post { layoutFocusSpeechOverlay() }
         focusBackCallback.isEnabled = true
         hideSystemBars()
+        updateAmbientSound()
         if (announce) say("进入沉浸模式。")
     }
 
@@ -5019,6 +5043,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusSpeechStack.removeAllViews()
         findViewById<View>(R.id.focusInputRow).visibility = View.GONE
         focusBackCallback.isEnabled = false
+        updateAmbientSound()
         saveImmersiveSurface(ImmersiveSurface.COMPANION)
         showSystemBars()
         say("回到工作台。")
@@ -5106,6 +5131,191 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         ).joinToString("\n")
     }
 
+    private fun readCompanionStagePreferences(): CompanionStagePreferences {
+        val prefs = getSharedPreferences("companion_stage", Context.MODE_PRIVATE)
+        return CompanionStagePreferences(
+            quietMode = prefs.getBoolean("quiet_mode", false),
+            reduceMotion = prefs.getBoolean("reduce_motion", false),
+            oneHanded = prefs.getBoolean("one_handed", false),
+            ambientSound = prefs.getBoolean("ambient_sound", false),
+        )
+    }
+
+    private fun readCompanionStageDecorations(): List<StageDecoration> = runCatching {
+        val json = org.json.JSONArray(
+            getSharedPreferences("companion_stage", Context.MODE_PRIVATE).getString("decorations", "[]")
+        )
+        List(json.length()) { index ->
+            json.optJSONObject(index)?.let {
+                StageDecoration(it.optString("id"), it.optString("name"))
+            } ?: StageDecoration("", "")
+        }.filter { it.id.isNotBlank() && it.name.isNotBlank() }.take(4)
+    }.getOrDefault(emptyList())
+
+    private fun saveCompanionStagePreferences(value: CompanionStagePreferences) {
+        stagePreferences = value
+        getSharedPreferences("companion_stage", Context.MODE_PRIVATE).edit()
+            .putBoolean("quiet_mode", value.quietMode)
+            .putBoolean("reduce_motion", value.reduceMotion)
+            .putBoolean("one_handed", value.oneHanded)
+            .putBoolean("ambient_sound", value.ambientSound)
+            .apply()
+        applyCompanionStagePreferences()
+    }
+
+    private fun applyCompanionStagePreferences(updateVoiceService: Boolean = true) {
+        if (::focusToolbar.isInitialized) {
+            focusToolbar.layoutParams = focusToolbar.layoutParams.apply {
+                height = dp(if (stagePreferences.oneHanded) 56 else 36)
+            }
+            focusToolsToggle.minimumWidth = dp(if (stagePreferences.oneHanded) 52 else 34)
+            focusToolsToggle.minimumHeight = dp(if (stagePreferences.oneHanded) 52 else 36)
+            listOf(
+                focusCameraButton, focusLensButton, focusListenButton, focusVoiceButton,
+                focusMemoryButton, focusGameButton, focusRealityButton, focusCommandButton, focusStageButton
+            ).forEach { it.minimumHeight = dp(if (stagePreferences.oneHanded) 52 else 36) }
+            if (stagePreferences.oneHanded && immersiveMode) {
+                focusToolsExpanded = true
+                immersiveShellCoordinator.openDrawer()
+            }
+            renderFocusTools()
+        }
+        if (::companionView.isInitialized) renderPet()
+        updateAmbientSound()
+        if (updateVoiceService && BridgeService.isRunning) {
+            startService(
+                Intent(this, BridgeService::class.java)
+                    .setAction(BridgeService.ACTION_SET_QUIET_MODE)
+                    .putExtra(BridgeService.EXTRA_QUIET_MODE, stagePreferences.quietMode)
+            )
+        }
+    }
+
+    private fun updateAmbientSound() {
+        if (!::ambientSoundController.isInitialized) return
+        val shouldPlay = StageAudioPolicy.shouldPlayAmbient(
+            enabled = stagePreferences.ambientSound,
+            quietMode = stagePreferences.quietMode,
+            immersiveVisible = immersiveMode && !isFinishing,
+            resumed = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED),
+        )
+        if (shouldPlay) ambientSoundController.start() else ambientSoundController.stop()
+    }
+
+    private fun showCompanionStageSettings() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        content.addView(TextView(this).apply {
+            text = "让舞台按你的习惯安静或更容易单手操作；家园摆件会显示在伙伴身边。"
+            setTextColor(0xFFB8C8D8.toInt())
+            textSize = 14f
+        })
+        fun settingSwitch(label: String, checked: Boolean, update: (Boolean) -> CompanionStagePreferences) {
+            content.addView(androidx.appcompat.widget.SwitchCompat(this).apply {
+                text = label
+                isChecked = checked
+                setPadding(0, dp(8), 0, dp(8))
+                setOnCheckedChangeListener { _, enabled -> saveCompanionStagePreferences(update(enabled)) }
+            })
+        }
+        settingSwitch("安静模式（保留文字提醒，停止语音和环境声）", stagePreferences.quietMode) {
+            stagePreferences.copy(quietMode = it)
+        }
+        settingSwitch("减弱角色动画", stagePreferences.reduceMotion) {
+            stagePreferences.copy(reduceMotion = it)
+        }
+        settingSwitch("单手布局（放大并展开底部工具）", stagePreferences.oneHanded) {
+            stagePreferences.copy(oneHanded = it)
+        }
+        settingSwitch("环境声（本地生成，默认关闭）", stagePreferences.ambientSound) {
+            stagePreferences.copy(ambientSound = it)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("舞台与家园")
+            .setView(content)
+            .setNeutralButton("布置家园") { _, _ -> openHabitatDecorationPicker() }
+            .setPositiveButton("完成", null)
+            .show()
+    }
+
+    private fun openHabitatDecorationPicker() {
+        if (!BridgeLink.isOnline) {
+            Toast.makeText(this, "家园摆件需要连接节点后布置；已布置的摆件仍会显示。", Toast.LENGTH_LONG).show()
+            return
+        }
+        workspaceRequest(
+            "/api/reality/catalog",
+            onSuccess = { catalogResponse ->
+                val catalog = catalogResponse.optJSONObject("catalog")?.optJSONArray("decorations")
+                    ?: org.json.JSONArray()
+                workspaceRequest(
+                    "/api/reality/state",
+                    onSuccess = { stateResponse ->
+                        val habitat = stateResponse.optJSONObject("state")?.optJSONObject("habitat")
+                        val placedIds = habitat?.optJSONArray("decorations") ?: org.json.JSONArray()
+                        val placed = (0 until placedIds.length()).map { placedIds.optString(it) }.toSet()
+                        val available = (0 until catalog.length()).mapNotNull { index ->
+                            catalog.optJSONObject(index)?.let {
+                                StageDecoration(it.optString("id"), it.optString("name"))
+                            }
+                        }.filter { it.id.isNotBlank() && it.name.isNotBlank() && it.id !in placed }
+                        if (available.isEmpty()) {
+                            Toast.makeText(this, "家园已布置所有可用摆件。", Toast.LENGTH_SHORT).show()
+                        } else {
+                            AlertDialog.Builder(this)
+                                .setTitle("选择一个家园摆件")
+                                .setItems(available.map { it.name }.toTypedArray()) { _, index ->
+                                    val selected = available[index]
+                                    workspaceRequest(
+                                        "/api/reality/habitat",
+                                        "PATCH",
+                                        JSONObject().put("decorationId", selected.id),
+                                        onSuccess = {
+                                            refreshStageHabitat()
+                                            say("${selected.name}已经安放在家园里了。")
+                                        },
+                                        onError = { error -> Toast.makeText(this, "布置失败：$error", Toast.LENGTH_LONG).show() },
+                                    )
+                                }
+                                .setNegativeButton("取消", null)
+                                .show()
+                        }
+                    },
+                    onError = { error -> Toast.makeText(this, "家园读取失败：$error", Toast.LENGTH_LONG).show() },
+                )
+            },
+            onError = { error -> Toast.makeText(this, "摆件目录读取失败：$error", Toast.LENGTH_LONG).show() },
+        )
+    }
+
+    private fun refreshStageHabitat() {
+        if (!BridgeLink.isOnline) return
+        workspaceRequest("/api/reality/catalog", onSuccess = { catalogResponse ->
+            val catalog = catalogResponse.optJSONObject("catalog")?.optJSONArray("decorations")
+                ?: return@workspaceRequest
+            val names = (0 until catalog.length()).mapNotNull { index ->
+                catalog.optJSONObject(index)?.let { it.optString("id") to it.optString("name") }
+            }.toMap()
+            workspaceRequest("/api/reality/state", onSuccess = { stateResponse ->
+                val ids = stateResponse.optJSONObject("state")?.optJSONObject("habitat")
+                    ?.optJSONArray("decorations") ?: org.json.JSONArray()
+                val values = (0 until ids.length()).mapNotNull { index ->
+                    val id = ids.optString(index)
+                    names[id]?.takeIf { id.isNotBlank() && it.isNotBlank() }?.let { StageDecoration(id, it) }
+                }.take(4)
+                stageDecorations = values
+                val serialized = org.json.JSONArray().apply {
+                    values.forEach { put(JSONObject().put("id", it.id).put("name", it.name)) }
+                }
+                getSharedPreferences("companion_stage", Context.MODE_PRIVATE).edit()
+                    .putString("decorations", serialized.toString()).apply()
+                renderPet()
+            })
+        })
+    }
+
     private fun renderFocusTools() {
         if (!immersiveMode) return
         focusToolScroll.visibility = if (focusToolsExpanded) View.VISIBLE else View.GONE
@@ -5179,6 +5389,25 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             temperatureCelsius = latestTelemetry?.batteryTemperature ?: 25f
         )
         companionView.update(pet)
+        val nowWallMs = System.currentTimeMillis()
+        val interactionAgeMs = (nowWallMs - pet.lastInteractionMs).takeIf { pet.lastInteractionMs > 0L && it in 0L..30_000L }
+        val stageState = CompanionStageEngine.resolve(
+            CompanionStageInput(
+                hourOfDay = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY),
+                energy = pet.energy,
+                activeTasks = activeTasks.count { !it.value.status.equals("done", true) },
+                observingReality = realityLensActive || cameraRunning,
+                recentInteractionAgeMs = interactionAgeMs,
+                quietMode = stagePreferences.quietMode,
+                reduceMotion = stagePreferences.reduceMotion,
+                nowMs = nowWallMs,
+                message = stageMessage,
+                messageExpiresAtMs = stageMessageExpiresAtMs,
+                decorations = stageDecorations,
+            )
+        )
+        if (stageMessageExpiresAtMs <= nowWallMs) stageMessage = null
+        companionView.setStageState(stageState)
         renderFocusTools()
         linkMetric.text = if (online) "链路 在线" else "链路 离线"
         audioMetric.text = when {
@@ -5500,6 +5729,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         interact(if (Random.nextInt(4) == 0) "play" else "stroke")
     }
 
+    override fun onDecorationTouched(decorationId: String) {
+        val decoration = stageDecorations.firstOrNull { it.id == decorationId } ?: return
+        companionView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        say("我喜欢这里的${decoration.name}。")
+    }
+
     override fun onCompanionLongPressed() {
         setPtt(true)
     }
@@ -5510,6 +5745,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     override fun onPause() {
         if (::arCoreRenderView.isInitialized) arCoreRenderView.onHostPause()
+        ambientSoundController.stop()
         super.onPause()
         savePet()
         // A detached SurfaceView blocks CameraX session configuration when the
@@ -5532,6 +5768,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     override fun onResume() {
         super.onResume()
+        updateAmbientSound()
         if (::arCoreRenderView.isInitialized) {
             arCoreRenderView.onHostResume()
             handleArCoreInstallResume()
@@ -5570,6 +5807,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     override fun onDestroy() {
+        if (::ambientSoundController.isInitialized) ambientSoundController.close()
         runCatching { unregisterReceiver(exitAppReceiver) }
         runCatching { unregisterReceiver(voiceStateReceiver) }
         savePet()

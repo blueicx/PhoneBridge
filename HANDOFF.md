@@ -421,3 +421,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - `RealitySessionLifecycle.close()` 在 pause 失败后仍尝试 close，并保证最终状态为 CLOSED；沉浸硬件返回键改为调用统一 OnBackPressedDispatcher，现实镜头清理逻辑不再被绕过。
 - 基线 Node **142/142**；Android 单测、Lint、Debug 构建初始基线均通过。批次实现后定向温度/生命周期测试及完整 `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 通过，XML 汇总 **112 tests / 0 failures**；`git diff --check` 通过。
 - 当前 ADB server 仍报 protocol fault，未对 Xperia 安装或启动；所有相机、温度和 ARCore 实机门槛仍待可达设备验收。
+
+## 34. 全方向深化批次 2：沉浸舞台与家园（2026-09-27）
+
+- 新增 `CompanionStageEngine`，根据本地时段、能量、活动任务、观察状态和最近互动决定舞台昼夜氛围及休息/观察/专注/互动节奏。角色话语和任务状态以舞台短气泡呈现，并在五秒后清理；减弱动画设置会暂停持续角色动画。
+- 家园装饰从原有 reality catalog/state 读取并缓存，沿用 `/api/reality/habitat` 写入，不新增服务端协议；最多展示 4 件，Canvas 使用本地简笔符号渲染，点击有触觉和角色回应。
+- 沉浸工具抽屉新增单手布局、减弱动画、安静模式和环境声控制。环境声使用本机合成音、低音量与瞬时 duck 音频焦点，默认关闭；只在明确启用、沉浸舞台可见且 Activity resumed 时持有 AudioTrack，后台/退出/销毁即停止释放。安静模式保留文字回复和通知，并阻止设备 TTS 与服务端语音播放。
+- 新增舞台状态投影、过期气泡/摆件去重、音频策略和合成音边界单测。Node `node --test` **142/142**；Android **118 tests / 0 failures**，`:app:testDebugUnitTest`、`:app:lintDebug`、`:app:assembleDebug` **BUILD SUCCESSFUL**。Lint/编译仅有既存弃用与提示，无本批新增错误。
+- `scan_secrets.ps1`、APK 内部 Debug 签名/版本门禁、workspace 性能预算和 `git diff --check` 均通过。性能预算输出 `elapsedMs=3.243`、`fullBytes=1694`、`summaryBytes=48`、缓存命中 `10000`、突发广播 `1`；Debug APK 是内部候选，不是正式签名版。
+- 未进行手机 UI 或声音验收：当前 ADB server 在前序检查中出现 protocol fault；实际家园摆件点击、单手可达性、静音交互与环境音听感须在设备恢复后验证。环境音默认关闭，未生成或上传声音素材。
+- 下一批继续深化现有 20 个 Mote 的可辨认动作/关系反馈、分支剧情状态与图鉴预览；后续聊天/语音、探索与性能/交付仍待完成。本节不代表六批计划整体完成。

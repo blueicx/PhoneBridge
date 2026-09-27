@@ -42,6 +42,7 @@ class CompanionView @JvmOverloads constructor(
         fun onCompanionTouched(x: Float, y: Float)
         fun onCompanionLongPressed()
         fun onCompanionLongPressReleased()
+        fun onDecorationTouched(decorationId: String) {}
     }
 
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -66,10 +67,13 @@ class CompanionView @JvmOverloads constructor(
     }
     private val stageHorizonPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stageVignettePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val stageAtmospherePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val stageMessagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val bodyPath = Path()
     private val rect = RectF()
 
     private var state = PetState()
+    private var stageState = CompanionStageEngine.resolve(CompanionStageInput(hourOfDay = 12, energy = 82))
     private var displayedEmotion = PetEmotion()
     private var accentColor = Color.parseColor("#8FF0C4")
     private var secondaryColor = Color.parseColor("#FFC86B")
@@ -77,6 +81,7 @@ class CompanionView @JvmOverloads constructor(
     private var lastFrame = 0L
     private var animationSeconds = 0f
     private var animatorDurationScale = 1f
+    private var appReduceMotion = false
     private var moodGlowColor = MOOD_CURIOUS_COLOR
     private var bodyShaderAppearance: PetAppearance? = null
     private var bodyShaderAccent = 0
@@ -153,7 +158,8 @@ class CompanionView @JvmOverloads constructor(
         isAttachedToWindow &&
             windowVisibility == View.VISIBLE &&
             isShown &&
-            animatorDurationScale > 0f
+            animatorDurationScale > 0f &&
+            !appReduceMotion
 
     private fun vitality(): Float {
         val emotionEnergy = displayedEmotion.joy * .30f +
@@ -460,6 +466,17 @@ class CompanionView @JvmOverloads constructor(
         requestRedraw()
     }
 
+    fun setStageState(value: CompanionStageState) {
+        stageState = value
+        appReduceMotion = value.reduceMotion
+        contentDescription = buildString {
+            append("${state.name} 伙伴舞台 · ${value.activity.name.lowercase()}")
+            if (value.decorations.isNotEmpty()) append(" · 家园：${value.decorations.joinToString { it.name }}")
+            value.message?.let { append(" · $it") }
+        }
+        requestRedraw()
+    }
+
     fun setBehaviorHint(hint: MoteBehaviorOutput) {
         behaviorHint = hint
         accentColor = parseColorOr(hint.primaryColor, accentColor)
@@ -528,6 +545,13 @@ class CompanionView @JvmOverloads constructor(
         rect.set(0f, 0f, w, h)
         stagePaint.style = Paint.Style.FILL
         canvas.drawRoundRect(rect, radius * .32f, radius * .32f, stagePaint)
+        val lightTint = when (stageState.lighting) {
+            StageLighting.DAY -> Color.argb(12, 255, 226, 164)
+            StageLighting.DUSK -> Color.argb(28, 255, 145, 126)
+            StageLighting.NIGHT -> Color.argb(34, 28, 43, 101)
+        }
+        stageAtmospherePaint.color = lightTint
+        canvas.drawRoundRect(rect, radius * .32f, radius * .32f, stageAtmospherePaint)
 
         // Tiny parallax motes read as depth without turning the stage into soft blobs.
         particlePaint.style = Paint.Style.FILL
@@ -592,10 +616,73 @@ class CompanionView @JvmOverloads constructor(
         )
         canvas.drawRoundRect(rect, radius * .13f, radius * .13f, stageHorizonPaint)
 
+        drawHabitatDecorations(canvas, w, h, radius)
+
         // Darkened edges pull attention to the companion while preserving HUD contrast.
         stageVignettePaint.style = Paint.Style.FILL
         canvas.drawRect(0f, 0f, w, h, stageVignettePaint)
+        drawStageMessage(canvas, w, h)
         particlePaint.style = Paint.Style.STROKE
+    }
+
+    private fun drawHabitatDecorations(canvas: Canvas, w: Float, h: Float, radius: Float) {
+        stageState.decorations.take(4).forEachIndexed { index, decoration ->
+            val x = w * (0.16f + index * .225f)
+            val y = h * .79f
+            val size = radius * .15f
+            val color = if (index % 2 == 0) accentColor else secondaryColor
+            stageAtmospherePaint.color = Color.argb(88, Color.red(color), Color.green(color), Color.blue(color))
+            canvas.drawCircle(x, y - size * .45f, size * 1.2f, stageAtmospherePaint)
+            stageGridPaint.color = Color.argb(178, Color.red(color), Color.green(color), Color.blue(color))
+            stageGridPaint.strokeWidth = max(1.5f, radius * .018f)
+            when {
+                decoration.name.contains("灯") -> {
+                    canvas.drawCircle(x, y - size, size * .34f, stageAtmospherePaint)
+                    canvas.drawLine(x, y - size * .64f, x, y + size * .25f, stageGridPaint)
+                    canvas.drawLine(x - size * .4f, y + size * .27f, x + size * .4f, y + size * .27f, stageGridPaint)
+                }
+                decoration.name.contains("芽") || decoration.name.contains("苔") || decoration.name.contains("花") -> {
+                    canvas.drawLine(x, y + size * .2f, x, y - size * .7f, stageGridPaint)
+                    canvas.drawCircle(x - size * .3f, y - size * .45f, size * .3f, stageAtmospherePaint)
+                    canvas.drawCircle(x + size * .3f, y - size * .68f, size * .3f, stageAtmospherePaint)
+                }
+                else -> {
+                    rect.set(x - size * .65f, y - size * .45f, x + size * .65f, y + size * .15f)
+                    canvas.drawRoundRect(rect, size * .2f, size * .2f, stageAtmospherePaint)
+                    canvas.drawLine(x - size * .65f, y + size * .15f, x - size * .65f, y + size * .38f, stageGridPaint)
+                    canvas.drawLine(x + size * .65f, y + size * .15f, x + size * .65f, y + size * .38f, stageGridPaint)
+                }
+            }
+        }
+    }
+
+    private fun drawStageMessage(canvas: Canvas, w: Float, h: Float) {
+        val text = stageState.message ?: return
+        val size = min(w, h) * .06f
+        stageMessagePaint.textSize = size
+        stageMessagePaint.color = Color.WHITE
+        stageMessagePaint.style = Paint.Style.FILL
+        val metrics = stageMessagePaint.fontMetrics
+        val baseline = h * .17f - (metrics.ascent + metrics.descent) * .5f
+        val width = stageMessagePaint.measureText(text).coerceAtMost(w * .76f)
+        rect.set(w * .5f - width * .5f - size * .48f, baseline + metrics.ascent - size * .28f,
+            w * .5f + width * .5f + size * .48f, baseline + metrics.descent + size * .28f)
+        stageAtmospherePaint.color = Color.argb(168, 10, 19, 30)
+        canvas.drawRoundRect(rect, size * .48f, size * .48f, stageAtmospherePaint)
+        canvas.drawText(text, w * .5f, baseline, stageMessagePaint)
+    }
+
+    private fun decorationAt(x: Float, y: Float): String? {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (!isImmersiveStage(width, height)) return null
+        val radius = min(w, h) * .215f
+        val hitRadius = radius * .24f
+        return stageState.decorations.take(4).mapIndexedNotNull { index, decoration ->
+            val centerX = w * (0.16f + index * .225f)
+            val centerY = h * .79f - radius * .07f
+            decoration.id.takeIf { kotlin.math.hypot((x - centerX).toDouble(), (y - centerY).toDouble()) <= hitRadius }
+        }.firstOrNull()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -610,7 +697,14 @@ class CompanionView @JvmOverloads constructor(
             petJoy = (petJoy - dt / 2600f).coerceAtLeast(0f)
             speakPulse = (speakPulse - dt / 900f).coerceAtLeast(0f)
             val liveliness = vitality()
-            lifePhase += dt / 1000f * liveliness * MoteVisualProfiles.fromBehavior(state.appearance, behaviorHint).motionScale
+            val activityScale = when (stageState.activity) {
+                CompanionStageActivity.REST -> .48f
+                CompanionStageActivity.FOCUS -> .78f
+                CompanionStageActivity.OBSERVE -> .92f
+                CompanionStageActivity.INTERACTION -> 1.25f
+                CompanionStageActivity.IDLE -> 1f
+            }
+            lifePhase += dt / 1000f * liveliness * MoteVisualProfiles.fromBehavior(state.appearance, behaviorHint).motionScale * activityScale
             idlePhase += dt / 1000f
             if (touchActive) {
                 idleGazeX += (0f - idleGazeX) * min(1f, dt / 260f)
@@ -2243,7 +2337,11 @@ class CompanionView @JvmOverloads constructor(
                 if (longPressFired) {
                     listener?.onCompanionLongPressReleased()
                 } else {
-                    performClick()
+                    val decorationId = if (!petting) decorationAt(event.x, event.y) else null
+                    if (decorationId != null) {
+                        performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                        listener?.onDecorationTouched(decorationId)
+                    } else performClick()
                 }
                 petting = false
                 gazeTargetX = 0f

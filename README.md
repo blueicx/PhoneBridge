@@ -228,3 +228,10 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 后续验收：Node 全量 **142/142**、运行时备份/恢复、签名解析、敏感扫描、性能预算与当前 Debug APK 实际签名门禁通过；Android 单测和 Debug 构建通过。GitHub Actions run #31 首次执行 Lint 揭示 8 个真实代码错误，run #32 增加了完整错误诊断；提交 `11fe2cd` 修复后台录音的二次权限检查与撤权处理、粒子白色 RGB 分量和音频循环缩进。GitHub Actions run #33 全部通过，Android Lint 错误清零并完成 APK artifact 上传。本机 `lintAnalyzeDebug` 曾连续运行超过 6 分钟无进展，未计作通过。无线实机、正式签名和 ARCore 真锚定仍未验收。
 
 本批实现记录见 [`docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md`](docs/superpowers/plans/2026-09-22-phonebridge-deepening-batch-6.md)。正式 keystore、真实 WSS/二维码扫描和 Xperia 实机验收仍待独立证据。
+
+## 全方向深化批次 2：沉浸舞台与家园
+
+- Android 新增纯逻辑 `CompanionStageEngine`，依据时段、能量、任务、观察和最近互动投影舞台光线与休息/观察/专注/互动节奏；提醒或任务气泡五秒后自动消失。
+- `CompanionView` 将家园摆件绘制到沉浸舞台并支持点击反馈；摆件仍通过已有 `/api/reality/catalog`、`/api/reality/state` 与 `/api/reality/habitat` 保存，离线时继续显示本机缓存。
+- 舞台抽屉可设置单手布局、减弱动画、安静模式和环境音。安静模式保留文字提醒并抑制语音；环境音由本机低音量合成，默认关闭，只在用户启用且舞台可见、Activity resumed 时播放，离开/后台/关闭时释放音频焦点与轨道。
+- 验证：Node **142/142**；Android 定向舞台/音频单测通过；完整 `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` **BUILD SUCCESSFUL**。无线 ADB 当前不可用，因此家园点击、音量和单手布局仍需实机观感验收。
