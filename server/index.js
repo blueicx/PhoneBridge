@@ -291,7 +291,12 @@ const aiProviderManager = new AiProviderManager({
   persistence: runtimePersistence,
   adapters: {
     codex: {
-      chat: async ({ prompt, memories, options }) => rawChatWithModel(prompt, memories, options),
+      chat: async ({ prompt, memories, options, signal, requestId, onDelta }) => rawChatWithModel(prompt, memories, {
+        ...options,
+        signal,
+        requestId,
+        onDelta,
+      }),
       probe: async () => ({ ok: true, latencyMs: 20, model: codexInfo.currentModel || 'codex', status: 'ready' })
     }
   }
@@ -1167,15 +1172,17 @@ async function rawChatWithModel(text, memories = [], options = {}) {
     ...history.slice(-16).map(item => ({ role: item.role, content: item.text || item.content || '' })),
   ];
   const endpoint = baseUrl + (wireApi === 'chat' ? '/chat/completions' : '/responses');
-  const streamId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const streamId = String(options.requestId || `chat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
   const body = wireApi === 'chat'
     ? { model, messages: context, stream: true }
     : { model, input: context, stream: true };
+  const timeoutSignal = AbortSignal.timeout(120000);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120000),
+    signal,
   });
   if (!response.ok) {
     const errorText = await response.text();
@@ -1208,16 +1215,17 @@ async function rawChatWithModel(text, memories = [], options = {}) {
         }
         if (!delta) continue;
         reply += delta;
+        options.onDelta?.(delta);
         streamChunkCount++;
         const now = Date.now();
         if (now - lastBroadcast > 90) {
           lastBroadcast = now;
-          broadcast({ type:'chat_delta', id:streamId, sessionId: options.sessionId || '', text:reply });
+          broadcast({ type:'chat_delta', id:streamId, requestId: streamId, source: options.source || 'chat', sessionId: options.sessionId || '', text:reply });
         }
       } catch (_) {}
     }
   }
-  broadcast({ type:'chat_delta', id:streamId, sessionId: options.sessionId || '', text:reply });
+  broadcast({ type:'chat_delta', id:streamId, requestId: streamId, source: options.source || 'chat', sessionId: options.sessionId || '', text:reply, terminal: true });
   reply = String(reply || '').trim();
   if (!reply) throw new Error('模型返回空响应');
   return { id: streamId, reply };
@@ -1235,6 +1243,7 @@ async function chatWithModel(text, memories = [], options = {}) {
     memories: context.memories,
     providerId: options.providerId || null,
     requestId: options.requestId || null,
+    signal: options.signal || null,
     options
   });
   diagnosticsCollector.recordProviderLatency(result.fallbackProvider || result.providerId, aiProviderManager.lastLatencyMs);
@@ -1256,10 +1265,15 @@ async function handleChat(text, memories = [], options = {}) {
   const result = await chatWithModel(clean, remember ? memories : [], {
     remember,
     history: remember ? chatHistory : chatHistory.slice(-16),
+    requestId: options.requestId || null,
+    sessionId: options.sessionId || '',
+    source: options.source || 'chat',
+    providerId: options.providerId || null,
+    signal: options.signal || null,
   });
   const reply = result.reply;
   if (remember) chatHistory.push({ role: 'assistant', text: reply, time: nowTime() });
-  broadcast({ type: 'chat', role: 'assistant', text: reply, time: nowTime() });
+  broadcast({ type: 'chat', requestId: options.requestId || result.id, source: options.source || 'chat', role: 'assistant', text: reply, time: nowTime() });
   progressMoteStory(`chat:${chatHistory.length}:${clean.slice(0, 48)}`, { conversationCount: 1 });
   addLog('success', `Mote 对话回复：${reply.slice(0, 100)}`);
   return { ok: true, reply };
@@ -1962,15 +1976,24 @@ const handleHttpRequest = async (req, res) => {
     const memoryMatch = parsedUrl.pathname.match(/^\/api\/memories\/([^/]+)$/);
     const memoryConfirmMatch = parsedUrl.pathname.match(/^\/api\/memories\/([^/]+)\/confirm$/);
     if (memoryConfirmMatch && req.method === 'POST') {
-      try { return sendJson(res, 200, { ok: true, ...memoryStore.confirm(decodeURIComponent(memoryConfirmMatch[1])) }); }
+      try {
+        const result = memoryStore.confirm(decodeURIComponent(memoryConfirmMatch[1]));
+        broadcast({ type: 'workspace.memory', memory: result.entry, revision: result.revision });
+        return sendJson(res, 200, { ok: true, ...result });
+      }
       catch (error) { return sendJson(res, 404, { ok: false, error: error.message }); }
     }
     if (memoryMatch && req.method === 'PATCH') {
-      try { return sendJson(res, 200, { ok: true, ...memoryStore.update(decodeURIComponent(memoryMatch[1]), await readJson(req)) }); }
+      try {
+        const result = memoryStore.update(decodeURIComponent(memoryMatch[1]), await readJson(req));
+        broadcast({ type: 'workspace.memory', memory: result.entry, revision: result.revision });
+        return sendJson(res, 200, { ok: true, ...result });
+      }
       catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
     if (memoryMatch && req.method === 'DELETE') {
       const result = memoryStore.remove(decodeURIComponent(memoryMatch[1]));
+      if (result.removed) broadcast({ type: 'workspace.memory', id: decodeURIComponent(memoryMatch[1]), operation: 'remove', revision: result.revision });
       return sendJson(res, result.removed ? 200 : 404, { ok: result.removed, ...result });
     }
     const aiProbeMatch = parsedUrl.pathname.match(/^\/api\/ai\/providers\/([^/]+)\/probe$/);
@@ -2513,7 +2536,10 @@ const handleHttpRequest = async (req, res) => {
       const payload = JSON.parse(body || '{}');
       markInteraction();
       const remember = payload.remember !== false;
-      handleChat(payload.text, remember && Array.isArray(payload.memories) ? payload.memories : [], { remember }).then(result=>{
+      const requestId = /^[A-Za-z0-9_.:-]{1,120}$/.test(String(payload.requestId || ''))
+        ? String(payload.requestId)
+        : `chat_${crypto.randomUUID()}`;
+      handleChat(payload.text, remember && Array.isArray(payload.memories) ? payload.memories : [], { remember, requestId, source: payload.source || 'chat' }).then(result=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(result));
       }).catch(err=>{fs.appendFileSync(path.join(__dirname,'chat_error.log'),`${new Date().toISOString()} ${err.stack}\n`);res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify({ok:false,error:err.message}))});
       return;
@@ -2699,7 +2725,34 @@ wss.on('connection', (ws, req) => {
             });
             break;
           case 'pet': petState=json.state||{}; break;
-          case 'chat': markInteraction(); handleChat(json.text, json.remember === false ? [] : (Array.isArray(json.memories) ? json.memories : []), { remember: json.remember !== false }).catch(err=>addLog('error',err.message)); break;
+          case 'chat': {
+            markInteraction();
+            const requestId = /^[A-Za-z0-9_.:-]{1,120}$/.test(String(json.requestId || ''))
+              ? String(json.requestId)
+              : `chat_${crypto.randomUUID()}`;
+            handleChat(json.text, json.remember === false ? [] : (Array.isArray(json.memories) ? json.memories : []), {
+              remember: json.remember !== false,
+              requestId,
+              source: json.source || 'chat',
+            }).catch(error => {
+              const cancelled = /cancel/i.test(String(error?.message || ''));
+              try {
+                ws.send(JSON.stringify({
+                  type: cancelled ? 'chat_cancelled' : 'chat_error',
+                  requestId,
+                  error: cancelled ? '本轮已停止。' : '回复未完成；可以重试，或继续刚才的话题。',
+                }));
+              } catch (_) {}
+              if (!cancelled) addLog('error', '聊天生成未完成');
+            });
+            break;
+          }
+          case 'chat_cancel': {
+            const requestId = String(json.requestId || '').slice(0, 120);
+            const cancelled = /^[A-Za-z0-9_.:-]{1,120}$/.test(requestId) && aiProviderManager.cancel(requestId);
+            try { ws.send(JSON.stringify({ type: 'chat_cancelled', requestId, cancelled })); } catch (_) {}
+            break;
+          }
           case 'handoff_sync': {
             const incoming=normalizeHandoff(json.state||{});
             const current=loadHandoff();

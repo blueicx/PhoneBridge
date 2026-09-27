@@ -439,3 +439,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 新增 `POST /api/motes/story/:id/branch`，未知分支或未完成故事返回冲突；故事 DTO 增加可选分支、选择、结局和完成时间字段，Android 对旧字段缺失及未知扩展保持安全默认值。
 - 验证：Node `node --test` **145/145**；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon --console=plain` **BUILD SUCCESSFUL**，XML 汇总 **121 tests / 0 failures**。`scan_secrets.ps1`、`verify_release_gates.ps1 -Channel internal-debug -AllowProtectedBranch` 与 `git diff --check` 通过；性能预算 `elapsedMs=2.123`、`fullBytes=1694`、`summaryBytes=48`、缓存命中 `10000`、突发广播 `1`。
 - 实机不可用/未连接，本批没有对手机安装或视觉验收；角色动画辨识度、剧情交互、语音和沉浸舞台仍待 Xperia 实测。签名门禁验证的是内部 Debug APK，不是正式签名发布包。
+
+## 36. 全方向深化批次 4：连续聊天、语音与记忆（2026-09-28）
+
+- 文本会话支持停止、失败重试和继续；服务端 provider adapter 收到稳定 `requestId` 与 abort signal，流式事件沿用相同 ID。Android 只接受当前活动请求的增量，过滤取消请求和旧请求迟到的增量。provider 在尚未输出内容时失败仅回退本地规则；开始输出后失败不拼接第二份回复，取消不会触发回退。
+- 连续语音状态增加识别与失败阶段，服务端聊天、神经 TTS、设备 TTS 与 AudioTrack 均受 turn generation 控制；打断会取消请求并停止播报，失败保留可重试文本。语音/通知回复与普通文本聊天分开显示。
+- 记忆项目持久化来源、候选/确认状态、编辑时间和排除标志；支持候选确认、编辑、删除与排除/恢复。`remember=false` 同时阻止显式保存与自动候选，检索只选已确认且未排除条目；旧存档字段安全迁移。任务关联 session/message 元数据的回链断言纳入 API 测试。
+- 新增 Android `ChatMemoryPolicy`、`ChatStreamPolicy` 与语音阶段测试；Node provider、记忆及工作区 API 增加回归覆盖。验证：Node `node --test` **149/149**；Android XML 汇总 **128 tests / 0 failures**；`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon --console=plain` **BUILD SUCCESSFUL**；敏感扫描、内部 Debug APK 实际签名/版本门禁、性能预算和 `git diff --check` 通过，性能预算 `elapsedMs=1.213`、`fullBytes=1694`、`summaryBytes=48`、缓存命中 `10000`、突发广播 `1`。GitHub Actions 需在推送后确认。
+- 修复审查发现的 requestId 断链：此前普通 provider adapter 未收到客户端 ID，可能让取消后的流式增量绕开 Android 的取消集合；Node 的稳定 ID与“部分输出后禁止本地拼接”测试均先失败、修复后通过；Kotlin 为迟到增量过滤及 TTS turn-generation 校验增加纯逻辑回归测试。Node 全量单测和服务端语法检查通过。
+- 本批尚未在 Xperia 上实际验证文本/连续语音、语音打断与重试、记忆交互或播放资源释放；所有实机体验仍待设备验收。正式签名 Release 仍必须通过独立加密恢复副本门槛，内部 Debug APK 不代表正式发布。

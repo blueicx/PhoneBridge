@@ -41,3 +41,14 @@ test('memory store supports a per-request no-memory selection without changing s
   assert.deepEqual(store.selectForConversation({ remember: false, query: '偏好' }), []);
   assert.equal(store.selectForConversation({ remember: true, query: '偏好' })[0].id, 'm1');
 });
+
+test('confirmed memories can be excluded from recall without deleting their audit details', () => {
+  const store = new MemoryStore({ now: () => 1700000000000 });
+  store.add({ id: 'm1', text: '喜欢夜间提醒', source: 'user' });
+  const excluded = store.update('m1', { excludedFromRecall: true });
+  assert.equal(excluded.entry.excludedFromRecall, true);
+  assert.deepEqual(store.selectForConversation({ remember: true, query: '提醒' }), []);
+  assert.equal(store.list()[0].source, 'user');
+  assert.equal(store.update('m1', { excludedFromRecall: false }).entry.excludedFromRecall, false);
+  assert.equal(store.selectForConversation({ remember: true, query: '提醒' })[0].id, 'm1');
+});

@@ -207,6 +207,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var modelSpinner: android.widget.Spinner
     private lateinit var chatInput: EditText
     private lateinit var chatRememberSwitch: SwitchMaterial
+    private lateinit var sendChatButton: Button
     private lateinit var codexDetail: TextView
     private lateinit var selectedTaskDetail: TextView
     private lateinit var selectedTaskTitle: TextView
@@ -291,6 +292,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var activeTheme = UiTheme.AURORA_GLASS
     private val chatAdapter = ChatAdapter()
     private var pendingVoiceCommand = false
+    private var voiceRetryAvailable = false
+    private var voiceStatusText = ""
     private lateinit var secureTokenStore: SecureTokenStore
 
     private val client = OkHttpClient.Builder()
@@ -366,6 +369,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var pendingDeepLink: String? = null
     private var streamingChatId = ""
     private val streamingText = StringBuilder()
+    private var activeChatRequestId = ""
+    private var pendingChatText = ""
+    private var pendingChatRemember = true
+    private var lastFailedChatText = ""
+    private var lastFailedChatRemember = true
+    private var offlineChatFuture: java.util.concurrent.Future<*>? = null
+    private val cancelledChatRequestIds = mutableSetOf<String>()
     private var lastSpokenReply = ""
     private var pendingAutoCare: String? = null
     private var latestTelemetry: TelemetrySample? = null
@@ -392,7 +402,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 running = intent.getBooleanExtra(BridgeService.EXTRA_VOICE_RUNNING, false),
                 listening = intent.getBooleanExtra(BridgeService.EXTRA_VOICE_LISTENING, false),
                 speaking = intent.getBooleanExtra(BridgeService.EXTRA_VOICE_SPEAKING, false),
-                status = intent.getStringExtra(BridgeService.EXTRA_VOICE_STATUS).orEmpty()
+                status = intent.getStringExtra(BridgeService.EXTRA_VOICE_STATUS).orEmpty(),
+                retryAvailable = intent.getBooleanExtra(BridgeService.EXTRA_VOICE_RETRY, false)
             )
         }
     }
@@ -617,6 +628,14 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         modelSpinner = findViewById(R.id.modelSpinner)
         chatInput = findViewById(R.id.chatInput)
         chatRememberSwitch = findViewById(R.id.chatRememberSwitch)
+        sendChatButton = findViewById(R.id.sendChat)
+        chatRememberSwitch.isChecked = getSharedPreferences("mote_chat", Context.MODE_PRIVATE)
+            .getBoolean("remember_this_turn", true)
+        chatRememberSwitch.setOnCheckedChangeListener { _, checked ->
+            getSharedPreferences("mote_chat", Context.MODE_PRIVATE).edit()
+                .putBoolean("remember_this_turn", checked)
+                .apply()
+        }
         codexDetail = findViewById(R.id.codexDetail)
         selectedTaskDetail = findViewById(R.id.selectedTaskDetail)
         selectedTaskTitle = findViewById(R.id.selectedTaskTitle)
@@ -1644,7 +1663,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         findViewById<Button>(R.id.selectCodexTask).setOnClickListener { selectCodexTask() }
         findViewById<Button>(R.id.applyModel).setOnClickListener { applySelectedModel() }
         findViewById<Button>(R.id.refreshCodex).setOnClickListener { requestSnapshot() }
-        findViewById<Button>(R.id.sendChat).setOnClickListener { submitChat() }
+        sendChatButton.setOnClickListener { submitChat() }
+        renderChatActionButton()
         voiceButton.setOnClickListener { toggleContinuousVoice() }
         renderVoiceState(BridgeService.isVoiceChatRunning, listening = false, speaking = false)
         memoryButton.setOnClickListener { showMemoryDialog() }
@@ -3820,31 +3840,117 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun submitChat() {
+        if (activeChatRequestId.isNotBlank()) {
+            cancelChatTurn()
+            return
+        }
         val text = chatInput.text.toString().trim()
-        if (text.isEmpty()) return
+        if (text.isEmpty()) {
+            retryLastChat()
+            return
+        }
         chatInput.setText("")
         sendChatMessage(text)
     }
 
-    private fun sendChatMessage(text: String) {
+    private fun renderChatActionButton() {
+        sendChatButton.text = when {
+            activeChatRequestId.isNotBlank() -> "停止"
+            lastFailedChatText.isNotBlank() -> "重试"
+            else -> getString(R.string.action_chat)
+        }
+        sendChatButton.contentDescription = when {
+            activeChatRequestId.isNotBlank() -> "停止当前回复生成"
+            lastFailedChatText.isNotBlank() -> "重试上一条消息"
+            else -> getString(R.string.action_chat)
+        }
+    }
+
+    private fun retryLastChat() {
+        val text = lastFailedChatText
+        if (text.isBlank()) return
+        lastFailedChatText = ""
+        sendChatMessage(text, rememberOverride = lastFailedChatRemember)
+    }
+
+    private fun cancelChatTurn() {
+        val requestId = activeChatRequestId
+        if (requestId.isBlank()) return
+        cancelledChatRequestIds += requestId
+        if (cancelledChatRequestIds.size > 64) cancelledChatRequestIds.remove(cancelledChatRequestIds.first())
+        if (requestId.startsWith("offline_")) {
+            offlineChatFuture?.cancel(true)
+        } else {
+            sendJson(JSONObject().put("type", "chat_cancel").put("requestId", requestId))
+        }
+        finishChatCancellation(requestId)
+    }
+
+    private fun finishChatCancellation(requestId: String) {
+        if (requestId != activeChatRequestId) return
+        val partial = streamingText.toString().trim()
+        streamingChatId = ""
+        streamingText.setLength(0)
+        activeChatRequestId = ""
+        pendingChatText = ""
+        offlineChatFuture = null
+        appendChat("assistant", partial.takeIf { it.isNotBlank() }?.plus("（已停止）") ?: "这一轮已停止。")
+        renderChatActionButton()
+    }
+
+    private fun sendChatMessage(text: String, rememberOverride: Boolean? = null) {
         val clean = text.trim()
         if (clean.isEmpty()) return
-        val rememberMatch = Regex("^(?:记住|記住|remember)[：:，,\\s]+(.+)$", RegexOption.IGNORE_CASE).find(clean)
-        if (rememberMatch != null) {
-            val fact = rememberMatch.groupValues[1].trim()
-            MoteMemory.add(this, fact)
+        val remember = rememberOverride ?: chatRememberSwitch.isChecked
+        val explicitFact = ChatMemoryPolicy.explicitFact(clean, remember)
+        if (explicitFact != null) {
+            val fact = explicitFact
+            MoteMemory.add(this, fact).firstOrNull { it.text == fact }?.let(::syncMemoryToNode)
             appendChat("assistant", "已记住：$fact")
             logAdapter.add("success", "长期记忆已保存。")
             say("我记住了。")
             return
         }
-        val remember = chatRememberSwitch.isChecked
+        ChatMemoryPolicy.inferCandidate(clean, remember)?.let { candidate ->
+            MoteMemory.addCandidate(this, candidate.text, candidate.source)
+                .firstOrNull { it.text == candidate.text }
+                ?.let(::syncMemoryToNode)
+        }
         val relevantMemories = if (remember) MoteMemory.relevant(this, clean, 12) else emptyList()
         if (remember) MoteMemory.touch(this, relevantMemories)
+        activeChatRequestId = "chat_${java.util.UUID.randomUUID()}"
+        pendingChatText = clean
+        pendingChatRemember = remember
+        lastFailedChatText = ""
+        renderChatActionButton()
         if (!BridgeLink.isOnline) {
             appendChat("user", clean)
             logAdapter.add("info", "你：$text")
-            requestOfflineReply(clean, relevantMemories.map { it.text })
+            activeChatRequestId = "offline_${java.util.UUID.randomUUID()}"
+            val offlineId = activeChatRequestId
+            renderChatActionButton()
+            offlineChatFuture = requestOfflineReply(
+                clean,
+                relevantMemories.map { it.text },
+                turnId = offlineId,
+                onReply = {
+                    if (activeChatRequestId.startsWith("offline_")) {
+                        activeChatRequestId = ""
+                        pendingChatText = ""
+                        offlineChatFuture = null
+                        renderChatActionButton()
+                    }
+                },
+                onError = { _ ->
+                    if (activeChatRequestId.startsWith("offline_")) {
+                        lastFailedChatText = clean
+                        lastFailedChatRemember = remember
+                        activeChatRequestId = ""
+                        offlineChatFuture = null
+                        renderChatActionButton()
+                    }
+                }
+            )
             return
         }
         logAdapter.add("info", "你：$text")
@@ -3855,13 +3961,38 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         if (!sendJson(
                 JSONObject()
                     .put("type", "chat")
+                    .put("requestId", activeChatRequestId)
                     .put("text", clean)
                     .put("memories", memoryArray)
                     .put("remember", remember)
             )
         ) {
             logAdapter.add("warn", "节点连接不可用，切换离线接口。")
-            requestOfflineReply(clean, relevantMemories.map { it.text })
+            activeChatRequestId = "offline_${java.util.UUID.randomUUID()}"
+            val offlineId = activeChatRequestId
+            renderChatActionButton()
+            offlineChatFuture = requestOfflineReply(
+                clean,
+                relevantMemories.map { it.text },
+                turnId = offlineId,
+                onReply = {
+                    if (activeChatRequestId.startsWith("offline_")) {
+                        activeChatRequestId = ""
+                        pendingChatText = ""
+                        offlineChatFuture = null
+                        renderChatActionButton()
+                    }
+                },
+                onError = {
+                    if (activeChatRequestId.startsWith("offline_")) {
+                        lastFailedChatText = clean
+                        lastFailedChatRemember = remember
+                        activeChatRequestId = ""
+                        offlineChatFuture = null
+                        renderChatActionButton()
+                    }
+                }
+            )
         }
     }
 
@@ -3870,13 +4001,16 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         val input = view.findViewById<EditText>(R.id.memoryInput)
         val recycler = view.findViewById<RecyclerView>(R.id.memoryRecycler)
         val adapter = MemoryAdapter {}
+        val refresh = { adapter.submit(MoteMemory.load(this)) }
         adapter.setOnDelete { item ->
             MoteMemory.removeById(this, item.id)
-            adapter.submit(MoteMemory.load(this))
+            workspaceRequest("/api/memories/${android.net.Uri.encode(item.id)}", "DELETE", JSONObject())
+            refresh()
         }
+        adapter.setOnSelect { item -> showMemoryActions(item, refresh) }
         recycler.layoutManager = LinearLayoutManager(this)
         recycler.adapter = adapter
-        adapter.submit(MoteMemory.load(this))
+        refresh()
         val container = view
 
         AlertDialog.Builder(this)
@@ -3884,11 +4018,93 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             .setView(container)
             .setPositiveButton("添加") { _, _ ->
                 val value = input.text.toString().trim()
-                if (value.isNotBlank()) MoteMemory.add(this, value)
+                if (value.isNotBlank()) {
+                    MoteMemory.add(this, value, source = "user")
+                        .firstOrNull { it.text == value }
+                        ?.let(::syncMemoryToNode)
+                    refresh()
+                }
             }
             .setNeutralButton("清空") { _, _ -> MoteMemory.clear(this) }
             .setNegativeButton("关闭", null)
             .show()
+    }
+
+    private fun showMemoryActions(item: MemoryItem, refresh: () -> Unit) {
+        val actions = buildList {
+            if (item.status == "candidate") add("确认这条候选")
+            add("编辑内容")
+            add(if (item.excludedFromRecall) "恢复允许提起" else "不再提起")
+            add("删除记忆")
+        }
+        AlertDialog.Builder(this)
+            .setTitle(if (item.status == "candidate") "待确认记忆" else "记忆管理")
+            .setItems(actions.toTypedArray()) { _, selected ->
+                when (actions[selected]) {
+                    "确认这条候选" -> {
+                        MoteMemory.confirmById(this, item.id)
+                        workspaceRequest("/api/memories/${android.net.Uri.encode(item.id)}/confirm", "POST", JSONObject())
+                        refresh()
+                    }
+                    "编辑内容" -> editMemory(item, refresh)
+                    "不再提起" -> {
+                        MoteMemory.setExcludedFromRecall(this, item.id, true)
+                        syncMemoryPatch(item.id, JSONObject().put("excludedFromRecall", true))
+                        refresh()
+                    }
+                    "恢复允许提起" -> {
+                        MoteMemory.setExcludedFromRecall(this, item.id, false)
+                        syncMemoryPatch(item.id, JSONObject().put("excludedFromRecall", false))
+                        refresh()
+                    }
+                    "删除记忆" -> {
+                        MoteMemory.removeById(this, item.id)
+                        workspaceRequest("/api/memories/${android.net.Uri.encode(item.id)}", "DELETE", JSONObject())
+                        refresh()
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun editMemory(item: MemoryItem, refresh: () -> Unit) {
+        val input = EditText(this).apply {
+            setText(item.text)
+            minLines = 2
+            maxLines = 5
+        }
+        AlertDialog.Builder(this)
+            .setTitle("编辑记忆")
+            .setView(input)
+            .setPositiveButton("保存") { _, _ ->
+                val text = input.text.toString().trim()
+                if (text.isNotBlank()) {
+                    MoteMemory.updateById(this, item.id, text)
+                    syncMemoryPatch(item.id, JSONObject().put("text", text))
+                    refresh()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun syncMemoryToNode(item: MemoryItem) {
+        workspaceRequest(
+            "/api/memories",
+            "POST",
+            JSONObject()
+                .put("id", item.id)
+                .put("text", item.text)
+                .put("source", item.source)
+                .put("status", item.status)
+                .put("explicit", item.source != "auto_extract")
+                .put("excludedFromRecall", item.excludedFromRecall)
+        )
+    }
+
+    private fun syncMemoryPatch(id: String, patch: JSONObject) {
+        workspaceRequest("/api/memories/${android.net.Uri.encode(id)}", "PATCH", patch)
     }
 
     private fun showHandoffDialog() {
@@ -3991,18 +4207,20 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun requestOfflineReply(
         clean: String,
         memories: List<String>,
+        turnId: String? = null,
         showUserMessage: Boolean = false,
         onReply: ((String) -> Unit)? = null,
         onError: ((String) -> Unit)? = null
-    ) {
+    ): java.util.concurrent.Future<*> {
         if (showUserMessage) logAdapter.add("info", "你：$clean")
-        networkExecutor.execute {
+        return networkExecutor.submit {
             val history = chatAdapterCurrentMessages()
                 .dropLast(1)
                 .takeLast(12)
                 .map { it.role to it.text }
             val result = OfflineBrain.chat(this, clean, memories, history)
             runOnUiThread {
+                if (turnId != null && activeChatRequestId != turnId) return@runOnUiThread
                 result.onSuccess { reply ->
                     appendChat("assistant", reply)
                     lastSpokenReply = reply.take(180)
@@ -4029,8 +4247,17 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun toggleContinuousVoice() {
         if (BridgeService.isVoiceChatRunning) {
-            startService(Intent(this, BridgeService::class.java).setAction(BridgeService.ACTION_VOICE_STOP))
-            logAdapter.add("info", "连续语音：关闭中")
+            val action = when {
+                voiceRetryAvailable -> BridgeService.ACTION_VOICE_RETRY
+                voiceStatusText == "语音处理中" || voiceStatusText == "正在播报回复" || voiceStatusText == "正在识别语音" -> BridgeService.ACTION_VOICE_INTERRUPT
+                else -> BridgeService.ACTION_VOICE_STOP
+            }
+            startService(Intent(this, BridgeService::class.java).setAction(action))
+            logAdapter.add("info", when (action) {
+                BridgeService.ACTION_VOICE_RETRY -> "连续语音：重试上一轮"
+                BridgeService.ACTION_VOICE_INTERRUPT -> "连续语音：打断当前回复，继续监听"
+                else -> "连续语音：关闭中"
+            })
         } else {
             startService(Intent(this, BridgeService::class.java).setAction(BridgeService.ACTION_VOICE_START))
             logAdapter.add("info", "连续语音：开启中，后台也会保持。")
@@ -4038,9 +4265,22 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         renderVoiceState(running = !BridgeService.isVoiceChatRunning, listening = false, speaking = false)
     }
 
-    private fun renderVoiceState(running: Boolean, listening: Boolean, speaking: Boolean = false, status: String = "") {
+    private fun renderVoiceState(
+        running: Boolean,
+        listening: Boolean,
+        speaking: Boolean = false,
+        status: String = "",
+        retryAvailable: Boolean = false
+    ) {
+        voiceRetryAvailable = retryAvailable
+        voiceStatusText = status
         companionView.setVoiceState(listening, speaking)
-        voiceButton.text = if (running) "停止" else getString(R.string.action_voice)
+        voiceButton.text = when {
+            !running -> getString(R.string.action_voice)
+            retryAvailable -> "重试"
+            status == "语音处理中" || status == "正在播报回复" || status == "正在识别语音" -> "打断"
+            else -> "停止"
+        }
         voiceButton.alpha = if (running) 1f else .78f
         audioMetric.text = when {
             status.isNotBlank() && running -> "音频 $status"
@@ -4347,12 +4587,21 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     applyTimelineEvent(event)
                 }
                 "chat" -> {
+                    if (json.optString("source") in setOf("voice", "notification")) return@runCatching
                     val role = json.optString("role")
                     val message = json.optString("text")
                     val time = json.optString("time", currentTime())
-                    streamingChatId = ""
-                    streamingText.setLength(0)
+                    val requestId = json.optString("requestId")
                     runOnUiThread {
+                        if (role == "assistant" && requestId.isNotBlank() && requestId == activeChatRequestId) {
+                            activeChatRequestId = ""
+                            pendingChatText = ""
+                            offlineChatFuture = null
+                            lastFailedChatText = ""
+                            renderChatActionButton()
+                        }
+                        streamingChatId = ""
+                        streamingText.setLength(0)
                         logAdapter.add(if (role == "assistant") "success" else "info", "$role：$message")
                         appendChat(role, message, false, time)
                         if (role == "assistant") {
@@ -4418,17 +4667,22 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     }
                 }
                 "chat_delta" -> {
+                    if (json.optString("source") in setOf("voice", "notification")) return@runCatching
                     val id = json.optString("id")
+                    val requestId = json.optString("requestId", id)
                     val text = json.optString("text")
+                    if (!ChatStreamPolicy.shouldRenderDelta(requestId, activeChatRequestId, cancelledChatRequestIds)) return@runCatching
                     runOnUiThread {
+                        if (!ChatStreamPolicy.shouldRenderDelta(requestId, activeChatRequestId, cancelledChatRequestIds)) return@runOnUiThread
                         if (streamingChatId != id) {
                             streamingChatId = id
                             streamingText.setLength(0)
                         }
                         streamingText.setLength(0)
                         streamingText.append(text)
-                        appendChat("assistant", text, true, currentTime())
-                        if (json.optString("sessionId") == aiSelectedSessionId && aiSpacePanel.visibility == View.VISIBLE) {
+                        val sessionId = json.optString("sessionId")
+                        if (sessionId.isBlank()) appendChat("assistant", text, true, currentTime())
+                        if (sessionId.isNotBlank() && sessionId == aiSelectedSessionId && aiSpacePanel.visibility == View.VISIBLE) {
                             aiStreamingId = id
                             aiStreamingText = text
                             val previous = aiConversationText.text.toString().substringBeforeLast("\n\nMote：", aiConversationText.text.toString())
@@ -4438,6 +4692,26 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                         speechText.text = "Mote：$text".takeLast(220)
                         companionView.speakPulse()
                     }
+                }
+                "chat_error" -> {
+                    val requestId = json.optString("requestId")
+                    if (requestId != activeChatRequestId) return@runCatching
+                    runOnUiThread {
+                        lastFailedChatText = pendingChatText
+                        lastFailedChatRemember = pendingChatRemember
+                        activeChatRequestId = ""
+                        offlineChatFuture = null
+                        streamingChatId = ""
+                        streamingText.setLength(0)
+                        appendChat("assistant", "回复暂时失败。可以点“重试”，也可以继续刚才的话题。")
+                        logAdapter.add("warn", "聊天生成失败，可重试或继续对话。")
+                        renderChatActionButton()
+                    }
+                }
+                "chat_cancelled" -> {
+                    val requestId = json.optString("requestId")
+                    if (requestId != activeChatRequestId) return@runCatching
+                    runOnUiThread { finishChatCancellation(requestId) }
                 }
             }
         }.onFailure {

@@ -15,6 +15,7 @@ class MemoryAdapter(
 ) : RecyclerView.Adapter<MemoryAdapter.Holder>() {
     private val items = mutableListOf<MemoryItem>()
     private val format = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
+    private var onSelect: (MemoryItem) -> Unit = {}
 
     fun submit(values: List<MemoryItem>) {
         items.clear()
@@ -24,6 +25,10 @@ class MemoryAdapter(
 
     fun setOnDelete(listener: (MemoryItem) -> Unit) {
         onDelete = listener
+    }
+
+    fun setOnSelect(listener: (MemoryItem) -> Unit) {
+        onSelect = listener
     }
 
     class Holder(view: View) : RecyclerView.ViewHolder(view) {
@@ -38,10 +43,16 @@ class MemoryAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val item = items[position]
         holder.text.text = item.text
-        holder.meta.text = "重要性 ${item.importance}/5 · 使用 ${item.useCount} 次 · ${
+        val status = when {
+            item.status == "candidate" -> "待确认"
+            item.excludedFromRecall -> "不再提起"
+            else -> "已确认"
+        }
+        holder.meta.text = "$status · 来源 ${item.source} · 更新 ${format.format(Date(item.updatedAtMs.takeIf { it > 0 } ?: item.createdAtMs))} · 使用 ${item.useCount} 次 · ${
             if (item.lastUsedAtMs > 0) format.format(Date(item.lastUsedAtMs)) else "未召回"
         }"
         holder.delete.setOnClickListener { onDelete(item) }
+        holder.itemView.setOnClickListener { onSelect(item) }
     }
 
     override fun getItemCount() = items.size

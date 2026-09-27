@@ -23,6 +23,8 @@ class MemoryStore {
       entries: Array.isArray(saved.entries) ? saved.entries.filter(item => item && item.id && item.text).map(item => ({
         ...item,
         status: item.status === 'candidate' ? 'candidate' : 'confirmed',
+        source: String(item.source || 'user'),
+        excludedFromRecall: item.excludedFromRecall === true,
       })) : [],
     };
   }
@@ -44,7 +46,7 @@ class MemoryStore {
     return items;
   }
 
-  add({ text, source = 'user', sensitivity = 'normal', confidence = 1, id = null, status = null, explicit = false } = {}) {
+  add({ text, source = 'user', sensitivity = 'normal', confidence = 1, id = null, status = null, explicit = false, excludedFromRecall = false } = {}) {
     const value = String(text || '').trim().slice(0, 2000);
     if (!value) throw new Error('memory text is required');
     const timestamp = new Date(this.now()).toISOString();
@@ -54,6 +56,7 @@ class MemoryStore {
       source: String(source).slice(0, 80),
       status: status === 'candidate' || (!explicit && String(source).toLowerCase().includes('auto')) ? 'candidate' : 'confirmed',
       sensitivity: ['normal', 'sensitive'].includes(String(sensitivity)) ? String(sensitivity) : 'normal',
+      excludedFromRecall: excludedFromRecall === true,
       confidence: Math.max(0, Math.min(1, Number(confidence) || 0)),
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -78,6 +81,7 @@ class MemoryStore {
     }
     if (patch.sensitivity !== undefined && ['normal', 'sensitive'].includes(String(patch.sensitivity))) entry.sensitivity = String(patch.sensitivity);
     if (patch.confidence !== undefined) entry.confidence = Math.max(0, Math.min(1, Number(patch.confidence) || 0));
+    if (patch.excludedFromRecall !== undefined) entry.excludedFromRecall = patch.excludedFromRecall === true;
     if (patch.status !== undefined) {
       const nextStatus = String(patch.status);
       if (!['candidate', 'confirmed'].includes(nextStatus)) throw new Error('invalid memory status');
@@ -123,7 +127,10 @@ class MemoryStore {
 
   selectForConversation({ remember = true, query = '', limit = 20 } = {}) {
     if (remember !== true) return [];
-    return this.list({ query, limit, status: 'confirmed' });
+    const boundedLimit = Math.max(1, Math.min(200, Number(limit) || 20));
+    return this.list({ query, limit: 200, status: 'confirmed' })
+      .filter(item => item.excludedFromRecall !== true)
+      .slice(0, boundedLimit);
   }
 
   snapshot() {

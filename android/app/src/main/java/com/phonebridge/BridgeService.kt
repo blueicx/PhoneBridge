@@ -47,6 +47,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.Locale
 
 class AlwaysResumedLifecycle : LifecycleOwner {
@@ -68,12 +69,15 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         const val EXTRA_REPLY_TEXT = "reply_text"
         const val ACTION_VOICE_START = "com.phonebridge.VOICE_START"
         const val ACTION_VOICE_STOP = "com.phonebridge.VOICE_STOP"
+        const val ACTION_VOICE_INTERRUPT = "com.phonebridge.VOICE_INTERRUPT"
+        const val ACTION_VOICE_RETRY = "com.phonebridge.VOICE_RETRY"
         const val ACTION_VOICE_STATE = "com.phonebridge.VOICE_STATE"
         const val ACTION_SET_QUIET_MODE = "com.phonebridge.SET_QUIET_MODE"
         const val EXTRA_QUIET_MODE = "quiet_mode"
         const val EXTRA_VOICE_RUNNING = "running"
         const val EXTRA_VOICE_LISTENING = "listening"
         const val EXTRA_VOICE_SPEAKING = "speaking"
+        const val EXTRA_VOICE_RETRY = "retry_available"
         const val EXTRA_VOICE_STATUS = "status"
         const val EXTRA_VOICE_DETAIL = "detail"
         const val ACTION_EXIT_APP = "com.phonebridge.EXIT_APP"
@@ -111,6 +115,16 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
     @Volatile private var voiceSpeaking = false
     @Volatile private var quietMode = false
     @Volatile private var voiceReplyPreview = ""
+    @Volatile private var voiceLastFailedText = ""
+    @Volatile private var voiceLastFailureReason = ""
+    @Volatile private var activeVoiceRequestId = ""
+    @Volatile private var voiceChatCall: okhttp3.Call? = null
+    @Volatile private var voiceSpeechCall: okhttp3.Call? = null
+    @Volatile private var activeDeviceTtsUtteranceId = ""
+    @Volatile private var activeDeviceTtsGeneration = 0L
+    private val voiceTurnGeneration = AtomicLong(0L)
+    @Volatile private var lastPartialTranscript = ""
+    @Volatile private var lastPartialPublishedAt = 0L
     @Volatile private var foregroundState = VoiceForegroundState(
         serviceAlive = false,
         bridgeOnline = false
@@ -241,6 +255,15 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         runCatching { serverSpeechTrack?.flush() }
         runCatching { serverSpeechTrack?.release() }
         serverSpeechTrack = null
+        voiceTurnGeneration.incrementAndGet()
+        voiceChatCall?.cancel()
+        voiceChatCall = null
+        voiceSpeechCall?.cancel()
+        voiceSpeechCall = null
+        activeDeviceTtsUtteranceId = ""
+        activeVoiceRequestId = ""
+        voiceLastFailedText = ""
+        voiceLastFailureReason = ""
         resetVoiceConversationState()
         if (persist) {
             getSharedPreferences("phonebridge", Context.MODE_PRIVATE)
@@ -263,6 +286,7 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
                     textToSpeech?.language = Locale.SIMPLIFIED_CHINESE
                     textToSpeech?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {
+                            if (!isCurrentDeviceTtsCallback(utteranceId)) return
                             voiceSpeaking = true
                             syncForegroundState(
                                 currentForegroundState().speaking(
@@ -272,19 +296,33 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
                         }
 
                         override fun onDone(utteranceId: String?) {
+                            if (!isCurrentDeviceTtsCallback(utteranceId)) return
+                            val completedGeneration = activeDeviceTtsGeneration
+                            activeDeviceTtsUtteranceId = ""
                             voiceSpeaking = false
                             refreshForegroundState()
                             if (isVoiceChatRunning && !voiceListening && !voiceWaitingForReply) {
-                                voiceHandler.postDelayed({ resumeVoiceCapture() }, 180L)
+                                voiceHandler.postDelayed({
+                                    if (completedGeneration == voiceTurnGeneration.get() && isVoiceChatRunning && !voiceWaitingForReply) {
+                                        resumeVoiceCapture()
+                                    }
+                                }, 180L)
                             }
                         }
 
                         @Deprecated("Deprecated in Java")
                         override fun onError(utteranceId: String?) {
+                            if (!isCurrentDeviceTtsCallback(utteranceId)) return
+                            val failedGeneration = activeDeviceTtsGeneration
+                            activeDeviceTtsUtteranceId = ""
                             voiceSpeaking = false
                             refreshForegroundState()
                             if (isVoiceChatRunning && !voiceListening && !voiceWaitingForReply) {
-                                voiceHandler.postDelayed({ resumeVoiceCapture() }, 320L)
+                                voiceHandler.postDelayed({
+                                    if (failedGeneration == voiceTurnGeneration.get() && isVoiceChatRunning && !voiceWaitingForReply) {
+                                        resumeVoiceCapture()
+                                    }
+                                }, 320L)
                             }
                         }
                     })
@@ -341,6 +379,8 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         voiceLastFinalText = ""
         voiceLastFinalAt = 0L
         voiceReplyPreview = ""
+        lastPartialTranscript = ""
+        lastPartialPublishedAt = 0L
     }
 
     private fun startVoiceCapture() {
@@ -422,6 +462,19 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
             if (text.isEmpty()) continue
             Log.d(TAG, "Voice ${if (isFinal) "final" else "partial"}: $text")
 
+            if (!isFinal) {
+                val now = SystemClock.elapsedRealtime()
+                if (text != lastPartialTranscript && now - lastPartialPublishedAt >= 250L) {
+                    lastPartialTranscript = text
+                    lastPartialPublishedAt = now
+                    voiceHandler.post {
+                        if (isVoiceChatRunning && voiceListening && !voiceWaitingForReply) {
+                            syncForegroundState(currentForegroundState().recognizing(text))
+                        }
+                    }
+                }
+            }
+
             if (voiceSpeaking && text.length >= 2) interruptSpeech()
             if (!isFinal) continue
 
@@ -453,8 +506,13 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         voicePaused = false
         voiceListening = true
         voiceInterruptedText = null
-        syncForegroundState(currentForegroundState().listening("继续说吧。"))
-        updateQuickReply("Mote 正在听…", "继续说吧。")
+        if (voiceLastFailedText.isNotBlank()) {
+            syncForegroundState(currentForegroundState().failed(voiceLastFailureReason))
+            updateQuickReply("上一轮失败，可重试", "也可以继续说话。")
+        } else {
+            syncForegroundState(currentForegroundState().listening("继续说吧。"))
+            updateQuickReply("Mote 正在听…", "继续说吧。")
+        }
     }
 
     private fun stopVoiceCapture(joinThread: Boolean) {
@@ -480,15 +538,99 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
     private fun interruptSpeech() {
         if (!voiceSpeaking) return
         voiceSpeaking = false
+        activeDeviceTtsUtteranceId = ""
         runCatching { textToSpeech?.stop() }
     }
 
-    private fun processVoiceCommand(text: String) {
+    private fun isCurrentDeviceTtsCallback(utteranceId: String?): Boolean = VoiceTurnCallbackPolicy.isCurrent(
+        callbackId = utteranceId,
+        activeCallbackId = activeDeviceTtsUtteranceId,
+        callbackGeneration = activeDeviceTtsGeneration,
+        activeGeneration = voiceTurnGeneration.get()
+    )
+
+    private fun interruptVoiceTurn() {
+        val requestId = activeVoiceRequestId
+        voiceTurnGeneration.incrementAndGet()
+        voiceChatCall?.cancel()
+        voiceChatCall = null
+        voiceSpeechCall?.cancel()
+        voiceSpeechCall = null
+        activeVoiceRequestId = ""
+        activeDeviceTtsUtteranceId = ""
+        runCatching { textToSpeech?.stop() }
+        runCatching { serverSpeechTrack?.pause() }
+        runCatching { serverSpeechTrack?.flush() }
+        runCatching { serverSpeechTrack?.stop() }
+        voiceSpeaking = false
+        voiceWaitingForReply = false
+        voiceLastFailedText = ""
+        runCatching { voskRecognizer?.reset() }
+        if (requestId.isNotBlank()) cancelRemoteAiRequest(requestId)
+        if (isVoiceChatRunning) {
+            if (voiceCaptureRunning) resumeVoiceCapture() else startVoiceCapture()
+            syncForegroundState(currentForegroundState().interrupt())
+            updateQuickReply("这一轮已打断", "连续语音仍在监听，可以继续说话。")
+        }
+    }
+
+    private fun retryVoiceTurn() {
+        val text = voiceLastFailedText.trim()
+        if (text.isBlank() || voiceWaitingForReply) return
+        voiceLastFailedText = ""
+        processVoiceCommand(text, retry = true)
+    }
+
+    private fun cancelRemoteAiRequest(requestId: String) {
+        if (requestId.isBlank()) return
+        runCatching {
+            val request = Request.Builder()
+                .url("${savedServerHttp()}/api/ai/requests/${android.net.Uri.encode(requestId)}/cancel")
+                .header("x-phonebridge-token", savedAccessToken())
+                .post("{}".toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+            http.newCall(request).enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, error: java.io.IOException) = Unit
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) { response.close() }
+            })
+        }
+    }
+
+    private fun syncMemoryToNode(item: MemoryItem) {
+        runCatching {
+            val payload = JSONObject()
+                .put("id", item.id)
+                .put("text", item.text)
+                .put("source", item.source)
+                .put("status", item.status)
+                .put("explicit", item.source != "auto_extract")
+                .put("excludedFromRecall", item.excludedFromRecall)
+                .toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = Request.Builder()
+                .url("${savedServerHttp()}/api/memories")
+                .header("x-phonebridge-token", savedAccessToken())
+                .post(payload)
+                .build()
+            http.newCall(request).enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, error: java.io.IOException) = Unit
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) { response.close() }
+            })
+        }
+    }
+
+    private fun processVoiceCommand(text: String, retry: Boolean = false) {
         val clean = text.trim()
         if (clean.isEmpty()) {
             return
         }
         if (voiceWaitingForReply) return
+        if (!retry) voiceLastFailedText = ""
+        voiceLastFailureReason = ""
+        lastPartialTranscript = ""
+        val generation = voiceTurnGeneration.incrementAndGet()
+        val requestId = "voice_${java.util.UUID.randomUUID()}"
+        activeVoiceRequestId = requestId
 
         val requestUrl = "${savedServerHttp()}/api/chat"
         Log.i(TAG, "Voice command accepted: $clean")
@@ -499,26 +641,33 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         syncForegroundState(currentForegroundState().processing(clean))
         updateQuickReply("Mote 正在想…", "你说：${clean.take(120)}")
 
-        val rememberMatch = Regex(
-            "^(?:记住|記住|remember)[：:，,\\s]+(.+)$",
-            RegexOption.IGNORE_CASE
-        ).find(clean)
-        if (rememberMatch != null) {
-            val fact = rememberMatch.groupValues[1].trim()
-            MoteMemory.add(this, fact)
+        val remember = getSharedPreferences("mote_chat", Context.MODE_PRIVATE)
+            .getBoolean("remember_this_turn", true)
+        val explicitFact = ChatMemoryPolicy.explicitFact(clean, remember)
+        if (explicitFact != null) {
+            val fact = explicitFact
+            MoteMemory.add(this, fact).firstOrNull { it.text == fact }?.let(::syncMemoryToNode)
+            activeVoiceRequestId = ""
             voiceWaitingForReply = false
             speakReply("好的，我记住了。")
             return
         }
 
-        val memories = MoteMemory.relevant(this, clean, 12)
-        MoteMemory.touch(this, memories)
+        ChatMemoryPolicy.inferCandidate(clean, remember)?.let { candidate ->
+            MoteMemory.addCandidate(this, candidate.text, candidate.source)
+                .firstOrNull { it.text == candidate.text }
+                ?.let(::syncMemoryToNode)
+        }
+        val memories = if (remember) MoteMemory.relevant(this, clean, 12) else emptyList()
+        if (remember) MoteMemory.touch(this, memories)
         val memoryArray = JSONArray()
         memories.forEach { memoryArray.put(it.text) }
         val payload = JSONObject()
             .put("type", "chat")
+            .put("requestId", requestId)
             .put("source", "voice")
             .put("text", clean)
+            .put("remember", remember)
             .put("memories", memoryArray)
             .toString()
             .toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -528,35 +677,52 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
             .post(payload)
             .build()
 
+        val call = http.newCall(request)
+        voiceChatCall = call
         replyExecutor.execute {
             try {
-                http.newCall(request).execute().use { response ->
+                call.execute().use { response ->
                     val bodyText = response.body?.string().orEmpty()
-                    Log.i(TAG, "Voice chat HTTP ${response.code}: ${bodyText.take(240)}")
+                    Log.i(TAG, "Voice chat HTTP ${response.code}")
                     if (!response.isSuccessful) throw IllegalStateException("节点 HTTP ${response.code}")
                     val json = JSONObject(bodyText)
                     if (!json.optBoolean("ok", false)) {
                         throw IllegalStateException(json.optString("error", "模型请求失败"))
                     }
                     val reply = json.optString("reply").ifBlank { "（空回复）" }
-                    voiceHandler.post { speakReply(reply) }
+                    voiceHandler.post {
+                        if (generation != voiceTurnGeneration.get() || call.isCanceled()) return@post
+                        voiceChatCall = null
+                        activeVoiceRequestId = ""
+                        voiceLastFailedText = ""
+                        speakReply(reply)
+                    }
                 }
             } catch (error: Exception) {
+                if (generation != voiceTurnGeneration.get() || call.isCanceled()) return@execute
                 Log.w(TAG, "Bridge voice chat failed; trying offline API", error)
                 OfflineBrain.chat(this@BridgeService, clean, memories.map { it.text }).fold(
                     onSuccess = { reply ->
-                        voiceHandler.post { speakReply(reply) }
+                        voiceHandler.post {
+                            if (generation != voiceTurnGeneration.get()) return@post
+                            voiceChatCall = null
+                            activeVoiceRequestId = ""
+                            voiceLastFailedText = ""
+                            speakReply(reply)
+                        }
                     },
                     onFailure = { offlineError ->
-                        val message = listOf(error.message, offlineError.message)
-                            .filterNotNull()
-                            .joinToString(";")
+                        val message = listOf(error.message, offlineError.message).filterNotNull().joinToString(";")
                         Log.e(TAG, "Voice chat failed", offlineError)
                         voiceHandler.post {
+                            if (generation != voiceTurnGeneration.get()) return@post
+                            voiceChatCall = null
+                            activeVoiceRequestId = ""
                             voiceWaitingForReply = false
+                            voiceLastFailedText = clean
+                            voiceLastFailureReason = "连接或离线回复失败，请重试或继续说话。"
                             resumeVoiceCapture()
-                            updateQuickReply("连续语音失败", message.take(500))
-                            speakReply(message.take(180))
+                            updateQuickReply("连续语音失败", message.take(240))
                         }
                     }
                 )
@@ -579,6 +745,10 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
 
     private fun speakWithDeviceTts(text: String): Boolean {
         if (!StageAudioPolicy.shouldPlayVoice(quietMode)) return false
+        val generation = voiceTurnGeneration.get()
+        val utteranceId = "mote_voice_reply_${generation}_${System.currentTimeMillis()}"
+        activeDeviceTtsGeneration = generation
+        activeDeviceTtsUtteranceId = utteranceId
         val queued = runCatching {
             textToSpeech?.setPitch(1.15f)
             textToSpeech?.setSpeechRate(.95f)
@@ -586,9 +756,10 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
                 text,
                 TextToSpeech.QUEUE_FLUSH,
                 Bundle(),
-                "mote_voice_reply_${System.currentTimeMillis()}"
+                utteranceId
             )
         }.getOrDefault(TextToSpeech.ERROR) == TextToSpeech.SUCCESS
+        if (!queued && activeDeviceTtsUtteranceId == utteranceId) activeDeviceTtsUtteranceId = ""
         Log.i(TAG, "Device TTS reply queued=$queued: ${text.take(120)}")
         if (!queued) voiceHandler.postDelayed({ resumeVoiceCapture() }, 320L)
         return queued
@@ -597,8 +768,10 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
     private fun speakViaNode(text: String, fallbackToDevice: Boolean = false) {
         if (!StageAudioPolicy.shouldPlayVoice(quietMode)) return
         Log.i(TAG, "Requesting neural speech")
+        val generation = voiceTurnGeneration.get()
         replyExecutor.execute {
             try {
+                if (generation != voiceTurnGeneration.get()) return@execute
                 val payload = JSONObject().put("text", text).toString()
                     .toRequestBody("application/json; charset=utf-8".toMediaType())
                 val request = Request.Builder()
@@ -606,17 +779,31 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
                     .header("x-phonebridge-token", savedAccessToken())
                     .post(payload)
                     .build()
-                http.newCall(request).execute().use { response ->
+                val call = http.newCall(request)
+                voiceSpeechCall = call
+                if (generation != voiceTurnGeneration.get()) {
+                    call.cancel()
+                    if (voiceSpeechCall === call) voiceSpeechCall = null
+                    return@execute
+                }
+                call.execute().use { response ->
                     val body = response.body?.string().orEmpty()
                     if (!response.isSuccessful) throw IllegalStateException("节点语音 HTTP ${response.code}")
                     val audio = Base64.decode(JSONObject(body).optString("audio"), Base64.DEFAULT)
                     if (audio.isEmpty()) throw IllegalStateException("节点语音为空")
                     Log.i(TAG, "Neural speech received: ${audio.size} bytes")
-                    voiceHandler.post { playServerSpeech(text, audio) }
+                    voiceHandler.post {
+                        if (generation != voiceTurnGeneration.get() || call.isCanceled()) return@post
+                        voiceSpeechCall = null
+                        playServerSpeech(text, audio, generation)
+                    }
                 }
             } catch (error: Exception) {
+                if (generation != voiceTurnGeneration.get()) return@execute
                 Log.e(TAG, "Neural speech failed", error)
                 voiceHandler.post {
+                    if (generation != voiceTurnGeneration.get()) return@post
+                    voiceSpeechCall = null
                     if (fallbackToDevice && ttsReady && speakWithDeviceTts(text)) return@post
                     updateQuickReply("语音回复失败", error.message ?: "无法播放节点语音。")
                     resumeVoiceCapture()
@@ -625,7 +812,8 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
         }
     }
 
-    private fun playServerSpeech(text: String, pcm: ByteArray) {
+    private fun playServerSpeech(text: String, pcm: ByteArray, generation: Long) {
+        if (generation != voiceTurnGeneration.get()) return
         if (!StageAudioPolicy.shouldPlayVoice(quietMode)) {
             resumeVoiceCapture()
             return
@@ -656,9 +844,17 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
                 )
                 serverSpeechTrack = track
                 track.play()
-                val written = track.write(pcm, 0, pcm.size)
-                Log.i(TAG, "Server speech written: $written bytes")
-                Thread.sleep(pcm.size * 1_000L / (VOICE_SAMPLE_RATE * 2L))
+                var offset = 0
+                while (offset < pcm.size && generation == voiceTurnGeneration.get()) {
+                    val length = minOf(4096, pcm.size - offset)
+                    val written = track.write(pcm, offset, length)
+                    if (written <= 0) break
+                    offset += written
+                }
+                val targetFrames = offset / 2
+                while (track.playbackHeadPosition < targetFrames && generation == voiceTurnGeneration.get()) {
+                    Thread.sleep(20L)
+                }
             } catch (error: Exception) {
                 Log.e(TAG, "Server speech playback failed", error)
             } finally {
@@ -667,6 +863,7 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
                 Log.i(TAG, "Server speech playback finished")
                 if (serverSpeechTrack === track) serverSpeechTrack = null
                 voiceHandler.post {
+                    if (generation != voiceTurnGeneration.get()) return@post
                     voiceSpeaking = false
                     refreshForegroundState()
                     resumeVoiceCapture()
@@ -708,6 +905,7 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
                 .putExtra(EXTRA_VOICE_RUNNING, presentation.running)
                 .putExtra(EXTRA_VOICE_LISTENING, presentation.listening)
                 .putExtra(EXTRA_VOICE_SPEAKING, presentation.speaking)
+                .putExtra(EXTRA_VOICE_RETRY, presentation.retryAvailable)
                 .putExtra(EXTRA_VOICE_STATUS, presentation.status)
                 .putExtra(EXTRA_VOICE_DETAIL, presentation.detail)
         )
@@ -765,6 +963,8 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
             }
             ACTION_VOICE_START -> startVoiceChat()
             ACTION_VOICE_STOP -> stopVoiceChat()
+            ACTION_VOICE_INTERRUPT -> interruptVoiceTurn()
+            ACTION_VOICE_RETRY -> retryVoiceTurn()
             ACTION_SET_QUIET_MODE -> setQuietMode(intent.getBooleanExtra(EXTRA_QUIET_MODE, false))
             else -> startForegroundCompat()
         }
@@ -893,22 +1093,31 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
 
     private fun answerReply(text: String) {
         updateQuickReply("Mote 正在想…", text.take(120))
-        val rememberMatch = Regex("^(?:记住|記住|remember)[：:，,\\s]+(.+)$", RegexOption.IGNORE_CASE).find(text)
-        if (rememberMatch != null) {
-            val fact = rememberMatch.groupValues[1].trim()
-            MoteMemory.add(this, fact)
+        val remember = getSharedPreferences("mote_chat", Context.MODE_PRIVATE)
+            .getBoolean("remember_this_turn", true)
+        val explicitFact = ChatMemoryPolicy.explicitFact(text, remember)
+        if (explicitFact != null) {
+            val fact = explicitFact
+            MoteMemory.add(this, fact).firstOrNull { it.text == fact }?.let(::syncMemoryToNode)
             updateQuickReply("已记住：$fact", "这条已经放进长期记忆。")
             ChatOutbox.remove(this, text)
             return
         }
 
-        val memories = MoteMemory.relevant(this, text)
-        MoteMemory.touch(this, memories)
+        ChatMemoryPolicy.inferCandidate(text, remember)?.let { candidate ->
+            MoteMemory.addCandidate(this, candidate.text, candidate.source)
+                .firstOrNull { it.text == candidate.text }
+                ?.let(::syncMemoryToNode)
+        }
+        val memories = if (remember) MoteMemory.relevant(this, text) else emptyList()
+        if (remember) MoteMemory.touch(this, memories)
         val memoryArray = JSONArray()
         memories.forEach { memoryArray.put(it.text) }
         val payload = JSONObject()
             .put("type", "chat")
+            .put("source", "notification")
             .put("text", text)
+            .put("remember", remember)
             .put("memories", memoryArray)
             .toString()
             .toRequestBody("application/json; charset=utf-8".toMediaType())

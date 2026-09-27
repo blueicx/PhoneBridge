@@ -134,7 +134,11 @@ data class MemoryItem(
     val createdAtMs: Long,
     val importance: Int = 3,
     val lastUsedAtMs: Long = 0L,
-    val useCount: Int = 0
+    val useCount: Int = 0,
+    val source: String = "user",
+    val status: String = "confirmed",
+    val excludedFromRecall: Boolean = false,
+    val updatedAtMs: Long = createdAtMs
 )
 
 object BridgeJson {

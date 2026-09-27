@@ -447,6 +447,7 @@ class AiProviderManager {
     }
     this.activeRequests.set(id, controller);
     const requestSignalValue = controller.signal;
+    let providerOutputEmitted = false;
 
     // 1. Try explicit target provider
     try {
@@ -458,6 +459,8 @@ class AiProviderManager {
               prompt,
               messages,
               memories,
+              requestId: id,
+              onDelta: () => { providerOutputEmitted = true; },
               options,
               timeoutMs: this.timeoutMs,
               config: this.configs[targetProviderId],
@@ -477,6 +480,7 @@ class AiProviderManager {
         throw new Error(`Provider ${targetProviderId} adapter unavailable`);
         } catch (error) {
           if (requestSignalValue.aborted) throw new Error('AI request cancelled');
+        if (providerOutputEmitted) throw error;
         // Fallback rule:
         // "显式 provider 优先，失败只回退本地，备用联网 provider 不自动调用"
         if (!this.fallbackToLocal || !this.localRulesEnabled) throw error;
@@ -525,16 +529,38 @@ class AiProviderManager {
     const adapter = this.adapters[targetProviderId];
     if (adapter && typeof adapter.stream === 'function') {
       const controller = new AbortController();
+      const onAbort = () => controller.abort();
+      if (request.signal?.aborted) throw new Error('AI request cancelled');
+      request.signal?.addEventListener('abort', onAbort, { once: true });
       this.activeRequests.set(requestId, controller);
+      const startedAt = this.now();
+      let yielded = false;
       try {
         for await (const delta of adapter.stream({ ...request, requestId, signal: controller.signal, config: this.configs[targetProviderId], timeoutMs: this.timeoutMs })) {
           if (controller.signal.aborted) throw new Error('AI request cancelled');
+          yielded = true;
           yield String(delta);
         }
-        return;
+      } catch (error) {
+        if (controller.signal.aborted) throw new Error('AI request cancelled');
+        if (yielded || !this.fallbackToLocal || !this.localRulesEnabled) throw error;
+        this.degradationCount++;
+        const localAdapter = this.adapters.local || new LocalRuleFallbackAdapter();
+        const fallback = await localAdapter.chat({
+          prompt: request.prompt,
+          messages: request.messages,
+          signal: controller.signal
+        });
+        if (controller.signal.aborted) throw new Error('AI request cancelled');
+        const reply = String(fallback.reply || '');
+        this.consumeBudget(reply);
+        this.lastLatencyMs = this.now() - startedAt;
+        for (const chunk of reply.match(/.{1,24}/gu) || []) yield chunk;
       } finally {
         this.activeRequests.delete(requestId);
+        request.signal?.removeEventListener('abort', onAbort);
       }
+      return;
     }
     const result = await this.chat({ ...request, requestId });
     const text = String(result.reply || '');

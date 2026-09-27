@@ -198,6 +198,35 @@ test('provider settings expose capabilities and enforce the daily output budget'
   assert.equal(manager.getSettings().budgetRemaining, 2);
 });
 
+test('chat forwards the stable requestId to adapters together with its abort signal', async () => {
+  let received;
+  const manager = new AiProviderManager({
+    activeProviderId: 'custom',
+    configs: { custom: { id: 'custom', model: 'test', capabilities: ['text'] } },
+    adapters: {
+      custom: { chat: async request => { received = request; return { reply: 'ok' }; } },
+      local: { chat: async () => ({ reply: 'fallback' }) }
+    }
+  });
+  await manager.chat({ requestId: 'chat_stable_1', prompt: 'hello' });
+  assert.equal(received.requestId, 'chat_stable_1');
+  assert.equal(received.signal instanceof AbortSignal, true);
+});
+
+test('chat does not splice a local fallback after an adapter already emitted partial output', async () => {
+  let fallbackCalled = false;
+  const manager = new AiProviderManager({
+    activeProviderId: 'custom',
+    configs: { custom: { id: 'custom', model: 'test', capabilities: ['text', 'stream'] } },
+    adapters: {
+      custom: { chat: async ({ onDelta }) => { onDelta('片段'); throw new Error('stream interrupted'); } },
+      local: { chat: async () => { fallbackCalled = true; return { reply: '本地完整回复' }; } }
+    }
+  });
+  await assert.rejects(() => manager.chat({ requestId: 'partial-then-fail', prompt: '继续' }), /stream interrupted/);
+  assert.equal(fallbackCalled, false);
+});
+
 test('stream falls back to deterministic chunks and cancellation aborts active adapters', async () => {
   let resolve;
   const manager = new AiProviderManager({
@@ -220,4 +249,20 @@ test('stream falls back to deterministic chunks and cancellation aborts active a
   assert.equal(manager.cancel('cancel-me'), true);
   resolve?.();
   await assert.rejects(() => pending, /aborted|cancelled/);
+});
+
+test('stream failures fall back only to local rules and keep yielding bounded chunks', async () => {
+  const manager = new AiProviderManager({
+    activeProviderId: 'custom',
+    configs: { custom: { id: 'custom', model: 'test', capabilities: ['text', 'stream'] } },
+    adapters: {
+      custom: { stream: async function* () { throw new Error('remote unavailable'); } },
+      local: { chat: async () => ({ reply: '本地继续陪你。' }) }
+    }
+  });
+  const deltas = [];
+  for await (const delta of manager.stream({ requestId: 'stream-fallback', prompt: '继续' })) deltas.push(delta);
+  assert.equal(deltas.join(''), '本地继续陪你。');
+  assert.equal(deltas.every(delta => delta.length <= 24), true);
+  assert.equal(manager.degradationCount, 1);
 });

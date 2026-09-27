@@ -4,8 +4,10 @@ enum class VoiceForegroundPhase {
     STOPPED,
     PREPARING,
     LISTENING,
+    RECOGNIZING,
     PROCESSING,
     SPEAKING,
+    FAILED,
     PAUSED
 }
 
@@ -16,6 +18,7 @@ data class VoiceForegroundState(
     val sessionActive: Boolean = false,
     val phase: VoiceForegroundPhase = VoiceForegroundPhase.STOPPED,
     val detail: String = "监听已停止。",
+    val retryAvailable: Boolean = false,
     val proactiveMessage: String = "",
     val proactiveKey: String = ""
 ) {
@@ -28,6 +31,7 @@ data class VoiceForegroundState(
             sessionActive = true,
             phase = VoiceForegroundPhase.PREPARING,
             detail = detail,
+            retryAvailable = false,
             microphonePermissionGranted = true
         )
 
@@ -36,8 +40,17 @@ data class VoiceForegroundState(
             sessionActive = true,
             phase = VoiceForegroundPhase.LISTENING,
             detail = detail,
+            retryAvailable = false,
             microphonePermissionGranted = true
         )
+
+    fun recognizing(transcript: String): VoiceForegroundState = copy(
+        sessionActive = true,
+        phase = VoiceForegroundPhase.RECOGNIZING,
+        detail = transcript.trim().take(120).ifEmpty { "正在识别语音。" },
+        retryAvailable = false,
+        microphonePermissionGranted = true
+    )
 
     fun processing(transcript: String): VoiceForegroundState =
         copy(
@@ -45,6 +58,7 @@ data class VoiceForegroundState(
             phase = VoiceForegroundPhase.PROCESSING,
             detail = transcript.trim().takeIf { it.isNotEmpty() }?.let { "你说：$it" }
                 ?: "正在处理语音内容。",
+            retryAvailable = false,
             microphonePermissionGranted = true
         )
 
@@ -53,14 +67,25 @@ data class VoiceForegroundState(
             sessionActive = true,
             phase = VoiceForegroundPhase.SPEAKING,
             detail = reply.trim().ifEmpty { "正在播报回复。" },
+            retryAvailable = false,
             microphonePermissionGranted = true
         )
 
+    fun failed(reason: String): VoiceForegroundState = copy(
+        sessionActive = true,
+        phase = VoiceForegroundPhase.FAILED,
+        detail = reason.trim().take(180).ifEmpty { "上一轮没有完成，可重试或继续说话。" },
+        retryAvailable = true,
+        microphonePermissionGranted = true
+    )
+
+    fun interrupt(): VoiceForegroundState = listening("").copy(retryAvailable = false)
+
     fun paused(reason: String = "已暂停，请在 App 内重新开启。"): VoiceForegroundState =
-        copy(sessionActive = false, phase = VoiceForegroundPhase.PAUSED, detail = reason)
+        copy(sessionActive = false, phase = VoiceForegroundPhase.PAUSED, detail = reason, retryAvailable = false)
 
     fun stopped(reason: String = "监听已停止。"): VoiceForegroundState =
-        copy(sessionActive = false, phase = VoiceForegroundPhase.STOPPED, detail = reason)
+        copy(sessionActive = false, phase = VoiceForegroundPhase.STOPPED, detail = reason, retryAvailable = false)
 
     fun permissionMissing(reason: String = "请先打开 App 授予麦克风权限。"): VoiceForegroundState =
         copy(
@@ -84,6 +109,7 @@ data class VoiceForegroundPresentation(
     val running: Boolean,
     val listening: Boolean,
     val speaking: Boolean,
+    val retryAvailable: Boolean,
     val stopActionLabel: String?
 )
 
@@ -94,8 +120,10 @@ object VoiceForegroundFormatter {
             !state.microphonePermissionGranted -> "已停止"
             state.phase == VoiceForegroundPhase.PREPARING -> "正在准备监听"
             state.phase == VoiceForegroundPhase.LISTENING -> "麦克风持续监听中"
+            state.phase == VoiceForegroundPhase.RECOGNIZING -> "正在识别语音"
             state.phase == VoiceForegroundPhase.PROCESSING -> "语音处理中"
             state.phase == VoiceForegroundPhase.SPEAKING -> "正在播报回复"
+            state.phase == VoiceForegroundPhase.FAILED -> "上一轮失败，可重试或继续说话"
             state.phase == VoiceForegroundPhase.PAUSED -> "已暂停"
             else -> "已停止"
         }
@@ -114,6 +142,7 @@ object VoiceForegroundFormatter {
             running = state.running,
             listening = state.listening,
             speaking = state.speaking,
+            retryAvailable = state.retryAvailable,
             stopActionLabel = if (state.running) "停止监听" else null
         )
     }
@@ -148,4 +177,15 @@ object VoiceForegroundFormatter {
         if (normalized.length <= limit) return normalized
         return normalized.take(limit - 1).trimEnd() + "…"
     }
+}
+
+object VoiceTurnCallbackPolicy {
+    fun isCurrent(
+        callbackId: String?,
+        activeCallbackId: String,
+        callbackGeneration: Long,
+        activeGeneration: Long
+    ): Boolean = !callbackId.isNullOrBlank() &&
+        callbackId == activeCallbackId &&
+        callbackGeneration == activeGeneration
 }

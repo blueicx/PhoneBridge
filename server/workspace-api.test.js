@@ -146,6 +146,12 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     const confirmedMemory = await request('/api/memories/api-memory-candidate/confirm', { method: 'POST' });
     assert.equal(confirmedMemory.response.status, 200);
     assert.equal(confirmedMemory.body.entry.status, 'confirmed');
+    const excludedMemory = await request('/api/memories/api-memory-candidate', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ excludedFromRecall: true }),
+    });
+    assert.equal(excludedMemory.response.status, 200);
+    assert.equal(excludedMemory.body.entry.excludedFromRecall, true);
 
     const initialSummary = await request('/api/state?view=summary');
     const initialETag = initialSummary.response.headers.get('etag');
@@ -311,6 +317,11 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
       socket.send(JSON.stringify(event));
       const duplicateAck = await duplicateAckPromise;
       assert.equal(duplicateAck.accepted, false);
+      const chatCancelAckPromise = nextSocketMessage(socket, message => message.type === 'chat_cancelled');
+      socket.send(JSON.stringify({ type: 'chat_cancel', requestId: 'chat_nonexistent' }));
+      const chatCancelAck = await chatCancelAckPromise;
+      assert.equal(chatCancelAck.requestId, 'chat_nonexistent');
+      assert.equal(chatCancelAck.cancelled, false);
     } finally {
       socket.close();
     }
@@ -337,6 +348,8 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     });
     assert.equal(message.response.status, 202);
     assert.equal(message.body.task.source, 'conversation');
+    assert.equal(message.body.task.metadata.sessionId, sessionId);
+    assert.equal(message.body.task.metadata.messageId, message.body.message.id);
 
     const tasks = await request('/api/tasks');
     assert.ok(tasks.body.tasks.some(task => task.id === message.body.task.id));

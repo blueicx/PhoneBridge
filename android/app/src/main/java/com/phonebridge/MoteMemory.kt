@@ -29,7 +29,11 @@ object MoteMemory {
                             createdAtMs = created,
                             importance = (item.optInt("importance", 3)).coerceIn(1, 5),
                             lastUsedAtMs = item.optLong("lastUsedAtMs", 0L),
-                            useCount = item.optInt("useCount", 0)
+                            useCount = item.optInt("useCount", 0),
+                            source = item.optString("source", "user"),
+                            status = item.optString("status", "confirmed").takeIf { it in setOf("candidate", "confirmed") } ?: "confirmed",
+                            excludedFromRecall = item.optBoolean("excludedFromRecall", false),
+                            updatedAtMs = item.optLong("updatedAtMs", created)
                         )
                     )
                 }
@@ -44,10 +48,15 @@ object MoteMemory {
             array.put(
                 JSONObject()
                     .put("text", item.text)
+                    .put("id", item.id)
                     .put("createdAtMs", item.createdAtMs)
                     .put("importance", item.importance)
                     .put("lastUsedAtMs", item.lastUsedAtMs)
                     .put("useCount", item.useCount)
+                    .put("source", item.source)
+                    .put("status", item.status)
+                    .put("excludedFromRecall", item.excludedFromRecall)
+                    .put("updatedAtMs", item.updatedAtMs)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -55,19 +64,25 @@ object MoteMemory {
             .apply()
     }
 
-    fun add(context: Context, text: String): List<MemoryItem> {
+    fun add(context: Context, text: String, source: String = "user", status: String = "confirmed"): List<MemoryItem> {
         val clean = text.trim().take(240)
         if (clean.isEmpty()) return load(context)
         val items = load(context)
         val id = stableId(clean)
+        val existing = items.firstOrNull { it.text.equals(clean, ignoreCase = true) }
+        if (status == "candidate" && existing?.status == "confirmed") return items
+        val now = System.currentTimeMillis()
         if (items.none { it.text.equals(clean, ignoreCase = true) }) {
             items.add(
                 0,
                 MemoryItem(
                     id = id,
                     text = clean,
-                    createdAtMs = System.currentTimeMillis(),
-                    importance = detectImportance(clean)
+                    createdAtMs = now,
+                    importance = detectImportance(clean),
+                    source = source,
+                    status = if (status == "candidate") "candidate" else "confirmed",
+                    updatedAtMs = now
                 )
             )
         } else {
@@ -77,14 +92,40 @@ object MoteMemory {
                 MemoryItem(
                     id = id,
                     text = clean,
-                    createdAtMs = System.currentTimeMillis(),
-                    importance = detectImportance(clean)
+                    createdAtMs = now,
+                    importance = detectImportance(clean),
+                    source = source,
+                    status = if (status == "candidate") "candidate" else "confirmed",
+                    updatedAtMs = now
                 )
             )
         }
         val saved = items.take(MAX_ITEMS)
         save(context, saved)
         return saved.toMutableList()
+    }
+
+    fun addCandidate(context: Context, text: String, source: String = "auto_extract"): List<MemoryItem> =
+        add(context, text, source = source, status = "candidate")
+
+    fun confirmById(context: Context, id: String): List<MemoryItem> = updateById(context, id) { it.copy(status = "confirmed") }
+
+    fun setExcludedFromRecall(context: Context, id: String, excluded: Boolean): List<MemoryItem> =
+        updateById(context, id) { it.copy(excludedFromRecall = excluded) }
+
+    fun updateById(context: Context, id: String, text: String): List<MemoryItem> {
+        val clean = text.trim().take(240)
+        if (clean.isEmpty()) return load(context)
+        return updateById(context, id) { it.copy(text = clean, importance = detectImportance(clean)) }
+    }
+
+    private fun updateById(context: Context, id: String, transform: (MemoryItem) -> MemoryItem): List<MemoryItem> {
+        val now = System.currentTimeMillis()
+        val items = load(context).map { item ->
+            if (item.id == id) transform(item).copy(updatedAtMs = now) else item
+        }
+        save(context, items)
+        return items.toMutableList()
     }
 
     fun removeAt(context: Context, index: Int): List<MemoryItem> {
@@ -102,10 +143,11 @@ object MoteMemory {
 
     fun relevant(context: Context, query: String, limit: Int = 12): List<MemoryItem> {
         val items = load(context)
-        if (items.isEmpty()) return emptyList()
+        val recallable = items.filter { ChatMemoryPolicy.isRecallEligible(it.status == "confirmed", it.excludedFromRecall) }
+        if (recallable.isEmpty()) return emptyList()
         val now = System.currentTimeMillis()
         val keys = keywords(query)
-        return items.map { item ->
+        return recallable.map { item ->
             val overlap = keys.count { key ->
                 item.text.contains(key, ignoreCase = true) ||
                     key.length >= 2 && item.text.replace(" ", "").contains(key, ignoreCase = true)
