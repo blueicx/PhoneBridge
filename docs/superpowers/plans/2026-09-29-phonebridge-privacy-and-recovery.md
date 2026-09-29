@@ -21,4 +21,5 @@
 - 运行时加密备份/恢复故障演练、敏感扫描、APK Debug 签名/版本门禁、签名解析测试、性能预算、Node 语法检查及 `git diff --check` 通过。性能预算：`elapsedMs=1.118`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。
 - 最新内部 Debug APK 为 `com.phonebridge`，`2.2.0` / code `4`，大小 `93,345,623 bytes`，SHA-256：`52EDACD4638836414B9F24541317AA49336FFF08DE6120CC3216532DC0E4CC9E`。不是正式签名包，未加入 Git。
 - Xperia XZ2 / Android 15 当前只读状态：USB ADB 在线、正在充电，电量 8%、电池温度 33.7°C；无线 ADB 当前离线，相机权限仍 `granted=false`。由于电量过低，本轮没有安装最新 APK 或启动设备，也没有触碰/授予相机权限。先前 `1552 ms` 是旧候选的启动记录，不作为本次构建验收。
-- 隐私界面和系统文件选择器尚未实机点击；推送后的 GitHub Actions 仍待验证。本记录不替代扫码、摄像头、ARCore、PTT 或长时运行验收。
+- 提交 `94204d1` 已推送到 `feature/integrated-enhancement`；[GitHub Actions run 36599821041](https://github.com/blueicx/PhoneBridge/actions/runs/36599821041) 全部通过（5m03s），上传 artifact `phonebridge-debug-94204d1b0bd19b588ce78f8f887f6200bc8b3d03`（65,311,183 bytes）。CI 提示 Actions Node 20 与 `ubuntu-latest` 未来迁移，不影响本次通过结果。
+- 隐私界面和系统文件选择器尚未实机点击。本记录不替代扫码、摄像头、ARCore、PTT 或长时运行验收。

@@ -483,6 +483,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 最新 Debug APK `com.phonebridge` `2.2.0` / code `4`，大小 `93,345,623 bytes`，SHA-256 `52EDACD4638836414B9F24541317AA49336FFF08DE6120CC3216532DC0E4CC9E`；仅内部 Debug 候选，不是正式签名包，未加入 Git。
 - Xperia XZ2 / Android 15 当前 USB ADB 在线、正在充电，电量 8%、电池温度 33.7°C；无线 ADB 当前离线，相机权限仍 `granted=false`。因电量过低，本轮未安装最新候选或启动设备，也未触碰/授予相机权限。隐私对话框、文件选择器和手机端删除操作尚待设备恢复后实机点击。此前 `1552 ms` 冷启动来自旧候选，不作为本次构建验收。
 - Android 隐私清理若本机 Room/cache 清除失败，不再继续恢复 outbox 发送；重连重新同步删除收据后才会继续，避免清理未完成时把待发个人数据重新发出。
-- 本批提交/推送及 GitHub Actions 仍待完成。正式签名、扫码/WSS、相机线索/ARCore、PTT、同步恢复和两小时稳定性继续待验收。
+- 实现提交 `94204d1` 已推送到 `feature/integrated-enhancement`；GitHub Actions [run 36599821041](https://github.com/blueicx/PhoneBridge/actions/runs/36599821041) 全部通过（5m03s）。Debug artifact `phonebridge-debug-94204d1b0bd19b588ce78f8f887f6200bc8b3d03`（65,311,183 bytes）已上传，APK 不在源码历史。CI 提示 Actions Node 20 与 `ubuntu-latest` 后续迁移，未影响通过。
+- 正式签名、扫码/WSS、相机线索/ARCore、PTT、同步恢复和两小时稳定性继续待验收。
 
 实现记录：[`docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md`](docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md)。

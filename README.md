@@ -272,4 +272,4 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 排除项：令牌/配对凭据、Provider 密钥、原始照片/画面、精确位置和连续轨迹。共享交接内容归入 conversations 类别，删除时同时清空服务端文件及手机镜像。
 - 删除期间会临时阻止新的写操作、取消并等待在途聊天，排空已进入的 HTTP 写请求；清理关联的终态任务内存记录和 Room/outbox 后再确认完成。手机重连先拉取有限的已完成删除收据并清缓存，再恢复 outbox，避免离线错过实时广播。
 - Android 本机删除未成功时会暂停 outbox 恢复发送，待下次成功对账服务端删除收据后再同步，避免被删数据重新上传。
-- 批次验证见 [`docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md`](docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md)；手机上的隐私对话框与系统文件选择器尚待点击验收。
+- 批次验证见 [`docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md`](docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md)；本批 CI [run 36599821041](https://github.com/blueicx/PhoneBridge/actions/runs/36599821041) 已通过并上传内部 Debug artifact。手机上的隐私对话框与系统文件选择器尚待点击验收。
