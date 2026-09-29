@@ -36,6 +36,9 @@ jobs:
       - name: Android unit tests
         working-directory: android
         run: bash ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+      - name: Android emulator workflow shell contract
+        shell: pwsh
+        run: ./scripts/test_android_ci_workflow.ps1
       - name: Android Room migration tests (emulator)
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -43,7 +46,7 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: cd android && ./gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain
+          script: cd android && bash ./gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain
       - name: Android lint
         working-directory: android
         run: |
