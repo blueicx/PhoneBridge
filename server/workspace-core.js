@@ -44,6 +44,17 @@ function limitText(value, maxLength = 240) {
   return `${text.slice(0, Math.max(0, maxLength - 1))}\u2026`;
 }
 
+function normalizePrivacyRevisions(value) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const revisions = {};
+  for (const [category, revision] of Object.entries(value)) {
+    if (/^[a-z][a-z0-9_]{0,31}$/.test(category) && Number.isSafeInteger(revision) && revision >= 0) {
+      revisions[category] = revision;
+    }
+  }
+  return revisions;
+}
+
 function createEventEnvelope({
   eventId = crypto.randomUUID(),
   origin = 'node',
@@ -53,9 +64,13 @@ function createEventEnvelope({
   createdAt = iso(Date.now()),
   revision = 0,
   ack = false,
+  privacyRevisions,
 } = {}) {
   if (!type) throw new Error('event type is required');
-  return { eventId, origin, sequence, type, payload, createdAt, revision, ack };
+  const normalized = { eventId, origin, sequence, type, payload, createdAt, revision, ack };
+  const safeRevisions = normalizePrivacyRevisions(privacyRevisions);
+  if (safeRevisions !== undefined) normalized.privacyRevisions = safeRevisions;
+  return normalized;
 }
 
 function shouldApplyWorkspaceEvent(event, acceptance) {
@@ -70,23 +85,45 @@ function workspaceBusinessAck(acceptance) {
   if (acceptance?.duplicateBy === 'event_id') return { businessStatus: 'duplicate', reason: 'event_already_processed' };
   if (acceptance?.duplicateBy === 'origin_sequence') return { businessStatus: 'rejected', reason: 'origin_sequence_conflict' };
   if (acceptance?.duplicateBy === 'privacy_fence') return { businessStatus: 'rejected', reason: `privacy_data_deleted:${acceptance.category}` };
+  if (['privacy_revision_required', 'privacy_revision_stale', 'privacy_migration_required', 'privacy_revision_persist_failed'].includes(acceptance?.status)) {
+    return { businessStatus: 'rejected', reason: `${acceptance.status}:${acceptance.category}` };
+  }
+  if (acceptance?.status === 'unclassified_personal_event') return { businessStatus: 'rejected', reason: 'unclassified_personal_event' };
   return { businessStatus: 'rejected', reason: acceptance?.status || 'event_rejected' };
 }
 
-function privacyFenceCategory(event, deletedConversationTaskIds = new Set()) {
+const NON_PERSONAL_EVENT_TYPES = new Set([
+  'device.state',
+  'workspace.sync_state',
+  'workspace.policy',
+  'autonomy.approval',
+]);
+
+function classifyPrivacyEvent(event, deletedConversationTaskIds = new Set()) {
   const type = String(event?.type || '').toLowerCase();
-  const payload = event?.payload?.task || event?.payload || {};
+  const categories = privacyFenceCategories(event, deletedConversationTaskIds);
+  if (categories.length) return { categories };
+  if (NON_PERSONAL_EVENT_TYPES.has(type)) return { categories: [] };
+  if (['workspace.', 'privacy.', 'autonomy.'].some(prefix => type.startsWith(prefix))) {
+    return { categories: [], reject: 'unclassified_personal_event' };
+  }
+  return { categories: [] };
+}
+
+function privacyFenceCategories(event, deletedConversationTaskIds = new Set()) {
+  const type = String(event?.type || '').toLowerCase();
+  const payload = event?.payload?.task || event?.payload?.attention || event?.payload?.actionRun || event?.payload || {};
   const metadata = payload?.metadata || {};
   const conversationLinked = String(payload?.source || '').toLowerCase() === 'conversation' ||
-    Boolean(payload?.sessionId || payload?.relatedSessionId || payload?.messageId || metadata.sessionId || metadata.messageId);
+    Boolean(payload?.sessionId || payload?.relatedSessionId || payload?.messageId || payload?.relatedMessageId || metadata.sessionId || metadata.messageId);
   const deletedConversationTask = [payload?.id, payload?.taskId, payload?.relatedTaskId]
     .some(value => value != null && deletedConversationTaskIds.has(String(value)));
-  if (type === 'workspace.message') return 'conversations';
-  if (type.startsWith('mote.')) return 'progress';
-  if (deletedConversationTask && (type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run'))) return 'conversations';
-  if (conversationLinked && (type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run'))) return 'conversations';
-  if (type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run')) return 'tasks';
-  return null;
+  if (type === 'workspace.message') return ['conversations'];
+  if (type.startsWith('mote.') || type.startsWith('reality.')) return ['progress'];
+  const taskEvent = type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run');
+  if (!taskEvent) return [];
+  if (deletedConversationTask || conversationLinked) return ['conversations', 'tasks'];
+  return ['tasks'];
 }
 
 function clone(value) {
@@ -694,17 +731,50 @@ class WorkspaceStore {
     return clone(message);
   }
 
-  acceptEvent(event) {
+  acceptEvent(event, privacy = {}) {
     const normalized = createEventEnvelope(event);
     const key = `${normalized.origin}:${normalized.sequence}`;
-    const category = privacyFenceCategory(normalized, this.privacyDeletedTaskIds);
-    const fence = category ? this.privacyFences[category] : 0;
+    const classification = classifyPrivacyEvent(normalized, this.privacyDeletedTaskIds);
+    if (classification.reject) {
+      return { accepted: false, status: classification.reject, event: clone(normalized) };
+    }
+    const categories = classification.categories;
+    const futureRevisions = {};
+    for (const category of categories) {
+      const currentCategoryRevision = typeof privacy.categoryRevision === 'function'
+        ? Math.max(0, Math.trunc(Number(privacy.categoryRevision(category)) || 0))
+        : 0;
+      if (typeof privacy.isMigrationRequired === 'function' && privacy.isMigrationRequired(category)) {
+        return { accepted: false, status: 'privacy_migration_required', category, event: clone(normalized) };
+      }
+      const clientCategoryRevision = normalized.privacyRevisions?.[category];
+      if (clientCategoryRevision === undefined && currentCategoryRevision > 0) {
+        return { accepted: false, status: 'privacy_revision_required', category, event: clone(normalized) };
+      }
+      if (clientCategoryRevision !== undefined && clientCategoryRevision < currentCategoryRevision) {
+        return { accepted: false, status: 'privacy_revision_stale', category, event: clone(normalized) };
+      }
+      if (clientCategoryRevision !== undefined && clientCategoryRevision > currentCategoryRevision) futureRevisions[category] = clientCategoryRevision;
+    }
     const createdAt = Date.parse(normalized.createdAt);
-    if (fence > 0 && (!Number.isFinite(createdAt) || createdAt <= fence)) {
-      return { accepted: false, status: 'privacy_deleted', duplicateBy: 'privacy_fence', category, event: clone(normalized) };
+    for (const category of categories) {
+      const fence = this.privacyFences[category] || 0;
+      if (fence > 0 && (!Number.isFinite(createdAt) || createdAt <= fence)) {
+        return { accepted: false, status: 'privacy_deleted', duplicateBy: 'privacy_fence', category, event: clone(normalized) };
+      }
     }
     if (this.eventKeys.has(`event:${normalized.eventId}`)) return { accepted: false, status: 'duplicate', duplicateBy: 'event_id', event: clone(normalized) };
     if (this.eventKeys.has(key)) return { accepted: false, status: 'duplicate', duplicateBy: 'origin_sequence', event: clone(normalized) };
+    if (Object.keys(futureRevisions).length) {
+      try {
+        if (typeof privacy.observeCategoryRevisions === 'function') privacy.observeCategoryRevisions(futureRevisions);
+        else if (typeof privacy.observeCategoryRevision === 'function') {
+          for (const [category, revision] of Object.entries(futureRevisions)) privacy.observeCategoryRevision(category, revision);
+        }
+      } catch (_) {
+        return { accepted: false, status: 'privacy_revision_persist_failed', category: Object.keys(futureRevisions)[0], event: clone(normalized) };
+      }
+    }
     normalized.revision = ++this.eventRevision;
     this.eventKeys.add(key);
     this.eventKeys.add(`event:${normalized.eventId}`);

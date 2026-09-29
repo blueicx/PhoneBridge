@@ -496,6 +496,32 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.ok(Array.isArray(workspace.body.policies));
     assert.ok(Array.isArray(workspace.body.actionRuns));
     assert.equal(typeof workspace.body.eventRevision, 'number');
+
+    const privacySocketOpened = await openSocket();
+    const privacySocket = privacySocketOpened.socket;
+    try {
+      assert.equal(privacySocketOpened.firstMessage.type, 'snapshot');
+      const privacyDeletedPromise = nextSocketMessage(privacySocket, event => event.type === 'privacy.deleted');
+      const privacyDelete = await request('/api/privacy/delete', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ requestId: 'ws-privacy-revision-delete', categories: ['conversations'], confirmation: 'DELETE SELECTED DATA' }),
+      });
+      assert.equal(privacyDelete.response.status, 200);
+      const privacyDeleted = await privacyDeletedPromise;
+      assert.equal(privacyDeleted.categoryRevisions.conversations, privacyDelete.body.receipt.categoryRevisions.conversations);
+
+      const ackPromise = nextSocketMessage(privacySocket, message => message.type === 'workspace.ack' && message.eventId === 'ws-after-delete-without-revision');
+      privacySocket.send(JSON.stringify({
+        type: 'workspace.event', eventId: 'ws-after-delete-without-revision', origin: 'phone-ws', sequence: 100,
+        eventType: 'workspace.message', payload: { role: 'user', text: 'should wait for revision sync' },
+      }));
+      const ack = await ackPromise;
+      assert.equal(ack.accepted, false);
+      assert.equal(ack.businessStatus, 'rejected');
+      assert.equal(ack.reason, 'privacy_revision_required:conversations');
+    } finally {
+      privacySocket.close();
+    }
   } finally {
     child.kill();
     if (child.exitCode === null) {

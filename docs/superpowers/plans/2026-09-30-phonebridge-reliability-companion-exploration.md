@@ -38,12 +38,12 @@
 
 **涉及文件：** `server/workspace-core.js`、`server/workspace-core.test.js`、`server/index.js`、`server/enhancement-api.test.js`
 
-- [ ] 先增加事件接受测试：revision 缺失时旧客户端在类别 revision 为 0 可继续；类别 revision 大于 0 时缺失版本被拒绝；低于服务端 revision 被拒绝；等于或高于当前版本按协议接受；重复 `eventId` 仍返回幂等结果。覆盖 `workspace.message`、`mote.*`、任务/Attention/ActionRun 的类别映射。
-- [ ] 扩展 `createEventEnvelope` 保留并规范化可选 `privacyRevisions`；扩展 `privacyFenceCategory` 对已知事件类型的映射，只对个人数据事件校验，不把设备状态错误归类。对可能变更个人数据但没有已知分类的 mutating event 明确拒绝为 `unclassified_personal_event`；兼容已知旧版事件格式。
-- [ ] `WorkspaceStore.acceptEvent` 从调用方读取当前 PrivacyCenter revision（通过显式参数或构造时注入的 getter，不建立反向模块依赖），先执行 revision 校验，再执行原有时间围栏/eventId/origin-sequence 判重。拒绝结果提供稳定、不含个人数据的原因码 `privacy_revision_required:<category>` 或 `privacy_revision_stale:<category>`。
-- [ ] HTTP `/api/workspace/events` 与 WebSocket 同一套业务 ACK 返回拒绝状态、原因和当前结果 revision；传输收到事件不等于业务成功。事件拒绝不得写入业务状态或广播成功事件。
-- [ ] 删除完成后 `/api/privacy/delete` receipt、`privacy.deleted` WS 事件和 timeline payload 包含本次 `categoryRevisions`；`GET /api/privacy/overview` 保持现有类别计数和历史删除字段兼容。
-- [ ] 运行 `node --test server/workspace-core.test.js server/privacy-center.test.js server/enhancement-api.test.js`，再运行 `node --test server/*.test.js`。
+- [x] 先增加事件接受测试：revision 缺失时旧客户端在类别 revision 为 0 可继续；类别 revision 大于 0 时缺失版本被拒绝；低于服务端 revision 被拒绝；等于或高于当前版本按协议接受；重复 `eventId` 仍返回幂等结果。覆盖 `workspace.message`、`mote.*`、任务/Attention/ActionRun 的类别映射。
+- [x] 扩展 `createEventEnvelope` 保留并规范化可选 `privacyRevisions`；事件分类对个人数据校验、豁免设备状态；未分类的 `workspace.*` 个人变更 fail-closed；聊天关联的任务/Attention/ActionRun 同时校验 `conversations` 与 `tasks`，防止只删除任务后旧事件回放。
+- [x] `WorkspaceStore.acceptEvent` 从调用方显式读取 PrivacyCenter revisions（无反向模块依赖），先执行多类别 revision 与迁移门校验，再执行原有时间围栏/eventId/origin-sequence 判重。拒绝使用稳定、无个人数据原因码。
+- [x] HTTP `/api/workspace/events` 与 WebSocket 共用业务 ACK；拒绝不写入事件日志/业务状态且不广播成功事件。覆盖 HTTP/WS revision 拒绝与 ACK 原因。
+- [x] 删除完成后 `/api/privacy/delete` receipt、`privacy.deleted` WS 事件和 timeline payload 包含本次 `categoryRevisions`；保留 overview 原类别计数/删除历史字段。
+- [x] 运行 `node --test server/workspace-core.test.js server/privacy-center.test.js server/enhancement-api.test.js server/workspace-api.test.js` 与 `node --test server/*.test.js`（186/186）；`node --check` 与 `git diff --check` 通过。
 
 ### A3. Room v4→v5 与 Android 隐私同步元数据
 

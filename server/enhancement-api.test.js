@@ -240,12 +240,14 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     });
     assert.equal(deletedConversations.response.status, 200);
     assert.equal(deletedConversations.body.receipt.deletedCounts.conversations, 4);
+    assert.equal(deletedConversations.body.receipt.categoryRevisions.conversations, 1);
     assert.equal((await request('/api/workspace/sessions')).body.sessions.length, 0);
     assert.equal((await request('/api/workspace')).body.tasks.length, 0);
     assert.equal((await request('/api/handoff')).body.state.notes, '');
     const timelineAfterConversationDelete = await request('/api/workspace/timeline?cursor=0');
     assert.equal(timelineAfterConversationDelete.body.snapshot.messages.length, 0);
     assert.equal(timelineAfterConversationDelete.body.snapshot.tasks.length, 0);
+    const workspaceEventCursor = (await request('/api/workspace/events?since=0')).body.revision;
     const staleConversationReplay = await request('/api/workspace/events', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ event: {
@@ -254,14 +256,67 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
       } })
     });
     assert.equal(staleConversationReplay.body.businessStatus, 'rejected');
-    assert.equal(staleConversationReplay.body.businessReason, 'privacy_data_deleted:conversations');
+    assert.equal(staleConversationReplay.body.reason, 'privacy_revision_required:conversations');
+    assert.equal(staleConversationReplay.body.businessReason, staleConversationReplay.body.reason);
+    const eventLogAfterRejectedReplay = await request(`/api/workspace/events?since=${workspaceEventCursor}`);
+    assert.equal(eventLogAfterRejectedReplay.body.events.some(event => event.eventId === 'offline-message-before-privacy-delete'), false);
     assert.equal(JSON.stringify((await request('/api/workspace/timeline?cursor=0')).body).includes('must not resurrect'), false);
+
+    const explicitlyStaleConversationReplay = await request('/api/workspace/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: {
+        eventId: 'offline-message-with-old-revision', origin: 'phone-offline', sequence: 3,
+        type: 'workspace.message', privacyRevisions: { conversations: 0 }, payload: { text: 'old category revision' }
+      } })
+    });
+    assert.equal(explicitlyStaleConversationReplay.body.reason, 'privacy_revision_stale:conversations');
+
+    const acceptedCurrentRevision = await request('/api/workspace/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: {
+        eventId: 'new-message-with-current-revision', origin: 'phone-online', sequence: 1,
+        type: 'workspace.message', privacyRevisions: { conversations: 1 },
+        createdAt: new Date(Date.now() + 1000).toISOString(), payload: { text: 'new conversation after deletion' }
+      } })
+    });
+    assert.equal(acceptedCurrentRevision.body.businessAccepted, true);
+    assert.equal(acceptedCurrentRevision.body.reason, 'event_applied');
+
+    const deletionTimeline = await request(`/api/workspace/timeline?cursor=${(await request('/api/workspace/timeline?cursor=0')).body.headRevision - 1}&limit=20`);
+    const privacyDeletionEvent = deletionTimeline.body.events.find(event => event.eventId === 'privacy-conversation-delete-001');
+    assert.deepEqual(privacyDeletionEvent.payload.categoryRevisions, { conversations: 1 });
+
+    const linkedTaskAfterConversationDelete = await request('/api/workspace/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: {
+        eventId: 'new-linked-task-with-both-revisions', origin: 'phone-online', sequence: 2,
+        type: 'workspace.task.progress', privacyRevisions: { conversations: 1, tasks: 0 },
+        createdAt: new Date(Date.now() + 1000).toISOString(),
+        payload: { source: 'conversation', metadata: { sessionId: 'new-session' }, progress: 20 }
+      } })
+    });
+    assert.equal(linkedTaskAfterConversationDelete.body.businessAccepted, true);
+    const deletedTasks = await request('/api/privacy/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: 'tasks-delete-after-conversation', categories: ['tasks'], confirmation: 'DELETE SELECTED DATA' })
+    });
+    assert.equal(deletedTasks.body.receipt.categoryRevisions.tasks, 1);
+    const staleLinkedTask = await request('/api/workspace/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: {
+        eventId: 'linked-task-replayed-after-task-delete', origin: 'phone-offline', sequence: 5,
+        type: 'workspace.task.progress', privacyRevisions: { conversations: 1, tasks: 0 },
+        createdAt: new Date(Date.now() + 1000).toISOString(), payload: { source: 'conversation', metadata: { sessionId: 'new-session' } }
+      } })
+    });
+    assert.equal(staleLinkedTask.body.reason, 'privacy_revision_stale:tasks');
 
     const deletedProgress = await request('/api/privacy/delete', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ requestId: 'progress-delete-001', categories: ['progress'], confirmation: 'DELETE SELECTED DATA' })
     });
     assert.equal(deletedProgress.response.status, 200);
+    assert.equal(deletedProgress.body.receipt.categoryRevisions.progress, 1);
     assert.equal((await request('/api/motes/relationship')).body.relationship.xp, 0);
     const staleProgressReplay = await request('/api/workspace/events', {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -271,7 +326,16 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
       } })
     });
     assert.equal(staleProgressReplay.body.businessStatus, 'rejected');
-    assert.equal(staleProgressReplay.body.businessReason, 'privacy_data_deleted:progress');
+    assert.equal(staleProgressReplay.body.reason, 'privacy_revision_required:progress');
+    const staleProgressWithRevision = await request('/api/workspace/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: {
+        eventId: 'offline-progress-before-privacy-delete-with-revision', origin: 'phone-offline', sequence: 4,
+        type: 'mote.exploration', createdAt: '2020-01-01T00:00:00.000Z',
+        privacyRevisions: { progress: 1 }, payload: { clueType: 'light' }
+      } })
+    });
+    assert.equal(staleProgressWithRevision.body.reason, 'privacy_data_deleted:progress');
 
   } finally {
     child.kill('SIGTERM');

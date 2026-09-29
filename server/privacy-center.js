@@ -209,6 +209,29 @@ class PrivacyCenter {
     return this.categoryRevisions[category] || 0;
   }
 
+  observeCategoryRevision(category, revision) {
+    return this.observeCategoryRevisions({ [category]: revision });
+  }
+
+  observeCategoryRevisions(revisions) {
+    if (!revisions || typeof revisions !== 'object' || Array.isArray(revisions)) throw new Error('privacy revisions must be a category map');
+    const updates = [];
+    for (const [category, revision] of Object.entries(revisions)) {
+      if (!this.categories.has(category)) throw new Error(`unknown privacy category: ${category}`);
+      if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('privacy revision must be a non-negative safe integer');
+      const previous = this.categoryRevisions[category] || 0;
+      if (revision > previous) updates.push([category, revision, previous]);
+    }
+    if (!updates.length) return false;
+    for (const [category, revision] of updates) this.categoryRevisions[category] = revision;
+    try { this._save(); }
+    catch (error) {
+      for (const [category, , previous] of updates) this.categoryRevisions[category] = previous;
+      throw error;
+    }
+    return true;
+  }
+
   isMigrationRequired(category = null) {
     if (this.migration.status !== 'required') return false;
     if (category == null) return this.migration.requiredCategories.some(id => !this.migration.decisions[id]);

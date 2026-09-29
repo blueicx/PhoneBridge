@@ -224,6 +224,137 @@ test('blocks automation actions only for hard-stop conditions, not ordinary offl
   assert.ok(store.listActionRuns().some(run => run.origin === 'automation' && (run.state === 'blocked' || run.state === 'cancelled')));
 });
 
+test('event envelopes preserve only normalized non-negative privacy revisions', () => {
+  const event = createEventEnvelope({
+    type: 'workspace.message',
+    privacyRevisions: { conversations: 2, progress: 0, invalid: -1, fractional: 1.5, nested: '3' },
+  });
+  assert.deepEqual(event.privacyRevisions, { conversations: 2, progress: 0 });
+  assert.equal(Object.hasOwn(createEventEnvelope({ type: 'device.state' }), 'privacyRevisions'), false);
+});
+
+test('privacy category revisions admit legacy events only before the first deletion', () => {
+  const revisions = { conversations: 0 };
+  const privacy = {
+    categoryRevision: category => revisions[category] || 0,
+    isMigrationRequired: () => false,
+    observeCategoryRevision: (category, revision) => { revisions[category] = Math.max(revisions[category] || 0, revision); },
+  };
+  const store = new WorkspaceStore();
+  const makeMessage = (eventId, sequence, privacyRevisions) => ({
+    eventId, origin: 'phone', sequence, type: 'workspace.message', payload: { text: 'message' },
+    ...(privacyRevisions ? { privacyRevisions } : {}),
+  });
+
+  assert.equal(store.acceptEvent(makeMessage('legacy-at-zero', 1), privacy).accepted, true);
+  revisions.conversations = 1;
+  const missing = store.acceptEvent(makeMessage('missing-revision', 2), privacy);
+  assert.equal(missing.status, 'privacy_revision_required');
+  assert.equal(missing.category, 'conversations');
+  assert.equal(store.acceptEvent(makeMessage('stale-revision', 3, { conversations: 0 }), privacy).status, 'privacy_revision_stale');
+  assert.equal(store.acceptEvent(makeMessage('current-revision', 4, { conversations: 1 }), privacy).accepted, true);
+  assert.equal(store.events().some(event => event.eventId === 'missing-revision'), false);
+});
+
+test('equal or newer revisions are accepted, newer revisions advance the persisted authority, and event ids stay idempotent', () => {
+  const revisions = { conversations: 2 };
+  const privacy = {
+    categoryRevision: category => revisions[category] || 0,
+    isMigrationRequired: () => false,
+    observeCategoryRevision: (category, revision) => { revisions[category] = Math.max(revisions[category] || 0, revision); },
+  };
+  const store = new WorkspaceStore();
+  const event = { eventId: 'revision-idempotency', origin: 'phone', sequence: 1, type: 'workspace.message', privacyRevisions: { conversations: 3 }, payload: {} };
+  const accepted = store.acceptEvent(event, privacy);
+  assert.equal(accepted.accepted, true);
+  assert.equal(revisions.conversations, 3);
+  const replay = store.acceptEvent({ ...event, sequence: 2 }, privacy);
+  assert.equal(replay.duplicateBy, 'event_id');
+  assert.equal(store.events().filter(item => item.eventId === event.eventId).length, 1);
+});
+
+test('privacy fencing maps conversation, task, attention, action and Mote events while exempting device state', () => {
+  const check = (categories, type, payload = {}) => {
+    const revisions = Object.fromEntries(categories.map(category => [category, 1]));
+    const store = new WorkspaceStore();
+    const result = store.acceptEvent({ type, origin: 'phone', sequence: 1, payload }, {
+      categoryRevision: key => revisions[key] || 0,
+      isMigrationRequired: () => false,
+    });
+    assert.equal(result.status, 'privacy_revision_required', `${type} should map to ${categories.join('+')}`);
+    assert.equal(result.category, categories[0]);
+  };
+  check(['conversations'], 'workspace.message');
+  check(['progress'], 'mote.exploration');
+  check(['tasks'], 'workspace.task.progress');
+  check(['conversations', 'tasks'], 'workspace.task.finished', { source: 'conversation' });
+  check(['tasks'], 'workspace.attention');
+  check(['conversations', 'tasks'], 'workspace.attention', { relatedSessionId: 'session-1' });
+  check(['tasks'], 'workspace.action_run');
+  check(['conversations', 'tasks'], 'workspace.action_run', { metadata: { messageId: 'message-1' } });
+
+  const store = new WorkspaceStore();
+  const state = store.acceptEvent({ type: 'device.state', origin: 'phone', sequence: 1, payload: { battery: 42 } }, {
+    categoryRevision: () => 1,
+    isMigrationRequired: () => false,
+  });
+  assert.equal(state.accepted, true);
+  assert.equal(store.acceptEvent({ type: 'workspace.sync_state', origin: 'phone', sequence: 2, payload: {} }).accepted, true);
+  assert.equal(store.acceptEvent({ type: 'workspace.policy', origin: 'phone', sequence: 3, payload: {} }).accepted, true);
+  assert.equal(store.acceptEvent({ type: 'autonomy.approval', origin: 'phone', sequence: 4, payload: {} }).accepted, true);
+});
+
+test('conversation-linked task events require both category revisions and respect task-only deletion', () => {
+  const store = new WorkspaceStore();
+  const privacy = {
+    categoryRevision: category => category === 'tasks' ? 1 : 0,
+    isMigrationRequired: () => false,
+  };
+  const oldOutbox = store.acceptEvent({
+    eventId: 'linked-task-old-task-revision', origin: 'phone', sequence: 1,
+    type: 'workspace.task.progress', payload: { source: 'conversation', metadata: { sessionId: 's1' } },
+    privacyRevisions: { conversations: 0 },
+  }, privacy);
+  assert.equal(oldOutbox.status, 'privacy_revision_required');
+  assert.equal(oldOutbox.category, 'tasks');
+
+  const currentOutbox = store.acceptEvent({
+    eventId: 'linked-task-current-both-revisions', origin: 'phone', sequence: 2,
+    type: 'workspace.task.progress', payload: { source: 'conversation', metadata: { sessionId: 's1' } },
+    privacyRevisions: { conversations: 0, tasks: 1 },
+  }, privacy);
+  assert.equal(currentOutbox.accepted, true);
+});
+
+test('unknown workspace mutations fail closed and unresolved legacy migration blocks scoped sync', () => {
+  const store = new WorkspaceStore();
+  const unknown = store.acceptEvent({ type: 'workspace.private_blob', origin: 'phone', sequence: 1, payload: {} });
+  assert.equal(unknown.status, 'unclassified_personal_event');
+  const migration = store.acceptEvent({
+    eventId: 'legacy-migration-pending', type: 'workspace.message', origin: 'phone', sequence: 2,
+    privacyRevisions: { conversations: 1 }, payload: {},
+  }, {
+    categoryRevision: () => 1,
+    isMigrationRequired: category => category === 'conversations',
+  });
+  assert.equal(migration.status, 'privacy_migration_required');
+  assert.equal(store.events().length, 0);
+});
+
+test('business ACK exposes stable privacy revision and classification rejection reasons', () => {
+  const { workspaceBusinessAck } = require('./workspace-core');
+  assert.deepEqual(workspaceBusinessAck({ status: 'privacy_revision_required', category: 'progress' }), {
+    businessStatus: 'rejected', reason: 'privacy_revision_required:progress',
+  });
+  assert.deepEqual(workspaceBusinessAck({ status: 'privacy_revision_stale', category: 'tasks' }), {
+    businessStatus: 'rejected', reason: 'privacy_revision_stale:tasks',
+  });
+  assert.deepEqual(workspaceBusinessAck({ status: 'privacy_migration_required', category: 'conversations' }), {
+    businessStatus: 'rejected', reason: 'privacy_migration_required:conversations',
+  });
+  assert.equal(workspaceBusinessAck({ status: 'unclassified_personal_event' }).reason, 'unclassified_personal_event');
+});
+
 test('replays duplicate exploration events for per-ledger recovery but skips non-idempotent duplicates', () => {
   assert.equal(shouldApplyWorkspaceEvent({ type: 'mote.exploration' }, { accepted: true, status: 'accepted' }), true);
   assert.equal(shouldApplyWorkspaceEvent({ type: 'mote.exploration' }, { accepted: false, status: 'duplicate', duplicateBy: 'event_id' }), true);

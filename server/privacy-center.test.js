@@ -287,6 +287,32 @@ test('partial privacy deletion retry reuses its original category revisions', as
   assert.equal(center.categoryRevision('conversations'), 1);
 });
 
+test('observed client privacy revisions only advance monotonically and survive restart', () => {
+  const { center, persistence } = makeCenter();
+  assert.equal(center.observeCategoryRevisions({ memories: 3, conversations: 2 }), true);
+  assert.equal(center.observeCategoryRevisions({ memories: 2, conversations: 2 }), false);
+  assert.equal(center.categoryRevision('memories'), 3);
+  assert.equal(center.categoryRevision('conversations'), 2);
+  assert.equal(persistence.value.categoryRevisions.memories, 3);
+  const restored = new PrivacyCenter({
+    categories: {
+      memories: { count: () => 0, export: () => [], clear: () => ({ deleted: 0 }) },
+      conversations: { count: () => 0, export: () => [], clear: () => ({ deleted: 0 }) },
+    }, persistence, now: () => 1_800_000_000_000,
+  });
+  assert.equal(restored.categoryRevision('memories'), 3);
+  assert.equal(restored.categoryRevision('conversations'), 2);
+  assert.throws(() => restored.observeCategoryRevision('memories', -1), /revision/i);
+  assert.throws(() => restored.observeCategoryRevision('unknown', 1), /unknown privacy category/i);
+
+  const save = persistence.save;
+  persistence.save = () => { throw new Error('disk unavailable'); };
+  assert.throws(() => center.observeCategoryRevisions({ memories: 4, conversations: 3 }), /disk unavailable/i);
+  assert.equal(center.categoryRevision('memories'), 3);
+  assert.equal(center.categoryRevision('conversations'), 2);
+  persistence.save = save;
+});
+
 test('unfinished deletion receipts survive completed-history compaction', async () => {
   let failOnce = true;
   const { center, persistence } = makeCenter({ categories: {

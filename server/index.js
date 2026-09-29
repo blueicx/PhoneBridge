@@ -436,6 +436,15 @@ const privacyCenter = new PrivacyCenter({
   },
 });
 
+function acceptWorkspaceEvent(event) {
+  return workspaceStore.acceptEvent(event, {
+    categoryRevision: category => privacyCenter.categoryRevision(category),
+    isMigrationRequired: category => privacyCenter.isMigrationRequired(category),
+    observeCategoryRevision: (category, revision) => privacyCenter.observeCategoryRevision(category, revision),
+    observeCategoryRevisions: revisions => privacyCenter.observeCategoryRevisions(revisions),
+  });
+}
+
 function privacyCenterProgressCount() {
   const reality = realityEngine.snapshot();
   const growth = moteGrowthStore.snapshot();
@@ -2196,9 +2205,9 @@ const handleHttpRequest = async (req, res) => {
             entityType: 'privacy',
             entityId: receipt.requestId,
             operation: 'upsert',
-            payload: { categories: receipt.categories, completedAt: receipt.completedAt },
+            payload: { categories: receipt.categories, categoryRevisions: receipt.categoryRevisions || {}, completedAt: receipt.completedAt },
           });
-          broadcast({ type: 'privacy.deleted', requestId: receipt.requestId, categories: receipt.categories, completedAt: receipt.completedAt });
+          broadcast({ type: 'privacy.deleted', requestId: receipt.requestId, categories: receipt.categories, categoryRevisions: receipt.categoryRevisions || {}, completedAt: receipt.completedAt });
           if (receipt.categories.includes('progress')) broadcastMoteState();
         }
         return sendJson(res, 200, { ok: true, receipt });
@@ -2508,9 +2517,9 @@ const handleHttpRequest = async (req, res) => {
     if (parsedUrl.pathname === '/api/workspace/events' && req.method === 'POST') {
       const payload = await readJson(req);
       const event = payload.event || payload;
-      const accepted = workspaceStore.acceptEvent(event && event.type
+      const accepted = acceptWorkspaceEvent(event && event.type
         ? event
-        : createEventEnvelope({ origin: String(payload.origin || 'phone'), sequence: Number(payload.sequence || 0), type: String(payload.type || 'workspace.event'), payload: payload.payload || payload }));
+        : createEventEnvelope({ origin: String(payload.origin || 'phone'), sequence: Number(payload.sequence || 0), type: String(payload.type || 'workspace.event'), payload: payload.payload || payload, privacyRevisions: payload.privacyRevisions }));
       let business = {
         ...workspaceBusinessAck(accepted),
         resultRevision: accepted.event.revision || workspaceStore.eventRevision,
@@ -2525,6 +2534,7 @@ const handleHttpRequest = async (req, res) => {
         ...accepted,
         businessAccepted: business.businessStatus === 'accepted' || business.businessStatus === 'duplicate',
         businessStatus: business.businessStatus,
+        reason: business.reason || null,
         businessReason: business.reason || null,
         resultRevision: business.resultRevision || accepted.event.revision || workspaceStore.eventRevision,
         businessResult: business,
@@ -2950,9 +2960,10 @@ wss.on('connection', (ws, req) => {
               type: String(json.eventType || 'workspace.event'),
               payload: json.payload || {},
               createdAt: json.createdAt || new Date().toISOString(),
+              privacyRevisions: json.privacyRevisions,
               ack: false,
             });
-            const accepted = workspaceStore.acceptEvent(event);
+            const accepted = acceptWorkspaceEvent(event);
             let business = {
               ...workspaceBusinessAck(accepted),
               resultRevision: accepted.event.revision || workspaceStore.eventRevision,
