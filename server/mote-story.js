@@ -213,6 +213,13 @@ class MoteStoryStore {
 
   snapshot() { return clone(this.state); }
 
+  reset() {
+    const deleted = this.state.completed.length + this.state.claimed.length + this.state.branchChoices.length;
+    this.state = initialState(this.now());
+    this._save();
+    return { deleted };
+  }
+
   list() {
     const completed = new Map(this.state.completed.map(item => [item.id, item]));
     const claimed = new Map(this.state.claimed.map(item => [item.id, item]));

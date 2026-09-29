@@ -14,6 +14,7 @@ class WorkspaceTimeline {
     this.now = now;
     this.persistence = persistence;
     this.headRevision = 0;
+    this.minimumSnapshotRevision = 0;
     this.events = [];
     this.eventsById = new Map();
     this.entityVersions = new Map(); // key: `${entityType}:${entityId}` => version (int)
@@ -60,6 +61,7 @@ class WorkspaceTimeline {
     if (!this.persistence) return;
     const saved = this.persistence.load('workspace-timeline', {});
     this.headRevision = Math.max(0, Number(saved.headRevision) || 0);
+    this.minimumSnapshotRevision = Math.max(0, Number(saved.minimumSnapshotRevision) || 0);
     this.entityVersions = new Map(Array.isArray(saved.entityVersions) ? saved.entityVersions : []);
     this.events = Array.isArray(saved.events) ? saved.events.slice(-this.retention) : [];
     this.eventsById = new Map(this.events.filter(event => event?.eventId).map(event => [event.eventId, event]));
@@ -70,6 +72,7 @@ class WorkspaceTimeline {
     if (!this.persistence) return;
     this.persistence.save('workspace-timeline', {
       headRevision: this.headRevision,
+      minimumSnapshotRevision: this.minimumSnapshotRevision,
       entityVersions: [...this.entityVersions.entries()],
       events: this.events,
     });
@@ -141,6 +144,41 @@ class WorkspaceTimeline {
       deleted: true,
       payload: { id: entityId, deleted: true, updatedAt: iso(this.now()) }
     });
+  }
+
+  purgePersonalData(entityTypes = [], entityIdsByType = {}) {
+    const types = new Set((Array.isArray(entityTypes) ? entityTypes : []).map(String));
+    if (!types.size) throw new Error('at least one entity type is required');
+    for (const type of types) {
+      const hasSelection = Object.prototype.hasOwnProperty.call(entityIdsByType || {}, type);
+      const selectedIds = new Set((hasSelection && Array.isArray(entityIdsByType[type]) ? entityIdsByType[type] : []).map(String));
+      if (hasSelection) {
+        this.events = this.events.filter(event => String(event.entityType || event.entity) !== type || !selectedIds.has(String(event.entityId || '')));
+      } else {
+        this.events = this.events.filter(event => String(event.entityType || event.entity) !== type);
+      }
+      const projection = type === 'task' ? this.projection.tasks
+        : type === 'chat' ? this.projection.messages
+          : type === 'attention' ? this.projection.attention : null;
+      if (projection) {
+        if (hasSelection) selectedIds.forEach(id => projection.delete(id));
+        else projection.clear();
+      }
+      if (type === 'mote') this.projection.mote = {
+        profileId: 'rimuru', name: '利姆鲁', active: true, level: 1, xp: 0, interactions: 0,
+        mood: 80, gaze: 'ambient', reminderStrength: 0.0, updatedAt: iso(this.now()),
+      };
+      for (const key of this.entityVersions.keys()) {
+        if (hasSelection ? selectedIds.has(key.slice(type.length + 1)) && key.startsWith(`${type}:`) : key.startsWith(`${type}:`)) {
+          this.entityVersions.delete(key);
+        }
+      }
+    }
+    this.eventsById = new Map(this.events.filter(event => event?.eventId).map(event => [event.eventId, event]));
+    this.headRevision += 1;
+    this.minimumSnapshotRevision = this.headRevision;
+    this._persist();
+    return this.headRevision;
   }
 
   _applyToProjection(event) {
@@ -234,7 +272,7 @@ class WorkspaceTimeline {
     const oldestRevision = oldestEvent ? oldestEvent.revision : 0;
 
     // If cursor is 0, or if events have been pruned beyond retention
-    const resetRequired = fromRevision > this.headRevision ||
+    const resetRequired = fromRevision > this.headRevision || fromRevision < this.minimumSnapshotRevision ||
       (this.events.length > 0 && fromRevision < oldestRevision - 1);
 
     if (resetRequired || fromRevision === 0) {

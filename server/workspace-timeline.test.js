@@ -193,3 +193,38 @@ test('WorkspaceTimeline restores events and projections through runtime persiste
   assert.equal(restored.query({}).events[0].eventId, 'persisted-event');
   assert.equal(restored.getSnapshot().tasks[0].id, 't1');
 });
+
+test('WorkspaceTimeline purges selected personal entities and forces stale clients to reset', () => {
+  const timeline = new WorkspaceTimeline();
+  timeline.recordEvent({ eventId: 'privacy-chat-old', entityType: 'chat', entityId: 'm1', operation: 'upsert', payload: { id: 'm1', text: 'private message' } });
+  timeline.recordEvent({ eventId: 'privacy-task-old', entityType: 'task', entityId: 't1', operation: 'upsert', payload: { id: 't1', title: 'keep task' } });
+  const purgeRevision = timeline.purgePersonalData(['chat']);
+
+  assert.equal(timeline.getSnapshot().messages.length, 0);
+  assert.equal(timeline.getSnapshot().tasks.length, 1);
+  assert.equal(JSON.stringify(timeline.query({})).includes('private message'), false);
+  const stale = timeline.sync({ cursor: purgeRevision - 1 });
+  assert.equal(stale.mode, 'snapshot');
+  assert.equal(stale.resetRequired, true);
+});
+
+test('WorkspaceTimeline privacy purge can remove only conversation-linked task entities', () => {
+  const timeline = new WorkspaceTimeline({ now: () => 10_000 });
+  timeline.recordEvent({ eventId: 'chat-a', entityType: 'chat', entityId: 'chat-a', payload: { text: 'private' } });
+  timeline.recordEvent({ eventId: 'task-chat', entityType: 'task', entityId: 'task-chat', payload: { id: 'task-chat', title: 'chat task' } });
+  timeline.recordEvent({ eventId: 'task-other', entityType: 'task', entityId: 'task-other', payload: { id: 'task-other', title: 'automation task' } });
+  timeline.recordEvent({ eventId: 'attention-chat', entityType: 'attention', entityId: 'attention-chat', payload: { id: 'attention-chat', title: 'chat approval' } });
+  timeline.recordEvent({ eventId: 'attention-other', entityType: 'attention', entityId: 'attention-other', payload: { id: 'attention-other', title: 'other approval' } });
+
+  timeline.purgePersonalData(['chat', 'task', 'attention'], {
+    task: ['task-chat'],
+    attention: ['attention-chat'],
+  });
+
+  const snapshot = timeline.getSnapshot();
+  assert.deepEqual(snapshot.tasks.map((task) => task.id), ['task-other']);
+  assert.deepEqual(snapshot.messages, []);
+  assert.deepEqual(snapshot.attention.map((item) => item.id), ['attention-other']);
+  const replay = timeline.query({ cursor: 0, limit: 100 });
+  assert.equal(replay.events.some((event) => ['task-chat', 'attention-chat', 'chat-a'].includes(event.entityId)), false);
+});

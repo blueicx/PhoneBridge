@@ -91,6 +91,7 @@ import java.time.LocalDate
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
 import kotlin.random.Random
@@ -102,6 +103,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         private const val REQUEST_CAMERA_PERMISSION = 71
         private const val REQUEST_LOCATION_PERMISSION = 72
         private const val REQUEST_AUDIO_PERMISSION = 73
+        private const val REQUEST_PRIVACY_EXPORT_FILE = 74
         private const val TYPE_FRAME = 1
         private const val TYPE_AUDIO = 2
         private const val TYPE_SPEAK = 5
@@ -369,6 +371,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var focusBackCallback: OnBackPressedCallback
     private var pendingAutoCommand: String? = null
     private var pendingDeepLink: String? = null
+    private var pendingPrivacyArchive: String? = null
+    private val processedPrivacyDeletionIds = linkedSetOf<String>()
+    private val pendingPrivacyDeletionCallbacks = linkedMapOf<String, MutableList<() -> Unit>>()
     private var streamingChatId = ""
     private val streamingText = StringBuilder()
     private var activeChatRequestId = ""
@@ -493,6 +498,37 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         pendingAutoCare?.let { kind -> interact(kind) }
         pendingAutoCare = null
         rootLayout.post { enterAdaptiveImmersiveMode() }
+    }
+
+    @Deprecated("Deprecated in Android, retained for ACTION_CREATE_DOCUMENT compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_PRIVACY_EXPORT_FILE) return
+        val archive = pendingPrivacyArchive
+        pendingPrivacyArchive = null
+        val uri = data?.data
+        if (resultCode != RESULT_OK || archive.isNullOrBlank() || uri == null) {
+            Toast.makeText(this, "已取消导出；未在应用中保留档案", Toast.LENGTH_SHORT).show()
+            return
+        }
+        networkExecutor.execute {
+            val result = runCatching {
+                val bytes = archive.toByteArray(Charsets.UTF_8)
+                try {
+                    contentResolver.openOutputStream(uri)?.use { output -> output.write(bytes) }
+                        ?: error("无法写入所选位置")
+                } finally {
+                    bytes.fill(0)
+                }
+            }
+            runOnUiThread {
+                Toast.makeText(
+                    this,
+                    if (result.isSuccess) "加密档案已保存；请妥善保管口令" else "保存失败：${result.exceptionOrNull()?.message ?: "未知错误"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     private fun bindViews() {
@@ -3042,9 +3078,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         sendJson(JSONObject().put("type", "hello").put("pet", petJson()))
         requestSnapshot()
         refreshStageHabitat()
-        flushWorkspaceOutbox()
-        scheduleOutboxSync()
-        drainChatOutbox()
+        reconcilePrivacyDeletionHistory {
+            flushWorkspaceOutbox()
+            drainChatOutbox()
+        }
         pendingAutoCommand?.let { command ->
             sendJson(JSONObject().put("type", "command").put("text", command))
             runOnUiThread { logAdapter.add("info", "自动指令：$command") }
@@ -4162,9 +4199,408 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     refresh()
                 }
             }
-            .setNeutralButton("清空") { _, _ -> MoteMemory.clear(this) }
+            .setNeutralButton("隐私与数据") { _, _ -> showPrivacyCenter() }
             .setNegativeButton("关闭", null)
             .show()
+    }
+
+    private fun showPrivacyCenter() {
+        val categories = PrivacyDataPolicy.categories
+        val labels = mapOf(
+            "memories" to "长期记忆",
+            "conversations" to "聊天、会话与交接内容",
+            "tasks" to "任务与审计",
+            "progress" to "Mote 成长与探索"
+        )
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        val overview = TextView(this).apply {
+            text = "正在读取节点数据清单……"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+        }
+        container.addView(overview, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+        val selections = linkedMapOf<String, android.widget.CheckBox>()
+        categories.forEach { category ->
+            val check = android.widget.CheckBox(this).apply {
+                text = labels[category] ?: category
+                isChecked = true
+                setTextColor(Color.WHITE)
+            }
+            selections[category] = check
+            container.addView(check)
+        }
+        val passphrase = EditText(this).apply {
+            hint = "导出口令（至少 12 位）"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        val passphraseAgain = EditText(this).apply {
+            hint = "再次输入导出口令"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        container.addView(passphrase, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        container.addView(passphraseAgain, LinearLayout.LayoutParams(-1, -2))
+        val scroll = android.widget.ScrollView(this).apply { addView(container) }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("隐私与数据")
+            .setView(scroll)
+            .setPositiveButton("导出加密档案", null)
+            .setNeutralButton("删除所选数据", null)
+            .setNegativeButton("关闭", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val selected = PrivacyDataPolicy.normalizeCategories(selections.filterValues { it.isChecked }.keys.toList())
+                val password = passphrase.text.toString()
+                val repeated = passphraseAgain.text.toString()
+                if (selected == null) {
+                    Toast.makeText(this, "至少选择一个数据类别", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                if (!PrivacyDataPolicy.isValidPassphrase(password, repeated)) {
+                    Toast.makeText(this, "导出口令需为 12–1024 位且两次一致", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                val payload = JSONObject()
+                    .put("categories", JSONArray(selected))
+                    .put("passphrase", password)
+                passphrase.text?.clear()
+                passphraseAgain.text?.clear()
+                overview.text = "正在生成本机加密档案……"
+                workspaceRequest(
+                    "/api/privacy/export",
+                    "POST",
+                    payload,
+                    onSuccess = { response ->
+                        val encrypted = response.optJSONObject("archive")?.toString().orEmpty()
+                        if (encrypted.isBlank()) {
+                            overview.text = "节点未返回有效加密档案。"
+                            return@workspaceRequest
+                        }
+                        pendingPrivacyArchive = encrypted
+                        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "application/json"
+                            putExtra(Intent.EXTRA_TITLE, "phonebridge-private-export.pbenc.json")
+                        }
+                        runCatching { startActivityForResult(intent, REQUEST_PRIVACY_EXPORT_FILE) }
+                            .onFailure {
+                                pendingPrivacyArchive = null
+                                Toast.makeText(this, "无法打开系统文件选择器", Toast.LENGTH_LONG).show()
+                            }
+                    },
+                    onError = { error ->
+                        overview.text = "加密导出失败：$error"
+                        Toast.makeText(this, "加密导出失败", Toast.LENGTH_LONG).show()
+                    }
+                )
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                val selected = PrivacyDataPolicy.normalizeCategories(selections.filterValues { it.isChecked }.keys.toList())
+                if (selected == null) {
+                    Toast.makeText(this, "至少选择一个数据类别", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                dialog.dismiss()
+                showPrivacyDeleteConfirmation(selected, labels)
+            }
+        }
+        dialog.show()
+        workspaceRequest("/api/privacy/overview", onSuccess = { response ->
+            val counts = response.optJSONObject("categories")
+            overview.text = buildString {
+                appendLine("节点数据概览")
+                categories.forEach { category ->
+                    val item = counts?.optJSONObject(category)
+                    appendLine("${labels[category]}：${item?.optInt("count", 0) ?: 0}")
+                }
+                append("排除：访问令牌、Provider 密钥、原始画面、精确位置与连续轨迹。")
+            }
+        }, onError = { error -> overview.text = "节点概览暂不可用：$error\n仍可在连接恢复后重试。" })
+    }
+
+    private fun showPrivacyDeleteConfirmation(selected: List<String>, labels: Map<String, String>) {
+        var activeRequestId: String? = null
+        val confirmation = EditText(this).apply {
+            hint = PrivacyDataPolicy.DELETE_CONFIRMATION
+            setSingleLine(true)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+        val description = TextView(this).apply {
+            text = "将永久删除：${selected.joinToString("、") { labels[it] ?: it }}。\n请输入完整确认语句：${PrivacyDataPolicy.DELETE_CONFIRMATION}"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), 0)
+            addView(description)
+            addView(confirmation, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("确认永久删除")
+            .setView(content)
+            .setPositiveButton("永久删除", null)
+            .setNegativeButton("取消", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val phrase = confirmation.text.toString()
+                val requestId = activeRequestId ?: "phone-${UUID.randomUUID()}".also { activeRequestId = it }
+                if (!PrivacyDataPolicy.isValidDeleteConfirmation(phrase, requestId)) {
+                    Toast.makeText(this, "确认语句不匹配，数据未删除", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                val payload = JSONObject()
+                    .put("requestId", requestId)
+                    .put("categories", JSONArray(selected))
+                    .put("confirmation", phrase)
+                confirmation.text?.clear()
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+                workspaceRequest(
+                    "/api/privacy/delete",
+                    "POST",
+                    payload,
+                    onSuccess = { response ->
+                        val receipt = response.optJSONObject("receipt")
+                        if (receipt?.optString("status") != "completed") {
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                            Toast.makeText(this, "删除未完成；可用同一请求重试", Toast.LENGTH_LONG).show()
+                            return@workspaceRequest
+                        }
+                        activeRequestId = null
+                        applyPrivacyDeletion(selected, requestId)
+                        dialog.dismiss()
+                        Toast.makeText(this, "所选数据已删除，并清理本机缓存", Toast.LENGTH_LONG).show()
+                    },
+                    onError = { error ->
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                        Toast.makeText(this, "删除失败：$error", Toast.LENGTH_LONG).show()
+                    }
+                )
+            }
+        }
+        dialog.show()
+    }
+
+    private fun savedPrivacyDeletionIds(): Set<String> = getSharedPreferences("privacy_deletions", Context.MODE_PRIVATE)
+        .getStringSet("applied_request_ids", emptySet())?.toSet().orEmpty()
+
+    private fun markPrivacyDeletionApplied(requestId: String) {
+        val preferences = getSharedPreferences("privacy_deletions", Context.MODE_PRIVATE)
+        val ids = LinkedHashSet(preferences.getStringSet("applied_request_ids", emptySet()).orEmpty())
+        ids.add(requestId)
+        while (ids.size > 100) ids.remove(ids.first())
+        preferences.edit().putStringSet("applied_request_ids", ids).apply()
+    }
+
+    private fun reconcilePrivacyDeletionHistory(onComplete: () -> Unit) {
+        workspaceRequest("/api/privacy/overview", onSuccess = { response ->
+            val receipts = mutableListOf<JSONObject>()
+            response.optJSONArray("recentDeletions")?.let { recent ->
+                for (index in 0 until recent.length()) recent.optJSONObject(index)?.let(receipts::add)
+            }
+            if (receipts.isEmpty()) response.optJSONObject("latestDeletion")?.let(receipts::add)
+            val completed = receipts.filter { it.optString("status") == "completed" && it.optString("requestId").isNotBlank() }
+            val pendingIds = PrivacyDataPolicy.pendingDeletionIds(completed.map { it.optString("requestId") }, savedPrivacyDeletionIds())
+            val byId = completed.associateBy { it.optString("requestId") }
+            var index = 0
+            lateinit var applyNext: () -> Unit
+            applyNext = {
+                if (index >= pendingIds.size) {
+                    onComplete()
+                } else {
+                    val receipt = byId[pendingIds[index++]]
+                    val raw = receipt?.optJSONArray("categories") ?: JSONArray()
+                    val categories = buildList {
+                        for (categoryIndex in 0 until raw.length()) raw.optString(categoryIndex).takeIf { it.isNotBlank() }?.let(::add)
+                    }
+                    val normalized = PrivacyDataPolicy.normalizeCategories(categories)
+                    if (normalized == null) applyNext() else applyPrivacyDeletion(normalized, receipt?.optString("requestId"), applyNext)
+                }
+            }
+            applyNext()
+        }, onError = { onComplete() })
+    }
+
+    private fun completePrivacyDeletion(requestId: String?, succeeded: Boolean, fallback: (() -> Unit)? = null) {
+        val finish = {
+            val callbacks = requestId?.let { id ->
+                synchronized(this@MainActivity) {
+                    processedPrivacyDeletionIds.remove(id)
+                    if (succeeded) markPrivacyDeletionApplied(id)
+                    pendingPrivacyDeletionCallbacks.remove(id).orEmpty().toList()
+                }
+            } ?: listOfNotNull(fallback)
+            if (succeeded) callbacks.forEach { callback -> callback() }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) finish() else runOnUiThread(finish)
+    }
+
+    @Synchronized
+    private fun applyPrivacyDeletion(rawCategories: List<String>, requestId: String? = null, onComplete: (() -> Unit)? = null) {
+        val categories = PrivacyDataPolicy.normalizeCategories(rawCategories) ?: return
+        val linkedConversationTaskIds = if ("conversations" in categories) {
+            (workspaceTaskMirror.values
+                .filter { task ->
+                    task.optString("source") == "conversation" || task.optString("relatedSessionId").isNotBlank() ||
+                        task.optJSONObject("metadata")?.let { it.has("sessionId") || it.has("messageId") } == true
+                }
+                .map { it.optString("id") } + timelineProjection.tasks.value.values
+                .filter { task -> task.source == "conversation" || !task.relatedSessionId.isNullOrBlank() }
+                .map { it.id })
+                .filterNot { it.isNullOrBlank() }
+                .mapNotNull { it }
+                .distinct()
+        } else emptyList()
+        val deletionId = requestId?.takeIf { it.isNotBlank() }
+        if (deletionId != null) {
+            if (deletionId in savedPrivacyDeletionIds()) {
+                onComplete?.let { callback -> runOnUiThread { callback() } }
+                return
+            }
+            if (!processedPrivacyDeletionIds.add(deletionId)) {
+                onComplete?.let { pendingPrivacyDeletionCallbacks.getOrPut(deletionId) { mutableListOf() }.add(it) }
+                return
+            }
+            pendingPrivacyDeletionCallbacks[deletionId] = mutableListOf<() -> Unit>().apply { onComplete?.let(::add) }
+        }
+        appScope.launch(Dispatchers.IO) {
+            val localPurge = runCatching {
+                workspaceRepository.purgePrivacyCategories(categories, linkedConversationTaskIds)
+            }
+            withContext(Dispatchers.Main) {
+                if (localPurge.isFailure) {
+                    Toast.makeText(this@MainActivity, "节点已删除；本机镜像清理失败，请重启后重试同步", Toast.LENGTH_LONG).show()
+                    completePrivacyDeletion(deletionId, succeeded = false, fallback = onComplete)
+                    return@withContext
+                }
+                if ("memories" in categories) MoteMemory.clear(this@MainActivity)
+                if ("conversations" in categories) {
+                    ChatOutbox.replace(this@MainActivity, emptyList())
+                    val oldHandoff = MoteHandoff.load(this@MainActivity)
+                    MoteHandoff.replace(
+                        this@MainActivity,
+                        HandoffState(revision = oldHandoff.revision + 1L, updatedAtMs = System.currentTimeMillis(), updatedBy = "privacy-delete")
+                    )
+                    activeChatRequestId.takeIf { it.isNotBlank() }?.let { cancelledChatRequestIds.add(it) }
+                    activeChatRequestId = ""
+                    pendingChatText = ""
+                    lastFailedChatText = ""
+                    lastSpokenReply = ""
+                    streamingChatId = ""
+                    streamingText.setLength(0)
+                    offlineChatFuture?.cancel(true)
+                    offlineChatFuture = null
+                    speechText.text = ""
+                    focusSpeechStack.removeAllViews()
+                }
+                if ("progress" in categories) {
+                    getSharedPreferences("mote_roster", Context.MODE_PRIVATE).edit().clear().apply()
+                    getSharedPreferences("mote_pet", Context.MODE_PRIVATE).edit().clear().apply()
+                    moteRosterJson = JSONArray()
+                    moteStateJson = JSONObject()
+                    moteStoryJson = JSONArray()
+                    moteRelationship = MoteRelationshipSummary()
+                    realityExplorationCoordinator.clearForPrivacyDeletion()
+                    realityRegion = null
+                    realityLensView.setCoarseRegion(null)
+                    realityLensView.setNearbyEvents(emptyList())
+                    pet = PetState()
+                    savePet()
+                }
+                if ("tasks" in categories) {
+                    activeTasks.clear()
+                    taskAdapter.submit(emptyList())
+                    workspaceTaskMirror.clear()
+                    attentionMirror.clear()
+                    actionRunMirror.clear()
+                    cockpitAttentionItems.clear()
+                } else if ("conversations" in categories) {
+                    val removedTaskIds = linkedConversationTaskIds.toSet()
+                    removedTaskIds.forEach {
+                        workspaceTaskMirror.remove(it)
+                        activeTasks.remove(it)
+                    }
+                    attentionMirror.entries.removeAll { (_, item) ->
+                        item.optString("relatedSessionId").isNotBlank() || removedTaskIds.contains(item.optString("relatedTaskId"))
+                    }
+                    actionRunMirror.entries.removeAll { (_, item) ->
+                        item.optString("sessionId").isNotBlank() || removedTaskIds.contains(item.optString("taskId"))
+                    }
+                    cockpitAttentionItems.entries.removeAll { (_, item) ->
+                        item.relatedSessionId.isNotBlank() || removedTaskIds.contains(item.relatedTaskId)
+                    }
+                    taskAdapter.submit(activeTasks.values.toList())
+                }
+                if ("tasks" in categories && "progress" !in categories) {
+                    pet = pet.copy(successfulTasks = 0, failedTasks = 0, activeTasks = 0)
+                    savePet()
+                }
+                if ("conversations" in categories) chatAdapter.load(emptyList())
+                logAdapter.submit(emptyList())
+
+                val previous = companionSessionRepository.snapshot.value
+                val filtered = TimelineSnapshot(
+                    revision = previous.revision,
+                    tasks = when {
+                        "tasks" in categories -> emptyList()
+                        "conversations" in categories -> previous.tasks.filterNot {
+                            it.source == "conversation" || !it.relatedSessionId.isNullOrBlank() || it.id in linkedConversationTaskIds
+                        }
+                        else -> previous.tasks
+                    },
+                    messages = if ("conversations" in categories) emptyList() else previous.messages,
+                    attention = when {
+                        "tasks" in categories -> emptyList()
+                        "conversations" in categories -> previous.attention.filterNot {
+                            !it.relatedSessionId.isNullOrBlank() || it.relatedTaskId in linkedConversationTaskIds
+                        }
+                        else -> previous.attention
+                    },
+                    mote = if ("progress" in categories) null else previous.mote,
+                    health = previous.health,
+                    autonomy = previous.autonomy
+                )
+                timelineProjection.applySnapshot(filtered)
+                companionSummary = companionSummary.copy(
+                    totalTasks = if ("tasks" in categories) 0 else companionSummary.totalTasks,
+                    runningTasks = if ("tasks" in categories) 0 else companionSummary.runningTasks,
+                    needsConfirmation = if ("tasks" in categories) 0 else companionSummary.needsConfirmation,
+                    activeTaskId = if ("tasks" in categories) null else companionSummary.activeTaskId,
+                    openAttention = if ("tasks" in categories) 0 else companionSummary.openAttention,
+                    memoryCount = if ("memories" in categories) 0 else companionSummary.memoryCount,
+                    moteLevel = if ("progress" in categories) 1 else companionSummary.moteLevel,
+                    moteXp = if ("progress" in categories) 0 else companionSummary.moteXp,
+                    growthLevel = if ("progress" in categories) 1 else companionSummary.growthLevel,
+                    growthXp = if ("progress" in categories) 0 else companionSummary.growthXp,
+                    growthDailyDate = if ("progress" in categories) "" else companionSummary.growthDailyDate,
+                    growthDailyClues = if ("progress" in categories) emptyMap() else companionSummary.growthDailyClues,
+                    growthDailyCompleted = if ("progress" in categories) false else companionSummary.growthDailyCompleted,
+                    growthActiveBoostId = if ("progress" in categories) null else companionSummary.growthActiveBoostId,
+                    realityRegion = if ("progress" in categories) "" else companionSummary.realityRegion,
+                    realityEvents = if ("progress" in categories) 0 else companionSummary.realityEvents,
+                    realityLevel = if ("progress" in categories) 1 else companionSummary.realityLevel,
+                    realityXp = if ("progress" in categories) 0 else companionSummary.realityXp,
+                    inventoryCount = if ("progress" in categories) 0 else companionSummary.inventoryCount,
+                    moteId = if ("progress" in categories) "rimuru" else companionSummary.moteId,
+                    moteName = if ("progress" in categories) "利姆鲁" else companionSummary.moteName,
+                    gaze = if ("progress" in categories) "ambient" else companionSummary.gaze,
+                    reminderStrength = if ("progress" in categories) 0f else companionSummary.reminderStrength
+                )
+                companionSessionRepository.applySummary(companionSummary)
+                companionSessionRepository.applyTimelineSnapshot(filtered, filtered.revision)
+                renderCompanionSessionSnapshot()
+                renderCockpitSummary()
+                renderPet()
+                MoteWidget.refresh(this@MainActivity)
+                completePrivacyDeletion(deletionId, succeeded = true, fallback = onComplete)
+            }
+        }
     }
 
     private fun showMemoryActions(item: MemoryItem, refresh: () -> Unit) {
@@ -4490,6 +4926,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         runCatching {
             val json = JSONObject(text)
             when (json.optString("type")) {
+                "privacy.deleted" -> {
+                    val raw = json.optJSONArray("categories") ?: return@runCatching
+                    val categories = buildList {
+                        for (index in 0 until raw.length()) raw.optString(index).takeIf { it.isNotBlank() }?.let(::add)
+                    }
+                    runOnUiThread { applyPrivacyDeletion(categories, json.optString("requestId")) }
+                }
                 "log" -> {
                     val item = BridgeJson.log(json)
                     runOnUiThread { logAdapter.add(item.level.ifBlank { "info" }, item.message) }

@@ -144,17 +144,32 @@ abstract class WorkspaceDao {
     @Query("SELECT * FROM workspace_sessions ORDER BY updatedAt DESC")
     abstract suspend fun sessions(): List<WorkspaceSessionEntity>
 
+    @Query("DELETE FROM workspace_sessions")
+    abstract suspend fun clearSessions()
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun saveSession(session: WorkspaceSessionEntity)
 
     @Query("SELECT * FROM workspace_messages WHERE sessionId = :sessionId ORDER BY createdAt ASC")
     abstract suspend fun messages(sessionId: String): List<WorkspaceMessageEntity>
 
+    @Query("DELETE FROM workspace_messages")
+    abstract suspend fun clearMessages()
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun saveMessage(message: WorkspaceMessageEntity)
 
     @Query("SELECT * FROM workspace_tasks ORDER BY updatedAt DESC")
     abstract suspend fun tasks(): List<WorkspaceTaskEntity>
+
+    @Query("DELETE FROM workspace_tasks")
+    abstract suspend fun clearTasks()
+
+    @Query("DELETE FROM workspace_tasks WHERE source = 'conversation'")
+    abstract suspend fun clearConversationTasks()
+
+    @Query("DELETE FROM workspace_tasks WHERE id = :taskId")
+    abstract suspend fun clearTaskById(taskId: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun saveTask(task: WorkspaceTaskEntity)
@@ -170,6 +185,12 @@ abstract class WorkspaceDao {
 
     @Query("DELETE FROM workspace_attention")
     abstract suspend fun clearAttention()
+
+    @Query("DELETE FROM workspace_attention WHERE relatedSessionId IS NOT NULL")
+    abstract suspend fun clearConversationAttention()
+
+    @Query("DELETE FROM workspace_attention WHERE relatedTaskId = :taskId")
+    abstract suspend fun clearAttentionForTask(taskId: String)
 
     @Query("UPDATE workspace_attention SET status = :status, updatedAt = :updatedAt, snoozedUntil = :snoozedUntil WHERE id = :id")
     abstract suspend fun updateAttentionState(id: String, status: String, updatedAt: Long, snoozedUntil: Long?)
@@ -221,6 +242,12 @@ abstract class WorkspaceDao {
     @Query("DELETE FROM workspace_action_runs")
     abstract suspend fun clearActionRuns()
 
+    @Query("DELETE FROM workspace_action_runs WHERE sessionId IS NOT NULL")
+    abstract suspend fun clearConversationActionRuns()
+
+    @Query("DELETE FROM workspace_action_runs WHERE taskId = :taskId")
+    abstract suspend fun clearActionRunsForTask(taskId: String)
+
     @Query("UPDATE workspace_action_runs SET state = :state, approval = :approval, startedAt = :startedAt, endedAt = :endedAt, resultRef = :resultRef, error = :error WHERE id = :id")
     abstract suspend fun updateActionRunState(
         id: String,
@@ -243,6 +270,53 @@ abstract class WorkspaceDao {
 
     @Query("SELECT * FROM workspace_outbox WHERE eventId = :eventId LIMIT 1")
     abstract suspend fun outbox(eventId: String): WorkspaceOutboxEntity?
+
+    @Query("DELETE FROM workspace_outbox WHERE type IN (:types)")
+    abstract suspend fun clearOutboxTypes(types: List<String>)
+
+    @Query("DELETE FROM workspace_outbox WHERE type = 'workspace.message' OR (type IN ('workspace.task.progress', 'workspace.task.finished', 'workspace.attention', 'workspace.action_run') AND (payload LIKE '%sessionId%' OR payload LIKE '%messageId%' OR payload LIKE '%\"source\":\"conversation\"%'))")
+    abstract suspend fun clearConversationOutbox()
+
+    @Query("DELETE FROM workspace_outbox WHERE type IN ('workspace.task.progress', 'workspace.task.finished', 'workspace.attention', 'workspace.action_run') AND instr(payload, :taskId) > 0")
+    abstract suspend fun clearOutboxForTask(taskId: String)
+
+    @Transaction
+    open suspend fun purgeConversationData(linkedTaskIds: List<String>) {
+        clearMessages()
+        clearSessions()
+        clearConversationTasks()
+        clearConversationAttention()
+        clearConversationActionRuns()
+        clearConversationOutbox()
+        linkedTaskIds.filter(String::isNotBlank).distinct().forEach {
+            clearTaskById(it)
+            clearAttentionForTask(it)
+            clearActionRunsForTask(it)
+            clearOutboxForTask(it)
+        }
+    }
+
+    @Transaction
+    open suspend fun purgeTaskData() {
+        clearTasks()
+        clearAttention()
+        clearActionRuns()
+        clearOutboxTypes(listOf(WorkspaceEventTypes.TASK_PROGRESS, WorkspaceEventTypes.TASK_FINISHED, WorkspaceEventTypes.ATTENTION, WorkspaceEventTypes.ACTION_RUN))
+    }
+
+    @Transaction
+    open suspend fun purgeProgressData() {
+        clearOutboxTypes(
+            listOf(
+                WorkspaceEventTypes.MOTE_ROSTER,
+                WorkspaceEventTypes.MOTE_PROFILE,
+                WorkspaceEventTypes.MOTE_EXPLORATION,
+                WorkspaceEventTypes.MOTE_RELATIONSHIP,
+                WorkspaceEventTypes.MOTE_QUEST,
+                WorkspaceEventTypes.MOTE_STORY
+            )
+        )
+    }
 
     @Query("SELECT eventId FROM workspace_outbox WHERE ack = 0 AND leaseUntil IS NOT NULL AND leaseUntil <= :now")
     abstract suspend fun expiredOutbox(now: Long): List<String>

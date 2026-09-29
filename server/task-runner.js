@@ -125,6 +125,28 @@ class TaskRunner extends EventEmitter {
     return new Promise(resolve => this.idleWaiters.push(resolve));
   }
 
+  hasPendingWork() { return this._hasRunnableWork(); }
+
+  forget(ids) {
+    const unique = [...new Set((Array.isArray(ids) ? ids : [ids]).map(value => String(value || '').trim()).filter(Boolean))];
+    for (const id of unique) {
+      const record = this.records.get(id);
+      if (!record) continue;
+      if (this.active.has(id) || !['succeeded', 'failed', 'cancelled'].includes(record.state)) {
+        throw new Error(`cannot forget task ${id} while it is active`);
+      }
+    }
+    let forgotten = 0;
+    for (const id of unique) if (this.records.delete(id)) forgotten += 1;
+    return forgotten;
+  }
+
+  forgetAllTerminal() {
+    return this.forget([...this.records.values()]
+      .filter(record => ['succeeded', 'failed', 'cancelled'].includes(record.state) && !this.active.has(record.id))
+      .map(record => record.id));
+  }
+
   _hasRunnableWork() {
     return this.active.size > 0 || this.queue.length > 0 || this.scheduled > 0;
   }

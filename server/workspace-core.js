@@ -69,7 +69,24 @@ function workspaceBusinessAck(acceptance) {
   if (acceptance?.accepted === true) return { businessStatus: 'accepted', reason: acceptance.status || 'accepted' };
   if (acceptance?.duplicateBy === 'event_id') return { businessStatus: 'duplicate', reason: 'event_already_processed' };
   if (acceptance?.duplicateBy === 'origin_sequence') return { businessStatus: 'rejected', reason: 'origin_sequence_conflict' };
+  if (acceptance?.duplicateBy === 'privacy_fence') return { businessStatus: 'rejected', reason: `privacy_data_deleted:${acceptance.category}` };
   return { businessStatus: 'rejected', reason: acceptance?.status || 'event_rejected' };
+}
+
+function privacyFenceCategory(event, deletedConversationTaskIds = new Set()) {
+  const type = String(event?.type || '').toLowerCase();
+  const payload = event?.payload?.task || event?.payload || {};
+  const metadata = payload?.metadata || {};
+  const conversationLinked = String(payload?.source || '').toLowerCase() === 'conversation' ||
+    Boolean(payload?.sessionId || payload?.relatedSessionId || payload?.messageId || metadata.sessionId || metadata.messageId);
+  const deletedConversationTask = [payload?.id, payload?.taskId, payload?.relatedTaskId]
+    .some(value => value != null && deletedConversationTaskIds.has(String(value)));
+  if (type === 'workspace.message') return 'conversations';
+  if (type.startsWith('mote.')) return 'progress';
+  if (deletedConversationTask && (type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run'))) return 'conversations';
+  if (conversationLinked && (type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run'))) return 'conversations';
+  if (type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run')) return 'tasks';
+  return null;
 }
 
 function clone(value) {
@@ -165,6 +182,9 @@ class WorkspaceStore {
     this.actionRuns = new Map();
     this.eventLog = [];
     this.eventKeys = new Set();
+    this.privacyFences = {};
+    this.privacyDeletedTaskIds = new Set();
+    this.minimumEventRevision = 0;
     this.audit = [];
     this.taskAudit = [];
     this.taskActionKeys = new Map();
@@ -198,6 +218,10 @@ class WorkspaceStore {
       for (const approval of data.approvals || []) this.approvals.set(approval.id, approval);
       this.eventLog = data.eventLog || [];
       this.eventKeys = new Set(data.eventKeys || []);
+      this.privacyFences = Object.fromEntries(Object.entries(data.privacyFences || {})
+        .map(([category, value]) => [category, Math.max(0, Number(value) || 0)]));
+      this.privacyDeletedTaskIds = new Set((data.privacyDeletedTaskIds || []).map(String));
+      this.minimumEventRevision = Math.max(0, Number(data.minimumEventRevision) || 0);
       for (const event of this.eventLog) {
         this.eventKeys.add(`${event.origin}:${event.sequence}`);
         if (event.eventId) this.eventKeys.add(`event:${event.eventId}`);
@@ -231,6 +255,9 @@ class WorkspaceStore {
       taskActionKeys: [...this.taskActionKeys.entries()],
       eventLog: this.eventLog,
       eventKeys: [...this.eventKeys],
+      privacyFences: this.privacyFences,
+      privacyDeletedTaskIds: [...this.privacyDeletedTaskIds],
+      minimumEventRevision: this.minimumEventRevision,
       sequence: this.sequence,
       eventRevision: this.eventRevision,
       approvals: [...this.approvals.values()],
@@ -559,6 +586,92 @@ class WorkspaceStore {
     return [...this.sessions.values()].map(clone).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
+  clearConversationData(knownLinkedTaskIds = []) {
+    const sessionIds = new Set(this.sessions.keys());
+    const deleted = { sessions: this.sessions.size, messages: 0, linkedTasks: 0 };
+    for (const session of this.sessions.values()) deleted.messages += Array.isArray(session.messages) ? session.messages.length : 0;
+    this.sessions.clear();
+    const linkedTaskIds = new Set((Array.isArray(knownLinkedTaskIds) ? knownLinkedTaskIds : []).map(String));
+    for (const [taskId, task] of this.tasks) {
+      if (linkedTaskIds.has(String(taskId)) || sessionIds.has(String(task.metadata?.sessionId || '')) || String(task.metadata?.messageId || '') !== '') {
+        linkedTaskIds.add(taskId);
+        if (this.tasks.delete(taskId)) deleted.linkedTasks += 1;
+      }
+    }
+    this.privacyDeletedTaskIds = new Set([...this.privacyDeletedTaskIds, ...linkedTaskIds].slice(-10_000));
+    this.taskAudit = this.taskAudit.filter(entry => !linkedTaskIds.has(String(entry.taskId || '')));
+    this.audit = this.audit.filter(entry => !linkedTaskIds.has(String(entry.taskId || '')) && !sessionIds.has(String(entry.sessionId || '')));
+    this.actionRuns.forEach((run, runId) => { if (linkedTaskIds.has(String(run.taskId || ''))) this.actionRuns.delete(runId); });
+    this.attention.forEach((item, attentionId) => { if (linkedTaskIds.has(String(item.relatedTaskId || ''))) this.attention.delete(attentionId); });
+    for (const key of this.taskActionKeys.keys()) {
+      if ([...linkedTaskIds].some(taskId => key.startsWith(`${taskId}:`))) this.taskActionKeys.delete(key);
+    }
+    this._purgePersonalEvents('conversations', (event) => {
+      const type = String(event.type || '').toLowerCase();
+      const payload = event.payload?.task || event.payload || {};
+      const metadata = payload.metadata || {};
+      const related = sessionIds.has(String(payload.sessionId || payload.relatedSessionId || metadata.sessionId || '')) ||
+        String(payload.source || '').toLowerCase() === 'conversation' ||
+        Boolean(payload.messageId || metadata.messageId) ||
+        linkedTaskIds.has(String(payload.taskId || payload.relatedTaskId || payload.id || ''));
+      return type === 'workspace.message' ||
+        (related && (type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run')));
+    });
+    this._persist();
+    return { deleted };
+  }
+
+  clearTaskHistory() {
+    const deleted = this.tasks.size;
+    this.tasks.clear();
+    this.attention.clear();
+    this.actionRuns.clear();
+    this.approvals.clear();
+    this.audit = [];
+    this.taskAudit = [];
+    this.taskActionKeys.clear();
+    this._purgePersonalEvents('tasks', (event) => {
+      const type = String(event.type || '').toLowerCase();
+      return type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run');
+    });
+    this._persist();
+    return { deleted };
+  }
+
+  clearProgressEvents() {
+    const deleted = this._purgePersonalEvents('progress', event => String(event.type || '').startsWith('mote.'));
+    this._persist();
+    return { deleted };
+  }
+
+  _purgePersonalEvents(category, shouldDelete) {
+    const previousLength = this.eventLog.length;
+    this.eventLog = this.eventLog.filter(event => {
+      if (!shouldDelete(event)) return true;
+      if (event.eventId) this.eventKeys.delete(`event:${event.eventId}`);
+      this.eventKeys.delete(`${event.origin}:${event.sequence}`);
+      return false;
+    });
+    const deleted = previousLength - this.eventLog.length;
+    this.privacyFences[category] = this.now();
+    const event = createEventEnvelope({
+      eventId: `privacy_${crypto.randomUUID()}`,
+      origin: 'privacy-center',
+      sequence: ++this.sequence,
+      type: 'privacy.purged',
+      payload: { categories: [category] },
+      createdAt: iso(this.now()),
+      revision: ++this.eventRevision,
+    });
+    this.eventLog.push(event);
+    this.eventKeys.add(`event:${event.eventId}`);
+    this.eventKeys.add(`${event.origin}:${event.sequence}`);
+    if (this.eventLog.length > this.eventRetention) this.eventLog.splice(0, this.eventLog.length - this.eventRetention);
+    this.minimumEventRevision = this.eventRevision;
+    this._persist();
+    return deleted;
+  }
+
   updateSession(sessionId, patch = {}) {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error('session not found');
@@ -584,6 +697,12 @@ class WorkspaceStore {
   acceptEvent(event) {
     const normalized = createEventEnvelope(event);
     const key = `${normalized.origin}:${normalized.sequence}`;
+    const category = privacyFenceCategory(normalized, this.privacyDeletedTaskIds);
+    const fence = category ? this.privacyFences[category] : 0;
+    const createdAt = Date.parse(normalized.createdAt);
+    if (fence > 0 && (!Number.isFinite(createdAt) || createdAt <= fence)) {
+      return { accepted: false, status: 'privacy_deleted', duplicateBy: 'privacy_fence', category, event: clone(normalized) };
+    }
     if (this.eventKeys.has(`event:${normalized.eventId}`)) return { accepted: false, status: 'duplicate', duplicateBy: 'event_id', event: clone(normalized) };
     if (this.eventKeys.has(key)) return { accepted: false, status: 'duplicate', duplicateBy: 'origin_sequence', event: clone(normalized) };
     normalized.revision = ++this.eventRevision;
@@ -603,7 +722,7 @@ class WorkspaceStore {
   syncState(since = 0) {
     const cursor = Math.max(0, Number(since) || 0);
     const oldest = this.eventLog[0]?.revision || this.eventRevision;
-    const resetRequired = cursor > this.eventRevision || (this.eventLog.length > 0 && cursor < oldest - 1);
+    const resetRequired = cursor > this.eventRevision || cursor < this.minimumEventRevision || (this.eventLog.length > 0 && cursor < oldest - 1);
     return {
       mode: resetRequired ? 'snapshot' : 'delta',
       resetRequired,

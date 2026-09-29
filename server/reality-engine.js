@@ -103,6 +103,26 @@ class RealityEngine {
   }
 
   snapshot() { return clone(this.state); }
+  reset() {
+    const deleted = this.state.seenEventIds.length + Object.keys(this.state.inventory).length + this.state.claimedQuestIds.length;
+    this.state = {
+      version: 3,
+      region: null,
+      seenEventIds: [],
+      rewardReceipts: {},
+      inventory: {},
+      loadout: [],
+      habitat: { decorations: [], comfort: 0 },
+      claimedQuestIds: [],
+      activeBoosts: [],
+      xp: 0,
+      level: 1,
+      activeEncounter: null,
+      updatedAt: this.now(),
+    };
+    this._save();
+    return { deleted };
+  }
   getReceipt(eventId) { return clone(this.state.rewardReceipts[String(eventId || '')] || null); }
   catalog() { return { items: clone(ITEMS), recipes: clone(RECIPES), decorations: clone(DECORATIONS), quests: clone(QUESTS), events: clone(EVENTS), encounters: clone(ENCOUNTERS) }; }
 

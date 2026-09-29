@@ -2,10 +2,26 @@ package com.phonebridge
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RealityDeepeningTest {
+    @Test fun privacyResetDropsPendingAndDiscoveredExplorationState() {
+        val now = 10_000L
+        val coordinator = RealityExplorationCoordinator(now = { now })
+        coordinator.setRegion("cell:1:2")
+        val pending = coordinator.submitClue("location", online = false)
+        coordinator.acknowledge(pending.eventId, accepted = true)
+
+        coordinator.clearForPrivacyDeletion()
+
+        assertTrue(coordinator.state.value.pending.isEmpty())
+        assertTrue(coordinator.state.value.discoveredEventIds.isEmpty())
+        assertTrue(coordinator.state.value.events.isEmpty())
+        assertNull(coordinator.state.value.region)
+    }
+
     @Test fun localCueAnalysisIsDeterministicAndPrivacyNeutral() {
         val brightEdges = RealityCueAnalyzer.analyze(RealityImageSignal(0.88f, 0.42f))
         assertTrue("light" in brightEdges.types)

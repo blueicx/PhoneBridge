@@ -43,6 +43,12 @@ class MoteRelationshipStore {
     return { duplicate: false, kind, ...this.snapshot() };
   }
   snapshot() { return JSON.parse(JSON.stringify(this.state)); }
+  reset() {
+    const deleted = this.state.interactions;
+    this.state = { version: 1, level: 1, xp: 0, interactions: 0, seenEventIds: [] };
+    this._save();
+    return { deleted };
+  }
 }
 
 class MoteQuestStore {
@@ -81,6 +87,12 @@ class MoteQuestStore {
     return { duplicate: false, quest, state: this.snapshot() };
   }
   snapshot() { return { claimed: [...this.claimed.entries()].map(([eventId, questId]) => ({ eventId, questId })) }; }
+  reset() {
+    const deleted = this.claimed.size;
+    this.claimed.clear();
+    this._save();
+    return { deleted };
+  }
 }
 
 module.exports = { MoteRelationshipStore, MoteQuestStore };

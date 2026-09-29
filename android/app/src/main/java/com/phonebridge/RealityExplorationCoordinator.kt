@@ -93,6 +93,10 @@ class RealityExplorationCoordinator(
         _state.value = _state.value.copy(discoveredEventIds = _state.value.discoveredEventIds + eventIds.filter { it.isNotBlank() })
     }
 
+    fun clearForPrivacyDeletion() {
+        _state.value = RealityExplorationState()
+    }
+
     private fun normalizeRegion(value: String?): String? {
         val region = value?.trim().orEmpty()
         if (region.isBlank() || region == "camera") return region.ifBlank { null } ?: "camera"

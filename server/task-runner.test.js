@@ -54,3 +54,29 @@ test('pause, resume and cancel affect queued and active tasks', async () => {
   await runner.whenIdle();
   assert.equal(runner.get('queued').state, 'succeeded');
 });
+
+test('forget removes terminal task payloads but never removes active work', async () => {
+  const runner = new TaskRunner({ maxConcurrency: 1 });
+  let unblock;
+  runner.setExecutor(async ({ signal }) => {
+    await new Promise((resolve, reject) => {
+      unblock = resolve;
+      signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+    });
+    return 'private result';
+  });
+  runner.enqueue({ id: 'active', title: 'private task', metadata: { text: 'private prompt' } });
+  await waitFor(() => runner.get('active')?.state === 'running');
+  assert.throws(() => runner.forget('active'), /active/);
+  runner.cancel('active');
+  await runner.whenIdle();
+  assert.equal(runner.forget('active'), 1);
+  assert.equal(runner.get('active'), null);
+  unblock?.();
+
+  runner.setExecutor(async () => 'done');
+  runner.enqueue({ id: 'done', title: 'terminal task' });
+  await runner.whenIdle();
+  assert.equal(runner.forgetAllTerminal(), 1);
+  assert.equal(runner.list().length, 0);
+});

@@ -164,6 +164,13 @@ class MoteGrowthStore {
 
   _save() { return this.persistence?.save?.('mote-growth', this.state); }
 
+  reset() {
+    const deleted = this.state.processedEvents.length;
+    this.state = initialState(this.now());
+    this._save();
+    return { deleted };
+  }
+
   _pruneDaily(currentDate) {
     const entries = Object.entries(this.state.dailyByDate || {}).sort(([left], [right]) => left.localeCompare(right));
     const retained = entries.slice(-MAX_DAILY_DATES);

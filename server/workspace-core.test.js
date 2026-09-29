@@ -266,3 +266,114 @@ test('task workbench creates attention for confirmation state and archives later
   assert.ok(store.getLatestAttentionForTask(task.id)?.title.includes('待确认'));
   assert.equal(store.updateTask(task.id, { state: 'archived' }).state, 'archived');
 });
+
+test('privacy cleanup clears conversations and task audit without retaining payload text', () => {
+  const store = new WorkspaceStore();
+  const unrelatedTaskEvent = store.acceptEvent({
+    eventId: 'unrelated-task-event', origin: 'automation', sequence: 1, type: 'workspace.task.progress',
+    payload: { id: 'automation-task', source: 'automation', title: 'keep automation task' },
+  }).event;
+  const unrelatedProgressEvent = store.acceptEvent({
+    eventId: 'unrelated-progress-event', origin: 'phone', sequence: 1, type: 'mote.exploration',
+    payload: { eventId: 'keep-progress-event', clueType: 'light' },
+  }).event;
+  const deletedMessageEvent = store.acceptEvent({
+    eventId: 'private-message-event-key', origin: 'phone', sequence: 2, type: 'workspace.message',
+    payload: { text: 'private conversation body' },
+  }).event;
+  const session = store.createSession({ id: 'privacy-session', title: 'private title' });
+  store.appendMessage(session.id, { id: 'privacy-message', text: 'private conversation body' });
+  const task = store.createTask({ id: 'privacy-task', source: 'conversation', title: 'private task', detail: 'private prompt', metadata: { sessionId: session.id } });
+  store.updateTask(task.id, { state: 'running' });
+  store.updateTask(task.id, { state: 'succeeded', result: 'private output' });
+
+  const result = store.clearConversationData();
+  assert.equal(result.deleted.sessions, 1);
+  assert.equal(result.deleted.messages, 1);
+  assert.equal(result.deleted.linkedTasks, 1);
+  assert.equal(store.listSessions().length, 0);
+  assert.equal(store.listTasks().length, 0);
+  assert.equal(JSON.stringify(store.events()).includes('private conversation body'), false);
+  assert.equal(store.events().some(event => event.eventId === unrelatedTaskEvent.eventId), true);
+  assert.equal(store.events().some(event => event.eventId === unrelatedProgressEvent.eventId), true);
+  assert.equal(store.eventKeys.has(`event:${deletedMessageEvent.eventId}`), false);
+  assert.equal(store.eventKeys.has(`phone:${deletedMessageEvent.sequence}`), false);
+  assert.equal(store.acceptEvent(unrelatedProgressEvent).status, 'duplicate');
+  assert.equal(store.syncState(unrelatedProgressEvent.revision).resetRequired, true);
+});
+
+test('privacy deletion fences reject delayed conversation and progress outbox events', () => {
+  let now = Date.parse('2026-09-29T12:00:00.000Z');
+  const store = new WorkspaceStore({ now: () => now });
+  const session = store.createSession({ id: 'offline-delete-session' });
+  const linkedTask = store.createTask({ id: 'offline-delete-task', metadata: { sessionId: session.id } });
+  store.clearConversationData();
+  store.clearTaskHistory();
+  store.clearProgressEvents();
+
+  const staleMessage = store.acceptEvent({
+    eventId: 'offline-message-before-delete', origin: 'phone', sequence: 40, type: 'workspace.message',
+    createdAt: new Date(now - 1).toISOString(), payload: { text: 'must not return' },
+  });
+  const staleProgress = store.acceptEvent({
+    eventId: 'offline-progress-before-delete', origin: 'phone', sequence: 41, type: 'mote.exploration',
+    createdAt: new Date(now - 1).toISOString(), payload: { clueType: 'light' },
+  });
+
+  assert.equal(staleMessage.status, 'privacy_deleted');
+  assert.equal(staleProgress.status, 'privacy_deleted');
+  const invalidTimestamp = store.acceptEvent({
+    eventId: 'offline-event-with-invalid-timestamp', origin: 'phone', sequence: 44, type: 'workspace.message',
+    createdAt: 'not-a-timestamp', payload: { text: 'must not bypass deletion fence' },
+  });
+  assert.equal(invalidTimestamp.status, 'privacy_deleted');
+  const staleAttention = store.acceptEvent({
+    eventId: 'offline-attention-before-delete', origin: 'phone', sequence: 43, type: 'workspace.attention',
+    createdAt: new Date(now - 1).toISOString(), payload: { relatedTaskId: linkedTask.id, title: 'stale approval' },
+  });
+  assert.equal(staleAttention.status, 'privacy_deleted');
+  assert.equal(staleAttention.category, 'conversations');
+  assert.equal(store.events().some(event => event.eventId === staleMessage.event.eventId), false);
+  assert.equal(store.events().some(event => event.eventId === staleProgress.event.eventId), false);
+
+  now += 1;
+  const newMessage = store.acceptEvent({
+    eventId: 'new-message-after-delete', origin: 'phone', sequence: 42, type: 'workspace.message',
+    createdAt: new Date(now + 1).toISOString(), payload: { text: 'allowed new conversation' },
+  });
+  assert.equal(newMessage.accepted, true);
+});
+
+test('privacy event fences survive process restart without retaining deleted event payloads', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phonebridge-privacy-fence-'));
+  const snapshotPath = path.join(runtimeDir, 'workspace-state.json');
+  const deletedAt = Date.parse('2026-09-29T12:00:00.000Z');
+  try {
+    const first = new WorkspaceStore({ now: () => deletedAt, snapshotPath });
+    first.clearConversationData();
+    const restored = new WorkspaceStore({ now: () => deletedAt + 10_000, snapshotPath });
+    const stale = restored.acceptEvent({
+      eventId: 'offline-after-restart', origin: 'phone', sequence: 99, type: 'workspace.message',
+      createdAt: new Date(deletedAt - 1).toISOString(), payload: { text: 'not persisted in fence' },
+    });
+    assert.equal(stale.status, 'privacy_deleted');
+    assert.equal(fs.readFileSync(snapshotPath, 'utf8').includes('not persisted in fence'), false);
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('privacy cleanup clears task records but preserves autonomy settings', () => {
+  const store = new WorkspaceStore();
+  const task = store.createTask({ title: 'task to erase' });
+  store.updateTask(task.id, { state: 'running' });
+  store.updateTask(task.id, { state: 'succeeded' });
+  store.registerTool({ id: 'safe.read', readOnly: true, invoke: () => true });
+  const beforePolicy = store.getAutonomyPolicy();
+
+  const result = store.clearTaskHistory();
+  assert.equal(result.deleted, 1);
+  assert.equal(store.listTasks().length, 0);
+  assert.deepEqual(store.getAutonomyPolicy(), beforePolicy);
+  assert.equal(JSON.stringify(store.events()).includes('task to erase'), false);
+});

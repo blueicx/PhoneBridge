@@ -102,6 +102,15 @@ class MemoryStore {
     return { removed: true, revision: this.state.revision };
   }
 
+  clear() {
+    const deleted = this.state.entries.length;
+    if (!deleted) return { deleted: 0, revision: this.state.revision };
+    this.state.entries = [];
+    this.state.revision += 1;
+    this._save();
+    return { deleted, revision: this.state.revision };
+  }
+
   confirm(id) {
     return this.update(id, { status: 'confirmed' });
   }

@@ -6,6 +6,17 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+$sourceItem = Get-Item -LiteralPath $Source -Force
+if (-not $sourceItem.PSIsContainer) {
+  if ($sourceItem.Extension -ne '.pbenc') { throw 'encrypted restore source must use the .pbenc extension' }
+  $encryptedRestore = Join-Path $PSScriptRoot 'restore_encrypted_runtime.ps1'
+  $encryptedArguments = @{ Source = $sourceItem.FullName; RuntimeDir = $RuntimeDir }
+  if ($VerifyOnly) { $encryptedArguments.VerifyOnly = $true }
+  if ($ConfirmNodeStopped) { $encryptedArguments.ConfirmNodeStopped = $true }
+  & $encryptedRestore @encryptedArguments
+  return
+}
+
 $stateNames = @(
   'runtime-state.json',
   'workspace-state.json',

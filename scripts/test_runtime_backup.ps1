@@ -39,6 +39,30 @@ try {
   $sanitizedWorkspace = Get-Content -Raw -LiteralPath (Join-Path $backupPath 'workspace-state.json') | ConvertFrom-Json
   Assert-True ($sanitizedWorkspace.state.workspace -eq 'before' -and $null -eq $sanitizedWorkspace.state.logs) 'backup must sanitize every allowlisted state snapshot'
 
+  $global:PhoneBridgeTestWrongPassphrase = $false
+  function global:Read-Host {
+    param([string]$Prompt, [switch]$AsSecureString)
+    $value = if ($global:PhoneBridgeTestWrongPassphrase) { 'incorrect test passphrase' } else { 'phonebridge test passphrase 2026' }
+    if ($AsSecureString) { return ConvertTo-SecureString $value -AsPlainText -Force }
+    return $value
+  }
+  try {
+    $encryptedOutput = & $backupScript -RuntimeDir $runtimeDir -Destination $backupRoot -Encrypt
+    $encryptedPath = [string]($encryptedOutput | Select-Object -Last 1) -replace '^encrypted runtime backup created: ', ''
+    Assert-True (Test-Path -LiteralPath $encryptedPath -PathType Leaf) 'encrypted backup must create a .pbenc file'
+    Assert-True ([IO.Path]::GetExtension($encryptedPath) -eq '.pbenc') 'encrypted backup must use the .pbenc extension'
+    Assert-True (-not (Test-Path -LiteralPath ($encryptedPath -replace '\.pbenc$', ''))) 'encrypted backup must remove its plaintext snapshot directory'
+    $encryptedBytes = [IO.File]::ReadAllText($encryptedPath)
+    Assert-True (-not $encryptedBytes.Contains('chat must not be backed up')) 'encrypted archive envelope must not expose plaintext state'
+    & $restoreScript -Source $encryptedPath -RuntimeDir $runtimeDir -VerifyOnly | Out-Null
+    $global:PhoneBridgeTestWrongPassphrase = $true
+    Assert-Fails { & $restoreScript -Source $encryptedPath -RuntimeDir $runtimeDir -VerifyOnly } 'encrypted VerifyOnly must reject an incorrect passphrase'
+    $global:PhoneBridgeTestWrongPassphrase = $false
+  } finally {
+    Remove-Item Function:\Read-Host -ErrorAction SilentlyContinue
+    Remove-Variable PhoneBridgeTestWrongPassphrase -Scope Global -ErrorAction SilentlyContinue
+  }
+
   $beforeVerify = [IO.File]::ReadAllText((Join-Path $runtimeDir 'runtime-state.json'))
   & $restoreScript -Source $backupPath -RuntimeDir $runtimeDir -VerifyOnly | Out-Null
   Assert-True ([IO.File]::ReadAllText((Join-Path $runtimeDir 'runtime-state.json')) -eq $beforeVerify) 'VerifyOnly must not mutate runtime files'

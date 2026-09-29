@@ -471,3 +471,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 正式签名仍为受控待办：未确认密钥及独立加密恢复副本的存在和可解密性，因此没有创建/使用 Release 身份、没有生成正式签名 APK。当前 Debug APK 不能分发为正式版。
 - 本轮未完成两小时运行、连续电量/温度记录、实机配对/断线恢复、同步延迟测量、三类镜头线索与 ARCore 放置。重新开放这些测试前需确认无线/USB 设备可用、节点可连接、相机授权由设备用户明确完成；正式签名需先验证离线加密恢复副本。
 - 批次 6 交接提交 `04e2cf1` 已推送；GitHub Actions run [36340939107](https://github.com/blueicx/PhoneBridge/actions/runs/36340939107) 全部成功（4m53s）。内部 Debug APK artifact `phonebridge-debug-04e2cf1565336cdb370050ab719652de98898e6d`（`65,278,817 bytes`）已上传，未进入 Git。之后仅补录此 CI 证据。
+
+## 39. 隐私中心与加密恢复（2026-09-29）
+
+- Android 记忆管理入口新增“隐私与数据”：显示节点四类数据计数，所选数据以 scrypt + AES-256-GCM 加密后交给系统文件选择器保存；删除必须输入 `DELETE SELECTED DATA`。敏感导出密文不写入 app 私有文件，明文口令不进入日志或仓库。
+- Android 监听服务端 `privacy.deleted`，按类别清 Room 会话/消息/任务/Attention/ActionRun、移除相关 outbox 事件，并同步清本地长期记忆、聊天 outbox、共享交接、Mote/探索缓存。重复 WebSocket/HTTP 确认以 requestId 去重，清理失败会报错而非伪称本机镜像已清。
+- 删除期间服务端关闭新的 HTTP/WS 写入口、取消并等待在途聊天、排空已开始的 HTTP 写请求；清理终态 TaskRunner 数据与关联实体后再确认。手机重连先同步近期已完成的删除收据并清除 Room/outbox，再发送剩余 outbox，覆盖离线错过实时广播的情形。
+- 服务端 conversations 类别已覆盖共享交接文档；清理后提升交接 revision 并向 Android 广播空状态。时间线隐私清理支持实体 ID 定向删除关联任务/Attention，避免删除会话时误删其他来源的任务。
+- `scripts/backup_runtime.ps1 -Encrypt` 输出加密归档；`restore_runtime.ps1` 可识别 `.pbenc` 并委托临时解密/路径校验/VerifyOnly/停止节点检查/回滚流程。`scripts/test_runtime_backup.ps1` 覆盖错误口令和加密备份验证。
+- 自动验收：Node **171/171**；Android **141/141**；`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 通过，Lint 报告 0 errors；运行时备份故障演练、敏感扫描、APK signer parser、内部 Debug APK 实际版本/签名门禁、Node 语法检查、性能预算和 `git diff --check` 通过。性能预算 `elapsedMs=1.118`、完整快照 `1694 bytes`、summary `48 bytes`、缓存命中 `10000`、突发广播 `1`。
+- 最新 Debug APK `com.phonebridge` `2.2.0` / code `4`，大小 `93,345,623 bytes`，SHA-256 `52EDACD4638836414B9F24541317AA49336FFF08DE6120CC3216532DC0E4CC9E`；仅内部 Debug 候选，不是正式签名包，未加入 Git。
+- Xperia XZ2 / Android 15 当前 USB ADB 在线、正在充电，电量 8%、电池温度 33.7°C；无线 ADB 当前离线，相机权限仍 `granted=false`。因电量过低，本轮未安装最新候选或启动设备，也未触碰/授予相机权限。隐私对话框、文件选择器和手机端删除操作尚待设备恢复后实机点击。此前 `1552 ms` 冷启动来自旧候选，不作为本次构建验收。
+- Android 隐私清理若本机 Room/cache 清除失败，不再继续恢复 outbox 发送；重连重新同步删除收据后才会继续，避免清理未完成时把待发个人数据重新发出。
+- 本批提交/推送及 GitHub Actions 仍待完成。正式签名、扫码/WSS、相机线索/ARCore、PTT、同步恢复和两小时稳定性继续待验收。
+
+实现记录：[`docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md`](docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md)。

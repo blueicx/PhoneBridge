@@ -144,6 +144,13 @@ class MoteStore {
   getState() { return clone(this.state); }
   roster() { return MOTE_PROFILES.map(profile => ({ ...clone(profile), unlocked: this.state.unlockedIds.includes(profile.id), active: this.state.activeId === profile.id })); }
 
+  reset() {
+    const deleted = Math.max(0, this.state.unlockedIds.length - INITIAL_MOTE_IDS.length) + this.state.exploration.seenEventIds.length;
+    this.state = createMoteState();
+    this._save();
+    return { deleted };
+  }
+
   setActive(id) {
     const normalized = String(id || '');
     if (!this.state.unlockedIds.includes(normalized)) throw new Error('Mote 尚未解锁');

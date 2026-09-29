@@ -2,9 +2,11 @@ param(
   [string]$RuntimeDir = (Join-Path $PSScriptRoot '..\server'),
   [string]$Destination = (Join-Path $PSScriptRoot '..\runtime-backups'),
   [string]$FlushEndpoint = '',
-  [string]$AccessTokenPath = ''
+  [string]$AccessTokenPath = '',
+  [switch]$Encrypt
 )
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'privacy_archive.psm1') -Force
 
 $stateNames = @(
   'runtime-state.json',
@@ -93,7 +95,28 @@ try {
   [IO.File]::WriteAllText((Join-Path $staging 'backup-manifest.json'), $manifestText, [Text.UTF8Encoding]::new($false))
   Move-Item -LiteralPath $staging -Destination $target
   $staging = $null
-  Write-Output "runtime backup created: $target"
+  if ($Encrypt) {
+    $zipPath = Join-Path $destinationRoot "$backupId.zip"
+    $encryptedPath = Join-Path $destinationRoot "$backupId.pbenc"
+    try {
+      Compress-Archive -Path (Join-Path $target '*') -DestinationPath $zipPath -CompressionLevel Optimal
+      Invoke-PhoneBridgeArchiveCli -Command encrypt -Source $zipPath -Destination $encryptedPath
+      Invoke-PhoneBridgeArchiveCli -Command verify -Source $encryptedPath
+      Remove-Item -LiteralPath $zipPath -Force
+      $resolvedTarget = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $target).Path)
+      $resolvedDestination = [IO.Path]::GetFullPath($destinationRoot).TrimEnd('\') + '\'
+      if (-not $resolvedTarget.StartsWith($resolvedDestination, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $resolvedTarget) -ne $backupId) {
+        throw 'created plaintext backup path escaped the selected destination'
+      }
+      Remove-Item -LiteralPath $resolvedTarget -Recurse -Force
+    } catch {
+      if (Test-Path -LiteralPath $zipPath -PathType Leaf) { Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue }
+      throw "encrypted backup failed; original runtime is unchanged and a plaintext backup may remain at '$target'"
+    }
+    Write-Output "encrypted runtime backup created: $encryptedPath"
+  } else {
+    Write-Output "runtime backup created: $target"
+  }
 } finally {
   if ($staging -and (Test-Path -LiteralPath $staging -PathType Container)) {
     $resolvedStaging = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $staging).Path)

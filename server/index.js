@@ -15,6 +15,8 @@ const { WorkspaceTimeline } = require('./workspace-timeline');
 const { AiProviderManager } = require('./ai-provider');
 const { DiagnosticsCollector } = require('./diagnostics');
 const { RuntimePersistence } = require('./runtime-persistence');
+const { PrivacyCenter } = require('./privacy-center');
+const { ActiveRequestRegistry } = require('./active-request-registry');
 const { HealthChecks } = require('./health');
 const { createStructuredLogger } = require('./structured-log');
 const { DeviceSimulator } = require('./device-simulator');
@@ -321,6 +323,130 @@ const { applyMoteClue, buildProgress: buildRealityProgress } = realityCoordinato
 realityCoordinator.syncBoosts();
 const pairingManager = new PairingManager();
 const proactivePolicy = new ProactivePolicy({ persistence: runtimePersistence });
+const activeChatRequests = new ActiveRequestRegistry();
+const privacyCenter = new PrivacyCenter({
+  persistence: runtimePersistence,
+  categories: {
+    memories: {
+      label: '长期记忆',
+      count: () => memoryStore.snapshot().count,
+      export: () => memoryStore.export({ includeSensitive: true }),
+      clear: () => memoryStore.clear(),
+    },
+    conversations: {
+      label: '聊天与会话',
+      count: () => chatHistory.length + workspaceStore.listSessions().reduce((sum, session) => sum + (session.messages?.length || 0), 0) + (handoffHasContent(loadHandoff()) ? 1 : 0),
+      export: () => ({ legacyHistory: chatHistory, sessions: workspaceStore.listSessions(), handoff: loadHandoff() }),
+      validateClear: () => { if (taskRunner?.list().some(task => !['succeeded', 'failed', 'cancelled'].includes(task.state))) throw new Error('finish or cancel running tasks before deleting conversations'); },
+      prepareDelete: () => activeChatRequests.pauseCancelAndWait(),
+      clear: async () => {
+        const previousCount = chatHistory.length;
+        const linkedTaskIds = new Set(workspaceStore.listTasks()
+          .filter(task => task.metadata?.sessionId || task.metadata?.messageId)
+          .map(task => String(task.id)));
+        for (const task of taskRunner.list()) {
+          if (task.metadata?.sessionId || linkedTaskIds.has(String(task.id))) linkedTaskIds.add(String(task.id));
+        }
+        const timelineBefore = workspaceTimeline.getSnapshot();
+        for (const task of timelineBefore.tasks) {
+          if (task.source === 'conversation' || task.relatedSessionId || linkedTaskIds.has(String(task.id))) linkedTaskIds.add(String(task.id));
+        }
+        const linkedAttentionIds = timelineBefore.attention
+          .filter(item => item.relatedSessionId || linkedTaskIds.has(String(item.relatedTaskId || '')))
+          .map(item => String(item.id));
+        const timelineTypes = ['chat'];
+        if (linkedTaskIds.size) timelineTypes.push('task');
+        if (linkedAttentionIds.length) timelineTypes.push('attention');
+        workspaceTimeline.purgePersonalData(timelineTypes, {
+          task: [...linkedTaskIds],
+          attention: linkedAttentionIds,
+        });
+        const result = workspaceStore.clearConversationData([...linkedTaskIds]);
+        taskRunner.forget([...linkedTaskIds]);
+        chatHistory.splice(0, chatHistory.length);
+        for (let index = logs.length - 1; index >= 0; index -= 1) {
+          const message = String(logs[index]?.message || '');
+          if (message.startsWith('Mote 对话回复：') || message.startsWith('PTT 语音识别：')) logs.splice(index, 1);
+        }
+        const handoff = loadHandoff();
+        const deletedHandoff = handoffHasContent(handoff) ? 1 : 0;
+        if (deletedHandoff) {
+          saveHandoff({ revision: handoff.revision + 1, updatedAtMs: Date.now(), updatedBy: 'privacy-delete' });
+          broadcast({ type: 'handoff', state: loadHandoff() });
+        }
+        savePersistentState();
+        await workspaceStore.flushPersistence();
+        return { deleted: previousCount + result.deleted.sessions + result.deleted.messages + result.deleted.linkedTasks + deletedHandoff };
+      },
+    },
+    tasks: {
+      label: '任务与审计',
+      count: () => workspaceStore.listTasks().length + tasks.size,
+      export: () => ({
+        tasks: workspaceStore.listTasks({ limit: 200 }),
+        taskAudit: workspaceStore.listTasks({ limit: 200 }).flatMap(task => workspaceStore.listTaskAudit(task.id)),
+        audit: workspaceStore.auditLog(),
+      }),
+      validateClear: () => { if (taskRunner?.list().some(task => !['succeeded', 'failed', 'cancelled'].includes(task.state))) throw new Error('finish or cancel running tasks before deleting task history'); },
+      clear: async () => {
+        const legacyCount = tasks.size;
+        workspaceTimeline.purgePersonalData(['task', 'attention']);
+        tasks.clear();
+        const result = workspaceStore.clearTaskHistory();
+        taskRunner.forgetAllTerminal();
+        for (let index = logs.length - 1; index >= 0; index -= 1) {
+          if (String(logs[index]?.level || '') === 'task') logs.splice(index, 1);
+        }
+        savePersistentState();
+        await workspaceStore.flushPersistence();
+        return { deleted: result.deleted + legacyCount };
+      },
+    },
+    progress: {
+      label: 'Mote 成长与探索',
+      count: () => {
+        const reality = realityEngine.snapshot();
+        const growth = moteGrowthStore.snapshot();
+        const story = moteStoryStore.snapshot();
+        return reality.seenEventIds.length + growth.processedEvents.length + story.completed.length + story.claimed.length + moteRelationshipStore.snapshot().interactions;
+      },
+      export: () => ({
+        reality: realityEngine.snapshot(),
+        moteGrowth: moteGrowthStore.snapshot(),
+        moteRoster: moteStore.getState(),
+        relationship: moteRelationshipStore.snapshot(),
+        quests: moteQuestStore.snapshot(),
+        stories: moteStoryStore.snapshot(),
+      }),
+      prepareDelete: () => activeChatRequests.pauseCancelAndWait(),
+      clear: () => {
+        const deleted = privacyCenterProgressCount();
+        workspaceTimeline.purgePersonalData(['mote']);
+        workspaceStore.clearProgressEvents();
+        realityEngine.reset();
+        moteGrowthStore.reset();
+        moteStore.reset();
+        moteRelationshipStore.reset();
+        moteQuestStore.reset();
+        moteStoryStore.reset();
+        realityCoordinator.syncBoosts();
+        return { deleted };
+      },
+    },
+  },
+});
+
+function privacyCenterProgressCount() {
+  const reality = realityEngine.snapshot();
+  const growth = moteGrowthStore.snapshot();
+  const story = moteStoryStore.snapshot();
+  return reality.seenEventIds.length + growth.processedEvents.length + story.completed.length + story.claimed.length + moteRelationshipStore.snapshot().interactions;
+}
+
+function handoffHasContent(handoff) {
+  return ['goal', 'currentTask', 'nextSteps', 'keyConstraints', 'recentDecisions', 'notes']
+    .some(key => String(handoff?.[key] || '').trim().length > 0);
+}
 
 let snapshotRevision = 0;
 const snapshotCache = new RevisionSnapshotCache({
@@ -1281,23 +1407,37 @@ async function chatWithModel(text, memories = [], options = {}) {
 async function handleChat(text, memories = [], options = {}) {
   const clean = String(text || '').trim().slice(0, 2000);
   if (!clean) throw new Error('empty');
-  const remember = options.remember !== false;
-  if (remember) chatHistory.push({ role: 'user', text: clean, time: nowTime() });
-  const result = await chatWithModel(clean, remember ? memories : [], {
-    remember,
-    history: remember ? chatHistory : chatHistory.slice(-16),
-    requestId: options.requestId || null,
-    sessionId: options.sessionId || '',
-    source: options.source || 'chat',
-    providerId: options.providerId || null,
-    signal: options.signal || null,
-  });
-  const reply = result.reply;
-  if (remember) chatHistory.push({ role: 'assistant', text: reply, time: nowTime() });
-  broadcast({ type: 'chat', requestId: options.requestId || result.id, source: options.source || 'chat', role: 'assistant', text: reply, time: nowTime() });
-  progressMoteStory(`chat:${chatHistory.length}:${clean.slice(0, 48)}`, { conversationCount: 1 });
-  addLog('success', `Mote 对话回复：${reply.slice(0, 100)}`);
-  return { ok: true, reply };
+  const requestId = String(options.requestId || `chat_${crypto.randomUUID()}`);
+  const controller = new AbortController();
+  const externalSignal = options.signal;
+  const abortFromParent = () => controller.abort();
+  const finishRequest = activeChatRequests.begin(requestId, abortFromParent);
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener('abort', abortFromParent, { once: true });
+  try {
+    if (controller.signal.aborted) throw new Error('AI request cancelled');
+    const remember = options.remember !== false;
+    if (remember) chatHistory.push({ role: 'user', text: clean, time: nowTime() });
+    const result = await chatWithModel(clean, remember ? memories : [], {
+      remember,
+      history: remember ? chatHistory : chatHistory.slice(-16),
+      requestId,
+      sessionId: options.sessionId || '',
+      source: options.source || 'chat',
+      providerId: options.providerId || null,
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) throw new Error('AI request cancelled');
+    const reply = result.reply;
+    if (remember) chatHistory.push({ role: 'assistant', text: reply, time: nowTime() });
+    broadcast({ type: 'chat', requestId, source: options.source || 'chat', role: 'assistant', text: reply, time: nowTime() });
+    progressMoteStory(`chat:${chatHistory.length}:${clean.slice(0, 48)}`, { conversationCount: 1 });
+    addLog('success', `Mote 对话回复：${reply.slice(0, 100)}`);
+    return { ok: true, reply };
+  } finally {
+    externalSignal?.removeEventListener('abort', abortFromParent);
+    finishRequest();
+  }
 }
 
 function buildSnapshotPayload() {
@@ -1542,6 +1682,7 @@ const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name
 <div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>手机安全配对</h2><div class="row"><button onclick="startPairing()">生成五分钟二维码</button><span id="pairingStatus" class="sub" aria-live="polite">在手机“节点”中选择“扫码配对”</span></div><img id="pairingQr" alt="手机配对二维码" style="display:none;width:min(300px,100%);margin-top:12px;background:white;border-radius:12px;padding:8px"></div>
 <div class="panel" style="grid-column:1/-1"><h2>现实探索</h2><div class="sub">只输入粗区域 ID，不上传精确位置；例如 <code>cell:1561:6073</code>。</div><div class="row"><input id="realityRegion" placeholder="粗区域 ID" style="flex:1"><button class="primary" onclick="refreshReality()">刷新事件</button></div><div id="realitySummary" class="sub" style="margin-top:8px">尚未加载现实事件</div></div>
+<div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出加密档案</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
 <script>
 let selected='';
 let companionSummaryRevision = '';
@@ -1653,6 +1794,46 @@ async function startPairing(){
     setTimeout(()=>{if(Date.now()>=expiresAt){qr.removeAttribute('src');qr.style.display='none';status.textContent='配对码已过期，请重新生成。'}},Math.max(0,expiresAt-Date.now())+100);
   }catch(error){status.textContent='无法生成配对码：'+error.message}
 }
+async function refreshPrivacy(){
+  try{
+    const result=await api('/api/privacy/overview');
+    const lines=Object.entries(result.categories||{}).map(([id,item])=>id+'：'+item.label+' '+item.count+' 条');
+    privacySummary.textContent='可管理数据：'+lines.join(' · ')+'。排除：'+(result.excluded||[]).join('、');
+  }catch(error){privacySummary.textContent='数据概览读取失败：'+error.message}
+}
+function selectedPrivacyCategories(){
+  const value=prompt('输入要处理的数据类别，逗号分隔：memories, conversations, tasks, progress；输入 all 表示全部');
+  if(value===null)return null;
+  const ids=value.trim()==='all'?['memories','conversations','tasks','progress']:value.split(',').map(item=>item.trim()).filter(Boolean);
+  if(!ids.length)throw new Error('请至少选择一个类别');
+  return [...new Set(ids)];
+}
+async function exportPrivacy(){
+  let passphrase='';
+  try{
+    const categories=selectedPrivacyCategories();if(!categories)return;
+    passphrase=prompt('设置本次导出加密口令（至少 12 个字符；请自行妥善保存）：')||'';
+    if(passphrase.length<12)throw new Error('口令至少需要 12 个字符');
+    const repeated=prompt('再次输入加密口令：')||'';
+    if(passphrase!==repeated)throw new Error('两次口令不一致');
+    const result=await api('/api/privacy/export',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({categories,passphrase})});
+    const blob=new Blob([JSON.stringify(result.archive)],{type:'application/json'});
+    const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='phonebridge-private-export-'+new Date().toISOString().replace(/[:.]/g,'-')+'.pbenc.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);
+    privacyResult.textContent='已生成加密档案；没有向服务端或浏览器存储口令。';
+  }catch(error){privacyResult.textContent='导出失败：'+error.message}
+  finally{passphrase=''}
+}
+async function deletePrivacy(){
+  try{
+    const categories=selectedPrivacyCategories();if(!categories)return;
+    const phrase=prompt('此操作不可撤销。输入 DELETE SELECTED DATA 确认删除所选类别：');
+    if(phrase===null)return;
+    const result=await api('/api/privacy/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:'web-'+crypto.randomUUID(),categories,confirmation:phrase})});
+    privacyResult.textContent='删除已完成：'+result.receipt.categories.join('、')+'。收据 '+result.receipt.requestId;
+    await refreshPrivacy();
+  }catch(error){privacyResult.textContent='删除未完成：'+error.message}
+}
+refreshPrivacy();
 async function probeSelectedProvider(){
   const id=aiProviderSelect.value;
   if(!id) return;
@@ -1851,6 +2032,20 @@ const handleHttpRequest = async (req, res) => {
       return;
     }
 
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && parsedUrl.pathname !== '/api/privacy/delete') {
+      let releaseMutation;
+      try { releaseMutation = privacyCenter.beginMutation(); }
+      catch (error) { return sendJson(res, 409, { ok: false, error: error.message, retryable: true }); }
+      let released = false;
+      const releaseOnce = () => {
+        if (released) return;
+        released = true;
+        releaseMutation();
+      };
+      res.once('finish', releaseOnce);
+      res.once('close', releaseOnce);
+    }
+
     if (parsedUrl.pathname === '/api/pairing/start' && req.method === 'POST') {
       const unavailableReason = pairingAvailabilityError({
         bindHost: BIND_HOST,
@@ -1975,6 +2170,42 @@ const handleHttpRequest = async (req, res) => {
         providers: aiProviderManager.getProviders().map(provider => ({ id: provider.id, capabilities: provider.capabilities || ['text'] })),
         defaults: { timeoutMs: aiProviderManager.timeoutMs, maxOutputTokens: aiProviderManager.maxOutputTokens, dailyOutputTokenBudget: aiProviderManager.dailyOutputTokenBudget }
       });
+    }
+    if (parsedUrl.pathname === '/api/privacy/overview' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, ...privacyCenter.overview() });
+    }
+    if (parsedUrl.pathname === '/api/privacy/export' && req.method === 'POST') {
+      const remote = String(req.socket.remoteAddress || '');
+      const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+      if (!loopback && !req.socket.encrypted) return sendJson(res, 403, { ok: false, error: 'encrypted export requires HTTPS outside loopback' });
+      try {
+        const payload = await readJson(req);
+        const archive = privacyCenter.exportEncrypted(payload);
+        return sendJson(res, 200, { ok: true, archive });
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: error.message });
+      }
+    }
+    if (parsedUrl.pathname === '/api/privacy/delete' && req.method === 'POST') {
+      try {
+        const payload = await readJson(req);
+        const receipt = await privacyCenter.delete(payload);
+        if (!receipt.duplicate) {
+          workspaceTimeline.recordEvent({
+            eventId: `privacy-${receipt.requestId}`,
+            entityType: 'privacy',
+            entityId: receipt.requestId,
+            operation: 'upsert',
+            payload: { categories: receipt.categories, completedAt: receipt.completedAt },
+          });
+          broadcast({ type: 'privacy.deleted', requestId: receipt.requestId, categories: receipt.categories, completedAt: receipt.completedAt });
+          if (receipt.categories.includes('progress')) broadcastMoteState();
+        }
+        return sendJson(res, 200, { ok: true, receipt });
+      } catch (error) {
+        const conflict = /(running tasks|privacy deletion is in progress)/i.test(String(error.message || ''));
+        return sendJson(res, conflict ? 409 : 400, { ok: false, error: error.message });
+      }
     }
     const aiCancelMatch = parsedUrl.pathname.match(/^\/api\/ai\/requests\/([^/]+)\/cancel$/);
     if (aiCancelMatch && req.method === 'POST') {
@@ -2288,7 +2519,7 @@ const handleHttpRequest = async (req, res) => {
         try { business = applyWorkspaceEvent(accepted.event) || business; }
         catch (error) { business = { ...business, businessStatus: 'rejected', reason: error.message }; }
       }
-      broadcast({ type: 'workspace.event', event: accepted.event });
+      if (accepted.accepted) broadcast({ type: 'workspace.event', event: accepted.event });
       return sendJson(res, accepted.accepted ? 202 : 200, {
         ok: true,
         ...accepted,
@@ -2576,7 +2807,7 @@ const handleHttpRequest = async (req, res) => {
         : `chat_${crypto.randomUUID()}`;
       handleChat(payload.text, remember && Array.isArray(payload.memories) ? payload.memories : [], { remember, requestId, source: payload.source || 'chat' }).then(result=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(result));
-      }).catch(err=>{fs.appendFileSync(path.join(__dirname,'chat_error.log'),`${new Date().toISOString()} ${err.stack}\n`);res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify({ok:false,error:err.message}))});
+      }).catch(err=>{const cancelled=/AI request cancelled/i.test(String(err?.message||''));if(!cancelled)fs.appendFileSync(path.join(__dirname,'chat_error.log'),`${new Date().toISOString()} ${err.stack}\n`);res.writeHead(cancelled?409:500,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify({ok:false,error:err.message}))});
       return;
     }
     if (parsedUrl.pathname === '/api/handoff') {
@@ -2687,6 +2918,23 @@ wss.on('connection', (ws, req) => {
     try {
       if (!isBinary) {
         const json = JSON.parse(data.toString());
+        if (privacyCenter.isDeleting() && !['snapshot', 'handoff_get'].includes(String(json.type || ''))) {
+          if (json.type === 'workspace.event') {
+            ws.send(JSON.stringify({
+              type: 'workspace.ack',
+              eventId: String(json.eventId || ''),
+              accepted: false,
+              status: 'privacy_deletion_in_progress',
+              businessStatus: 'rejected',
+              businessAccepted: false,
+              reason: 'privacy_deletion_in_progress',
+              resultRevision: workspaceStore.eventRevision,
+            }));
+          } else {
+            ws.send(JSON.stringify({ type: 'privacy.write_blocked', reason: 'privacy_deletion_in_progress', requestId: json.requestId || null }));
+          }
+          return;
+        }
         switch(json.type) {
           case 'snapshot': {
             const since = Number(json.since || 0);

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { decryptArchive } = require('./privacy-center');
 
 const PORT = 19642;
 const TOKEN = 'enhancement-api-test-token-1234567890';
@@ -177,6 +178,100 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     const simulator = await request('/api/dev/simulator');
     assert.equal(simulator.response.status, 200);
     assert.equal(simulator.body.state.seed, 'api-test');
+
+    const privacyBefore = await request('/api/privacy/overview');
+    assert.equal(privacyBefore.response.status, 200);
+    assert.equal(privacyBefore.body.categories.memories.count, 1);
+    assert.equal(privacyBefore.body.categories.conversations.count, 0);
+    assert.ok(privacyBefore.body.excluded.includes('Provider 密钥'));
+
+    const privacySession = await request('/api/workspace/sessions', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'privacy-session', title: 'private session' })
+    });
+    assert.equal(privacySession.response.status, 201);
+    await request('/api/workspace/sessions/privacy-session/messages', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'privacy-message', role: 'user', text: 'private conversation body', runModel: false })
+    });
+    await request('/api/handoff', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ state: { revision: 100, notes: 'private handoff note' } })
+    });
+    await request('/api/motes/relationship', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ eventId: 'privacy-test-progress', amount: 7 })
+    });
+    const populatedOverview = await request('/api/privacy/overview');
+    assert.equal(populatedOverview.body.categories.conversations.count, 2);
+    assert.equal(populatedOverview.body.categories.tasks.count, 1);
+    assert.ok(populatedOverview.body.categories.progress.count > 0);
+
+    const encryptedExport = await request('/api/privacy/export', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ categories: ['memories'], passphrase: 'phonebridge test passphrase' })
+    });
+    assert.equal(encryptedExport.response.status, 200);
+    assert.equal(JSON.stringify(encryptedExport.body).includes('喜欢安静提醒'), false);
+    assert.equal(decryptArchive(encryptedExport.body.archive, 'phonebridge test passphrase').data.memories[0].text, '喜欢安静提醒');
+
+    const rejectedDelete = await request('/api/privacy/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: 'memory-delete-001', categories: ['memories'], confirmation: 'no' })
+    });
+    assert.equal(rejectedDelete.response.status, 400);
+    const deleted = await request('/api/privacy/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: 'memory-delete-001', categories: ['memories'], confirmation: 'DELETE SELECTED DATA' })
+    });
+    assert.equal(deleted.response.status, 200);
+    assert.equal(deleted.body.receipt.status, 'completed');
+    assert.ok((await request('/api/privacy/overview')).body.recentDeletions.some(item => item.requestId === 'memory-delete-001'));
+    const deletedReplay = await request('/api/privacy/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: 'memory-delete-001', categories: ['memories'], confirmation: 'DELETE SELECTED DATA' })
+    });
+    assert.equal(deletedReplay.body.receipt.duplicate, true);
+    assert.equal((await request('/api/memories')).body.count, 0);
+
+    const deletedConversations = await request('/api/privacy/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: 'conversation-delete-001', categories: ['conversations'], confirmation: 'DELETE SELECTED DATA' })
+    });
+    assert.equal(deletedConversations.response.status, 200);
+    assert.equal(deletedConversations.body.receipt.deletedCounts.conversations, 4);
+    assert.equal((await request('/api/workspace/sessions')).body.sessions.length, 0);
+    assert.equal((await request('/api/workspace')).body.tasks.length, 0);
+    assert.equal((await request('/api/handoff')).body.state.notes, '');
+    const timelineAfterConversationDelete = await request('/api/workspace/timeline?cursor=0');
+    assert.equal(timelineAfterConversationDelete.body.snapshot.messages.length, 0);
+    assert.equal(timelineAfterConversationDelete.body.snapshot.tasks.length, 0);
+    const staleConversationReplay = await request('/api/workspace/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: {
+        eventId: 'offline-message-before-privacy-delete', origin: 'phone-offline', sequence: 1,
+        type: 'workspace.message', createdAt: '2020-01-01T00:00:00.000Z', payload: { text: 'must not resurrect' }
+      } })
+    });
+    assert.equal(staleConversationReplay.body.businessStatus, 'rejected');
+    assert.equal(staleConversationReplay.body.businessReason, 'privacy_data_deleted:conversations');
+    assert.equal(JSON.stringify((await request('/api/workspace/timeline?cursor=0')).body).includes('must not resurrect'), false);
+
+    const deletedProgress = await request('/api/privacy/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: 'progress-delete-001', categories: ['progress'], confirmation: 'DELETE SELECTED DATA' })
+    });
+    assert.equal(deletedProgress.response.status, 200);
+    assert.equal((await request('/api/motes/relationship')).body.relationship.xp, 0);
+    const staleProgressReplay = await request('/api/workspace/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: {
+        eventId: 'offline-progress-before-privacy-delete', origin: 'phone-offline', sequence: 2,
+        type: 'mote.exploration', createdAt: '2020-01-01T00:00:00.000Z', payload: { clueType: 'light' }
+      } })
+    });
+    assert.equal(staleProgressReplay.body.businessStatus, 'rejected');
+    assert.equal(staleProgressReplay.body.businessReason, 'privacy_data_deleted:progress');
 
   } finally {
     child.kill('SIGTERM');

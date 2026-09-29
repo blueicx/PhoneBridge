@@ -93,6 +93,19 @@ class WorkspaceRepository private constructor(context: Context) {
         dao.actionRuns().map { it.toModel() }
     }
 
+    suspend fun purgePrivacyCategories(categories: List<String>, linkedConversationTaskIds: List<String> = emptyList()) = withContext(Dispatchers.IO) {
+        val normalized = PrivacyDataPolicy.normalizeCategories(categories)
+            ?: throw IllegalArgumentException("invalid privacy categories")
+        normalized.forEach { category ->
+            when (category) {
+                "memories" -> Unit // Preference-backed; cleared by the activity owner.
+                "conversations" -> dao.purgeConversationData(linkedConversationTaskIds)
+                "tasks" -> dao.purgeTaskData()
+                "progress" -> dao.purgeProgressData()
+            }
+        }
+    }
+
     suspend fun updateActionRun(run: ActionRun) = withContext(Dispatchers.IO) {
         dao.updateActionRunState(
             id = run.id,

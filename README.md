@@ -264,3 +264,12 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - Pairing/TLS pin、一次性 claim、拒绝错误 nonce、Android 二维码/claim 协议、断线状态与 outbox 恢复已由 Node/Android 自动测试覆盖。实机扫码、无线断线恢复和同步延迟尚未验收：无线 `39663` 不可达，应用相机权限未授权，当前界面处于离线状态。
 - 批次 5 GitHub Actions run [36340549528](https://github.com/blueicx/PhoneBridge/actions/runs/36340549528) 全部成功并上传内部 Debug APK artifact；APK 未加入源码历史。此构建不代表正式签名。
 - 正式 Release 签名保持关闭：尚无已验证的独立加密密钥恢复副本。待设备网络/相机权限可用后，补扫码配对、断线恢复、探索全流程和两小时稳定性/热/电量验收；同步延迟需在连接节点后采样。
+
+## 隐私中心与加密恢复
+
+- 新增 Android/服务端统一隐私中心，按长期记忆、聊天/会话/共享交接、任务/审计、Mote 成长/探索分项展示；加密档案按所选类别生成，并由系统文件选择器保存。删除必须逐字确认，并通过 `privacy.deleted` 同步清理 Android Room、outbox 与相关本地缓存。
+- 加密包采用 scrypt + AES-256-GCM；节点外网只允许 HTTPS 导出。运行时备份支持 `-Encrypt`，恢复脚本接受 `.pbenc` 并提供 `-VerifyOnly`，解密发生于受限临时目录。
+- 排除项：令牌/配对凭据、Provider 密钥、原始照片/画面、精确位置和连续轨迹。共享交接内容归入 conversations 类别，删除时同时清空服务端文件及手机镜像。
+- 删除期间会临时阻止新的写操作、取消并等待在途聊天，排空已进入的 HTTP 写请求；清理关联的终态任务内存记录和 Room/outbox 后再确认完成。手机重连先拉取有限的已完成删除收据并清缓存，再恢复 outbox，避免离线错过实时广播。
+- Android 本机删除未成功时会暂停 outbox 恢复发送，待下次成功对账服务端删除收据后再同步，避免被删数据重新上传。
+- 批次验证见 [`docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md`](docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md)；手机上的隐私对话框与系统文件选择器尚待点击验收。
