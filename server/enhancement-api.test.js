@@ -289,7 +289,7 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     const linkedTaskAfterConversationDelete = await request('/api/workspace/events', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ event: {
-        eventId: 'new-linked-task-with-both-revisions', origin: 'phone-online', sequence: 2,
+        eventId: 'new-linked_job-with-both-revisions', origin: 'phone-online', sequence: 2,
         type: 'workspace.task.progress', privacyRevisions: { conversations: 1, tasks: 0 },
         createdAt: new Date(Date.now() + 1000).toISOString(),
         payload: { source: 'conversation', metadata: { sessionId: 'new-session' }, progress: 20 }
@@ -304,7 +304,7 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     const staleLinkedTask = await request('/api/workspace/events', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ event: {
-        eventId: 'linked-task-replayed-after-task-delete', origin: 'phone-offline', sequence: 5,
+        eventId: 'linked_job-replayed-after-task-delete', origin: 'phone-offline', sequence: 5,
         type: 'workspace.task.progress', privacyRevisions: { conversations: 1, tasks: 0 },
         createdAt: new Date(Date.now() + 1000).toISOString(), payload: { source: 'conversation', metadata: { sessionId: 'new-session' } }
       } })

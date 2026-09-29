@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const { spawn } = require('node:child_process');
 const { WebSocket } = require('ws');
 
@@ -126,6 +127,12 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     const html = await page.text();
     assert.match(html, /If-None-Match/);
     assert.match(html, /status\s*===\s*304/);
+    assert.match(html, /privacyMigration/);
+    assert.match(html, /privacy\/migration\/resolve/);
+    assert.match(html, /privacyCategoryIds/);
+    for (const match of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)) {
+      assert.doesNotThrow(() => new vm.Script(match[1]), 'embedded Web script must parse');
+    }
 
     const summary = await request('/api/state?view=summary');
     assert.equal(summary.response.status, 200);

@@ -3078,16 +3078,18 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         sendJson(JSONObject().put("type", "hello").put("pet", petJson()))
         requestSnapshot()
         refreshStageHabitat()
-        reconcilePrivacyDeletionHistory {
-            flushWorkspaceOutbox()
-            drainChatOutbox()
+        reconcilePrivacyMigration {
+            reconcilePrivacyDeletionHistory {
+                flushWorkspaceOutbox()
+                drainChatOutbox()
+                pendingAutoCommand?.let { command ->
+                    sendJson(JSONObject().put("type", "command").put("text", command))
+                    runOnUiThread { logAdapter.add("info", "自动指令：$command") }
+                    pendingAutoCommand = null
+                }
+                if (continuousListening || pttActive) startMicrophone()
+            }
         }
-        pendingAutoCommand?.let { command ->
-            sendJson(JSONObject().put("type", "command").put("text", command))
-            runOnUiThread { logAdapter.add("info", "自动指令：$command") }
-            pendingAutoCommand = null
-        }
-        if (continuousListening || pttActive) startMicrophone()
     }
 
     override fun onBridgeState(state: DeviceHealthState) {
@@ -4210,7 +4212,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             "memories" to "长期记忆",
             "conversations" to "聊天、会话与交接内容",
             "tasks" to "任务与审计",
-            "progress" to "Mote 成长与探索"
+            "progress" to "Mote 成长与探索",
+            "routines" to "日常与习惯",
+            "goals" to "个人目标"
         )
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -4222,6 +4226,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             textSize = 14f
         }
         container.addView(overview, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+        val migrationButton = Button(this).apply {
+            text = "处理历史数据迁移确认"
+            visibility = View.GONE
+        }
+        container.addView(migrationButton, LinearLayout.LayoutParams(-1, -2))
+        val quarantineButton = Button(this).apply { text = "查看 / 加密导出本机隔离数据" }
+        container.addView(quarantineButton, LinearLayout.LayoutParams(-1, -2))
         val selections = linkedMapOf<String, android.widget.CheckBox>()
         categories.forEach { category ->
             val check = android.widget.CheckBox(this).apply {
@@ -4310,17 +4321,179 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             }
         }
         dialog.show()
+        migrationButton.setOnClickListener {
+            dialog.dismiss()
+            reconcilePrivacyMigration {
+                flushWorkspaceOutbox()
+                drainChatOutbox()
+            }
+        }
+        quarantineButton.setOnClickListener { showPrivacyQuarantineReview() }
         workspaceRequest("/api/privacy/overview", onSuccess = { response ->
             val counts = response.optJSONObject("categories")
-            overview.text = buildString {
-                appendLine("节点数据概览")
-                categories.forEach { category ->
-                    val item = counts?.optJSONObject(category)
-                    appendLine("${labels[category]}：${item?.optInt("count", 0) ?: 0}")
+            val migration = response.optJSONObject("migration")
+            val requiredCategories = buildSet {
+                migration?.optJSONArray("requiredCategories")?.let { required ->
+                    for (index in 0 until required.length()) required.optString(index).takeIf(String::isNotBlank)?.let(::add)
                 }
-                append("排除：访问令牌、Provider 密钥、原始画面、精确位置与连续轨迹。")
+            }
+            val decisions = migration?.optJSONObject("decisions")
+            val pendingMigration = requiredCategories.filter { category ->
+                decisions?.optString(category)?.let { it == "clear" || it == "keep" } != true
+            }
+            migrationButton.visibility = if (pendingMigration.isEmpty()) View.GONE else View.VISIBLE
+            val localPrivacyStates = categories.mapNotNull { category ->
+                val item = counts?.optJSONObject(category) ?: return@mapNotNull null
+                WorkspacePrivacyStateEntity(
+                    category = category,
+                    revision = item.optLong("revision", 0L).coerceAtLeast(0L),
+                    migrationRequired = item.optBoolean("migrationRequired", category in requiredCategories),
+                    decision = decisions?.optString(category)?.takeIf { it == "clear" || it == "keep" },
+                    updatedAt = System.currentTimeMillis()
+                )
+            }
+            appScope.launch(Dispatchers.IO) { workspaceRepository.observePrivacyStates(localPrivacyStates) }
+            appScope.launch(Dispatchers.IO) {
+                val localCounts = runCatching { workspaceRepository.localPrivacyCounts() }.getOrDefault(emptyMap())
+                withContext(Dispatchers.Main) {
+                    overview.text = buildString {
+                        appendLine("节点数据概览 · 本机数据仅在此设备统计")
+                        appendLine(if (pendingMigration.isEmpty()) "历史数据迁移：已确认" else "历史数据迁移：待确认 ${pendingMigration.joinToString("、")}；同步已暂停")
+                        categories.forEach { category ->
+                            val remoteCount = counts?.optJSONObject(category)?.optInt("count", 0) ?: 0
+                            val local = localCounts[category] ?: PrivacyLocalCounts()
+                            appendLine(
+                                "${labels[category]}：节点 $remoteCount · 本机 ${local.roomRecords + local.preferencesRecords} " +
+                                    "（Room ${local.roomRecords} / 设置缓存 ${local.preferencesRecords}） · " +
+                                    "待同步 ${local.pendingOutbox}（隔离 ${local.quarantinedOutbox}）"
+                            )
+                        }
+                        append("排除：访问令牌、Provider 密钥、原始画面、精确位置与连续轨迹。")
+                    }
+                }
             }
         }, onError = { error -> overview.text = "节点概览暂不可用：$error\n仍可在连接恢复后重试。" })
+    }
+
+    private fun showPrivacyQuarantineReview() {
+        appScope.launch(Dispatchers.IO) {
+            val stored = runCatching { PrivacyQuarantineStore.snapshot(this@MainActivity) }
+                .getOrElse { error ->
+                    withContext(Dispatchers.Main) {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("隔离数据不可用")
+                            .setMessage("本机加密隔离区无法读取；内容未发送。${error.message.orEmpty()}")
+                            .setPositiveButton("关闭", null)
+                            .show()
+                    }
+                    return@launch
+                }
+            val quarantinedEvents = JSONObject()
+            for (category in PrivacyDataPolicy.categories) {
+                val events = workspaceRepository.quarantinedOutboxForCategory(category)
+                if (events.isNotEmpty()) {
+                    quarantinedEvents.put(category, JSONArray().apply {
+                        events.forEach { event ->
+                            put(JSONObject().put("eventId", event.eventId).put("type", event.type)
+                                .put("createdAt", event.createdAt).put("payload", event.payload))
+                        }
+                    })
+                }
+            }
+            val unclassified = workspaceRepository.unclassifiedQuarantinedOutbox()
+            if (unclassified.isNotEmpty()) {
+                quarantinedEvents.put("unclassified", JSONArray().apply {
+                    unclassified.forEach { event ->
+                        put(JSONObject().put("eventId", event.eventId).put("type", event.type)
+                            .put("createdAt", event.createdAt).put("payload", event.payload))
+                    }
+                })
+            }
+            val archivePayload = JSONObject()
+                .put("formatVersion", 1)
+                .put("createdAt", System.currentTimeMillis())
+                .put("deviceQuarantine", stored)
+                .put("quarantinedOutbox", quarantinedEvents)
+                .toString(2)
+            val preview = buildString {
+                appendLine("只读本机隔离内容；不会自动重放或上传。")
+                appendLine("Keystore 隔离类别：${stored.keys().asSequence().toList().joinToString("、").ifBlank { "无" }}")
+                appendLine("隔离的待同步事件类别：${quarantinedEvents.keys().asSequence().toList().joinToString("、").ifBlank { "无" }}")
+                appendLine()
+                append(archivePayload.take(4_000))
+            }
+            withContext(Dispatchers.Main) {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("本机隔离数据 · 只读")
+                    .setMessage(preview)
+                    .setPositiveButton("加密导出") { _, _ -> showPrivacyQuarantineExport(archivePayload) }
+                    .setNegativeButton("关闭", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun showPrivacyQuarantineExport(archivePayload: String) {
+        val password = EditText(this).apply {
+            hint = "导出口令（至少 12 位）"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        val repeated = EditText(this).apply {
+            hint = "再次输入导出口令"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), 0)
+            addView(password)
+            addView(repeated)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("加密导出本机隔离数据")
+            .setView(content)
+            .setPositiveButton("加密并保存", null)
+            .setNegativeButton("取消", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val passphrase = password.text.toString()
+                val again = repeated.text.toString()
+                if (!PrivacyDataPolicy.isValidPassphrase(passphrase, again)) {
+                    Toast.makeText(this, "导出口令需为 12–1024 位且两次一致", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                password.text?.clear()
+                repeated.text?.clear()
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).text = "正在加密…"
+                appScope.launch(Dispatchers.Default) {
+                    val encrypted = runCatching { PrivacyLocalArchiveCrypto.encrypt(archivePayload, passphrase).toJson() }
+                    withContext(Dispatchers.Main) {
+                        val value = encrypted.getOrElse { error ->
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).text = "加密并保存"
+                            Toast.makeText(this@MainActivity, "加密失败：${error.message}", Toast.LENGTH_LONG).show()
+                            return@withContext
+                        }
+                        pendingPrivacyArchive = value
+                        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "application/json"
+                            putExtra(Intent.EXTRA_TITLE, "phonebridge-local-quarantine.pbenc.json")
+                        }
+                        runCatching { startActivityForResult(intent, REQUEST_PRIVACY_EXPORT_FILE) }
+                            .onFailure {
+                                pendingPrivacyArchive = null
+                                Toast.makeText(this@MainActivity, "无法打开系统文件选择器", Toast.LENGTH_LONG).show()
+                            }
+                        dialog.dismiss()
+                    }
+                }
+            }
+        }
+        dialog.show()
     }
 
     private fun showPrivacyDeleteConfirmation(selected: List<String>, labels: Map<String, String>) {
@@ -4373,7 +4546,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                             return@workspaceRequest
                         }
                         activeRequestId = null
-                        applyPrivacyDeletion(selected, requestId)
+                        applyPrivacyDeletion(
+                            selected,
+                            requestId,
+                            categoryRevisions = PrivacyRevisionWire.fromJson(receipt?.optJSONObject("categoryRevisions")?.toString())
+                        )
                         dialog.dismiss()
                         Toast.makeText(this, "所选数据已删除，并清理本机缓存", Toast.LENGTH_LONG).show()
                     },
@@ -4398,6 +4575,229 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         preferences.edit().putStringSet("applied_request_ids", ids).apply()
     }
 
+    private fun reconcilePrivacyMigration(onComplete: () -> Unit) {
+        workspaceRequest("/api/privacy/overview", onSuccess = { response ->
+            val migration = response.optJSONObject("migration")
+            val required = buildList {
+                migration?.optJSONArray("requiredCategories")?.let { values ->
+                    for (index in 0 until values.length()) {
+                        values.optString(index).takeIf { it in PrivacyDataPolicy.categories }?.let(::add)
+                    }
+                }
+            }.distinct()
+            val decisions = migration?.optJSONObject("decisions")
+            val remoteDecisions = required.mapNotNull { category ->
+                decisions?.optString(category)?.takeIf { it == "clear" || it == "keep" }?.let { category to it }
+            }.toMap()
+            val remoteCategories = response.optJSONObject("categories")
+            val remoteStates = PrivacyDataPolicy.categories.mapNotNull { category ->
+                val item = remoteCategories?.optJSONObject(category) ?: return@mapNotNull null
+                WorkspacePrivacyStateEntity(
+                    category = category,
+                    revision = item.optLong("revision", 0L).coerceAtLeast(0L),
+                    migrationRequired = item.optBoolean("migrationRequired", category in required && category !in remoteDecisions),
+                    decision = remoteDecisions[category],
+                    updatedAt = System.currentTimeMillis()
+                )
+            }
+            val remoteCounts = remoteCategories
+            appScope.launch(Dispatchers.IO) {
+                try {
+                    val previous = workspaceRepository.privacyStates().associateBy { it.category }
+                    for ((category, decision) in remoteDecisions) {
+                        val localDecision = previous[category]?.decision
+                        check(PrivacyRevisionPolicy.canApplyRemoteMigrationDecision(localDecision, decision)) {
+                            "$category 的本机与节点迁移选择冲突；本机数据未更改"
+                        }
+                        if (localDecision == decision) continue
+                        applyLegacyPrivacyPreferences(category, decision)
+                        check(workspaceRepository.applyLegacyPrivacyDecision(category, decision)) {
+                            "本机 $category 迁移选择与节点不一致"
+                        }
+                    }
+                    workspaceRepository.observePrivacyStates(remoteStates)
+                    val current = workspaceRepository.privacyStates().associateBy { it.category }
+                    withContext(Dispatchers.Main) {
+                        resolvePrivacyMigrationCategories(
+                            required = required,
+                            serverDecisions = remoteDecisions,
+                            states = current,
+                            remoteCategories = remoteCounts,
+                            index = 0,
+                            onComplete = onComplete
+                        )
+                    }
+                } catch (error: Exception) {
+                    runOnUiThread { logAdapter.add("warn", "隐私迁移尚未同步：${error.message ?: "本机状态不可用"}") }
+                }
+            }
+        }, onError = { error ->
+            logAdapter.add("warn", "无法读取隐私迁移状态；同步保持暂停：$error")
+        })
+    }
+
+    private fun resolvePrivacyMigrationCategories(
+        required: List<String>,
+        serverDecisions: Map<String, String>,
+        states: Map<String, WorkspacePrivacyStateEntity>,
+        remoteCategories: JSONObject?,
+        index: Int,
+        onComplete: () -> Unit
+    ) {
+        if (index >= required.size) {
+            appScope.launch {
+                val blocked = withContext(Dispatchers.IO) { workspaceRepository.privacySyncBlocked() }
+                if (blocked) {
+                    logAdapter.add("warn", "仍有历史数据待确认，自动同步已暂停。可在设置 → 隐私与数据继续处理。")
+                } else onComplete()
+            }
+            return
+        }
+        val category = required[index]
+        val serverDecision = serverDecisions[category]
+        val localDecision = states[category]?.decision
+        if (serverDecision != null) {
+            if (localDecision != serverDecision) {
+                logAdapter.add("error", "$category 的本机与节点迁移选择冲突；请检查隐私与数据状态。")
+                return
+            }
+            resolvePrivacyMigrationCategories(required, serverDecisions, states, remoteCategories, index + 1, onComplete)
+            return
+        }
+        val chosen = localDecision?.takeIf { it == "clear" || it == "keep" }
+        if (chosen != null) {
+            submitPrivacyMigrationDecision(category, chosen, required, serverDecisions, states, remoteCategories, index, onComplete)
+            return
+        }
+        appScope.launch {
+            val localCounts = withContext(Dispatchers.IO) { workspaceRepository.localPrivacyCounts()[category] ?: PrivacyLocalCounts() }
+            val remoteCount = remoteCategories?.optJSONObject(category)?.optInt("count", 0) ?: 0
+            val label = mapOf(
+                "memories" to "长期记忆", "conversations" to "聊天与交接内容",
+                "tasks" to "任务与审计", "progress" to "Mote 成长与探索"
+            )[category] ?: category
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("历史数据迁移确认 · $label")
+                .setMessage(
+                    "旧版记录无法可靠还原类别修订。节点约 $remoteCount 条；本机 Room ${localCounts.roomRecords} 条、设置缓存 ${localCounts.preferencesRecords} 条、待同步 ${localCounts.pendingOutbox} 条。\n\n" +
+                        "清除会删除此类别旧数据；保留会将旧待同步内容加密隔离，仅供查看/导出，绝不自动重放。期间同步保持暂停。"
+                )
+                .setPositiveButton("清除旧数据") { _, _ ->
+                    submitPrivacyMigrationDecision(category, "clear", required, serverDecisions, states, remoteCategories, index, onComplete)
+                }
+                .setNeutralButton("保留并隔离") { _, _ ->
+                    submitPrivacyMigrationDecision(category, "keep", required, serverDecisions, states, remoteCategories, index, onComplete)
+                }
+                .setNegativeButton("稍后") { _, _ -> logAdapter.add("info", "历史数据待确认；同步保持暂停。") }
+                .setOnCancelListener { logAdapter.add("info", "历史数据待确认；同步保持暂停。") }
+                .show()
+        }
+    }
+
+    private fun submitPrivacyMigrationDecision(
+        category: String,
+        decision: String,
+        required: List<String>,
+        serverDecisions: Map<String, String>,
+        states: Map<String, WorkspacePrivacyStateEntity>,
+        remoteCategories: JSONObject?,
+        index: Int,
+        onComplete: () -> Unit
+    ) {
+        appScope.launch(Dispatchers.IO) {
+            try {
+                if (states[category]?.decision != decision) {
+                    applyLegacyPrivacyPreferences(category, decision)
+                    check(workspaceRepository.applyLegacyPrivacyDecision(category, decision)) {
+                        "本机已有不同的数据迁移选择"
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    workspaceRequest(
+                        path = "/api/privacy/migration/resolve",
+                        method = "POST",
+                        payload = JSONObject().put("category", category).put("decision", decision),
+                        onSuccess = { response ->
+                            val result = response.optJSONObject("migration")
+                            val revision = result?.optLong("categoryRevision", -1L) ?: -1L
+                            if (revision < 0L) {
+                                logAdapter.add("error", "节点未返回有效迁移修订；同步仍暂停。")
+                                return@workspaceRequest
+                            }
+                            appScope.launch(Dispatchers.IO) {
+                                workspaceRepository.observePrivacyStates(
+                                    listOf(WorkspacePrivacyStateEntity(
+                                        category = category,
+                                        revision = revision,
+                                        migrationRequired = false,
+                                        decision = decision,
+                                        updatedAt = System.currentTimeMillis()
+                                    ))
+                                )
+                                val updated = workspaceRepository.privacyStates().associateBy { it.category }
+                                withContext(Dispatchers.Main) {
+                                    val nextServerDecisions = serverDecisions + (category to decision)
+                                    val nextStates = states + updated
+                                    resolvePrivacyMigrationCategories(
+                                        required, nextServerDecisions, nextStates, remoteCategories, index + 1, onComplete
+                                    )
+                                }
+                            }
+                        },
+                        onError = { error -> logAdapter.add("error", "$category 迁移确认未送达；保留本机选择并等待重试：$error") }
+                    )
+                }
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) {
+                    logAdapter.add("error", "$category 本机迁移处理失败；没有向节点确认：${error.message}")
+                }
+            }
+        }
+    }
+
+    private fun applyLegacyPrivacyPreferences(category: String, decision: String) {
+        val keep = decision == "keep"
+        when (category) {
+            "conversations" -> {
+                val chats = ChatOutbox.load(this)
+                val handoff = MoteHandoff.load(this)
+                if (keep && (chats.isNotEmpty() || !handoff.isEmpty())) {
+                    PrivacyQuarantineStore.replaceCategory(
+                        this, category,
+                        JSONObject().put("chatOutbox", JSONArray(chats)).put("handoff", MoteHandoff.toJson(handoff)).toString()
+                    )
+                } else if (!keep) PrivacyQuarantineStore.clearCategory(this, category)
+                ChatOutbox.replace(this, emptyList())
+                if (!handoff.isEmpty()) MoteHandoff.replace(this, HandoffState())
+            }
+            "memories" -> {
+                val memories = MoteMemory.load(this)
+                if (keep && memories.isNotEmpty()) {
+                    val items = JSONArray()
+                    memories.forEach { item ->
+                        items.put(JSONObject().put("id", item.id).put("text", item.text).put("createdAtMs", item.createdAtMs)
+                            .put("importance", item.importance).put("source", item.source).put("status", item.status)
+                            .put("excludedFromRecall", item.excludedFromRecall).put("updatedAtMs", item.updatedAtMs))
+                    }
+                    PrivacyQuarantineStore.replaceCategory(this, category, JSONObject().put("items", items).toString())
+                } else if (!keep) PrivacyQuarantineStore.clearCategory(this, category)
+                MoteMemory.clear(this)
+            }
+            "progress" -> {
+                val roster = getSharedPreferences("mote_roster", Context.MODE_PRIVATE)
+                val pet = getSharedPreferences("mote_pet", Context.MODE_PRIVATE)
+                if (keep) {
+                    val snapshot = JSONObject().put("roster", JSONObject(roster.all)).put("pet", JSONObject(pet.all))
+                    if (roster.all.isNotEmpty() || pet.all.isNotEmpty()) {
+                        PrivacyQuarantineStore.replaceCategory(this, category, snapshot.toString())
+                    }
+                } else PrivacyQuarantineStore.clearCategory(this, category)
+                roster.edit().clear().commit()
+                pet.edit().clear().commit()
+            }
+        }
+    }
+
     private fun reconcilePrivacyDeletionHistory(onComplete: () -> Unit) {
         workspaceRequest("/api/privacy/overview", onSuccess = { response ->
             val receipts = mutableListOf<JSONObject>()
@@ -4420,11 +4820,16 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                         for (categoryIndex in 0 until raw.length()) raw.optString(categoryIndex).takeIf { it.isNotBlank() }?.let(::add)
                     }
                     val normalized = PrivacyDataPolicy.normalizeCategories(categories)
-                    if (normalized == null) applyNext() else applyPrivacyDeletion(normalized, receipt?.optString("requestId"), applyNext)
+                    if (normalized == null) applyNext() else applyPrivacyDeletion(
+                        normalized,
+                        receipt?.optString("requestId"),
+                        onComplete = applyNext,
+                        categoryRevisions = PrivacyRevisionWire.fromJson(receipt?.optJSONObject("categoryRevisions")?.toString())
+                    )
                 }
             }
             applyNext()
-        }, onError = { onComplete() })
+        }, onError = { error -> logAdapter.add("warn", "隐私删除历史暂不可读；继续保持同步暂停：$error") })
     }
 
     private fun completePrivacyDeletion(requestId: String?, succeeded: Boolean, fallback: (() -> Unit)? = null) {
@@ -4442,7 +4847,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     @Synchronized
-    private fun applyPrivacyDeletion(rawCategories: List<String>, requestId: String? = null, onComplete: (() -> Unit)? = null) {
+    private fun applyPrivacyDeletion(
+        rawCategories: List<String>,
+        requestId: String? = null,
+        onComplete: (() -> Unit)? = null,
+        categoryRevisions: Map<String, Long> = emptyMap()
+    ) {
         val categories = PrivacyDataPolicy.normalizeCategories(rawCategories) ?: return
         val linkedConversationTaskIds = if ("conversations" in categories) {
             (workspaceTaskMirror.values
@@ -4471,7 +4881,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         appScope.launch(Dispatchers.IO) {
             val localPurge = runCatching {
-                workspaceRepository.purgePrivacyCategories(categories, linkedConversationTaskIds)
+                workspaceRepository.applyPrivacyDeletion(categories, categoryRevisions, linkedConversationTaskIds)
             }
             withContext(Dispatchers.Main) {
                 if (localPurge.isFailure) {
@@ -4866,10 +5276,16 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun drainChatOutbox() {
-        ChatOutbox.drain(this).forEach { text ->
-            logAdapter.add("info", "发送快捷回复：$text")
-            appendChat("user", text)
-            sendJson(JSONObject().put("type", "chat").put("text", text))
+        appScope.launch {
+            val blocked = withContext(Dispatchers.IO) {
+                runCatching { workspaceRepository.privacySyncBlocked() }.getOrDefault(true)
+            }
+            if (blocked) return@launch
+            ChatOutbox.drain(this@MainActivity).forEach { text ->
+                logAdapter.add("info", "发送快捷回复：$text")
+                appendChat("user", text)
+                sendJson(JSONObject().put("type", "chat").put("text", text))
+            }
         }
     }
 
@@ -4926,12 +5342,24 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         runCatching {
             val json = JSONObject(text)
             when (json.optString("type")) {
+                "privacy.migration" -> runOnUiThread {
+                    reconcilePrivacyMigration {
+                        flushWorkspaceOutbox()
+                        drainChatOutbox()
+                    }
+                }
                 "privacy.deleted" -> {
                     val raw = json.optJSONArray("categories") ?: return@runCatching
                     val categories = buildList {
                         for (index in 0 until raw.length()) raw.optString(index).takeIf { it.isNotBlank() }?.let(::add)
                     }
-                    runOnUiThread { applyPrivacyDeletion(categories, json.optString("requestId")) }
+                    runOnUiThread {
+                        applyPrivacyDeletion(
+                            categories,
+                            json.optString("requestId"),
+                            categoryRevisions = PrivacyRevisionWire.fromJson(json.optJSONObject("categoryRevisions")?.toString())
+                        )
+                    }
                 }
                 "log" -> {
                     val item = BridgeJson.log(json)

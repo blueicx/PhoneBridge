@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { WorkspaceStore, createEventEnvelope, shouldApplyWorkspaceEvent } = require('./workspace-core');
+const privacyEventRevisionFixture = require('../protocol-fixtures/privacy-event-revision.json');
 
 test('protocol fixture uses the shared event envelope', () => {
   const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'protocol-fixtures', 'workspace-event.json'), 'utf8'));
@@ -224,6 +225,19 @@ test('blocks automation actions only for hard-stop conditions, not ordinary offl
   assert.ok(store.listActionRuns().some(run => run.origin === 'automation' && (run.state === 'blocked' || run.state === 'cancelled')));
 });
 
+test('shared privacy revision fixture has the same server acceptance outcomes', () => {
+  for (const fixtureCase of privacyEventRevisionFixture.cases) {
+    const revisions = fixtureCase.categoryRevisions;
+    const privacy = {
+      categoryRevision: category => revisions[category] || 0,
+      isMigrationRequired: () => false,
+      observeCategoryRevision: (category, revision) => { revisions[category] = Math.max(revisions[category] || 0, revision); },
+    };
+    const accepted = new WorkspaceStore().acceptEvent(fixtureCase.event, privacy);
+    assert.equal(accepted.status || 'accepted', fixtureCase.expectedStatus, fixtureCase.id);
+  }
+});
+
 test('event envelopes preserve only normalized non-negative privacy revisions', () => {
   const event = createEventEnvelope({
     type: 'workspace.message',
@@ -311,7 +325,7 @@ test('conversation-linked task events require both category revisions and respec
     isMigrationRequired: () => false,
   };
   const oldOutbox = store.acceptEvent({
-    eventId: 'linked-task-old-task-revision', origin: 'phone', sequence: 1,
+    eventId: 'linked_job-old-task-revision', origin: 'phone', sequence: 1,
     type: 'workspace.task.progress', payload: { source: 'conversation', metadata: { sessionId: 's1' } },
     privacyRevisions: { conversations: 0 },
   }, privacy);
@@ -319,7 +333,7 @@ test('conversation-linked task events require both category revisions and respec
   assert.equal(oldOutbox.category, 'tasks');
 
   const currentOutbox = store.acceptEvent({
-    eventId: 'linked-task-current-both-revisions', origin: 'phone', sequence: 2,
+    eventId: 'linked_job-current-both-revisions', origin: 'phone', sequence: 2,
     type: 'workspace.task.progress', payload: { source: 'conversation', metadata: { sessionId: 's1' } },
     privacyRevisions: { conversations: 0, tasks: 1 },
   }, privacy);
@@ -433,6 +447,24 @@ test('privacy cleanup clears conversations and task audit without retaining payl
   assert.equal(store.syncState(unrelatedProgressEvent.revision).resetRequired, true);
 });
 
+test('progress privacy deletion removes both Mote and Reality event payloads and dedupe keys', () => {
+  const store = new WorkspaceStore();
+  const mote = store.acceptEvent({
+    eventId: 'progress-mote-event', origin: 'phone', sequence: 1, type: 'mote.exploration', payload: { clueType: 'object' },
+  }).event;
+  const reality = store.acceptEvent({
+    eventId: 'progress-reality-event', origin: 'phone', sequence: 2, type: 'reality.clue', payload: { clueType: 'light' },
+  }).event;
+
+  store.clearProgressEvents();
+
+  assert.deepEqual(store.events().map(event => event.type), ['privacy.purged']);
+  for (const event of [mote, reality]) {
+    assert.equal(store.eventKeys.has(`event:${event.eventId}`), false);
+    assert.equal(store.eventKeys.has(`${event.origin}:${event.sequence}`), false);
+  }
+});
+
 test('privacy deletion fences reject delayed conversation and progress outbox events', () => {
   let now = Date.parse('2026-09-29T12:00:00.000Z');
   const store = new WorkspaceStore({ now: () => now });
@@ -495,7 +527,8 @@ test('privacy event fences survive process restart without retaining deleted eve
 });
 
 test('privacy cleanup clears task records but preserves autonomy settings', () => {
-  const store = new WorkspaceStore();
+  const fixedNow = () => Date.parse('2026-09-30T00:00:00.000Z');
+  const store = new WorkspaceStore({ now: fixedNow });
   const task = store.createTask({ title: 'task to erase' });
   store.updateTask(task.id, { state: 'running' });
   store.updateTask(task.id, { state: 'succeeded' });

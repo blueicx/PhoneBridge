@@ -1,0 +1,18 @@
+{
+  "formatVersion": 1,
+  "migration": {
+    "sourceVersion": 1,
+    "status": "required",
+    "requiredCategories": ["conversations", "progress"],
+    "decisions": { "progress": "keep" }
+  },
+  "categories": {
+    "memories": { "label": "长期记忆", "count": 2, "revision": 1, "migrationRequired": false },
+    "conversations": { "label": "聊天与会话", "count": 3, "revision": 9, "migrationRequired": true },
+    "tasks": { "label": "任务与审计", "count": 4, "revision": 2, "migrationRequired": false },
+    "progress": { "label": "Mote 成长与探索", "count": 1, "revision": 5, "migrationRequired": false },
+    "routines": { "label": "日常与习惯", "count": 0, "revision": 0, "migrationRequired": false },
+    "goals": { "label": "个人目标", "count": 0, "revision": 0, "migrationRequired": false }
+  },
+  "excluded": ["访问令牌与配对凭据", "Provider 密钥", "原始照片/画面", "精确位置与连续轨迹"]
+}

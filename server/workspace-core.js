@@ -676,7 +676,10 @@ class WorkspaceStore {
   }
 
   clearProgressEvents() {
-    const deleted = this._purgePersonalEvents('progress', event => String(event.type || '').startsWith('mote.'));
+    const deleted = this._purgePersonalEvents('progress', event => {
+      const type = String(event.type || '').toLowerCase();
+      return type.startsWith('mote.') || type.startsWith('reality.');
+    });
     this._persist();
     return { deleted };
   }

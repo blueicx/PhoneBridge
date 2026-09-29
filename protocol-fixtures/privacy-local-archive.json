@@ -1,0 +1,11 @@
+{
+  "format": "phonebridge-local-privacy",
+  "version": 1,
+  "kdf": "PBKDF2-HMAC-SHA256",
+  "iterations": 210000,
+  "salt": "AAECAwQFBgcICQoLDA0ODw==",
+  "cipher": "AES-256-GCM",
+  "nonce": "EBESExQVFhcYGRob",
+  "sha256": "6ada99c2852c408d7e6d7383d887fc34fb18d3dd46cb39f49508e1c5c1af9a00",
+  "ciphertext": "5H769KSAOIOe3aOmWw7TaOnKUXh3KBKwekqxlEo62YC+CsLr1Ol44t8cJwBMT13Wd7UAm/krOGJZbjnlTVdgIFfzMsyHFlv3nw=="
+}

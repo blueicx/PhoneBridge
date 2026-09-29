@@ -7,6 +7,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { PrivacyCenter, decryptArchive, encryptArchive } = require('./privacy-center');
+const privacyMigrationFixture = require('../protocol-fixtures/privacy-migration.json');
+const privacyOverviewFixture = require('../protocol-fixtures/privacy-overview.json');
 
 const PASSPHRASE = 'correct horse battery staple';
 
@@ -207,7 +209,7 @@ test('legacy privacy audit below the receipt cap reconstructs revisions by uniqu
   assert.equal(persistence.value.version, 2);
 });
 
-test('legacy privacy audit at the cap pauses each old category until an explicit choice', () => {
+test('legacy privacy audit at the cap pauses each old category until an explicit choice', async () => {
   const { center } = makeLegacyCenter(100);
   let overview = center.overview();
 
@@ -216,12 +218,12 @@ test('legacy privacy audit at the cap pauses each old category until an explicit
   for (const category of LEGACY_CATEGORIES) assert.equal(overview.categories[category].migrationRequired, true);
   assert.equal(overview.categories.routines.migrationRequired, false);
 
-  center.resolveMigrationCategory('progress', 'keep');
+  await center.resolveMigrationCategory('progress', 'keep');
   overview = center.overview();
   assert.equal(overview.categories.progress.revision >= 1, true);
   assert.equal(overview.categories.progress.migrationRequired, false);
   assert.equal(overview.migration.status, 'required');
-  assert.throws(() => center.resolveMigrationCategory('progress', 'clear'), /decision|conflict/i);
+  await assert.rejects(center.resolveMigrationCategory('progress', 'clear'), /decision|conflict/i);
 });
 
 test('legacy audit with more than the receipt cap is treated as ambiguous after loading', () => {
@@ -233,9 +235,9 @@ test('legacy audit with more than the receipt cap is treated as ambiguous after 
   assert.deepEqual(overview.migration.requiredCategories, LEGACY_CATEGORIES);
 });
 
-test('legacy migration decisions remain idempotent after all categories are resolved and the process restarts', () => {
+test('legacy migration decisions remain idempotent after all categories are resolved and the process restarts', async () => {
   const { center, persistence } = makeLegacyCenter(100);
-  for (const category of LEGACY_CATEGORIES) center.resolveMigrationCategory(category, 'keep');
+  for (const category of LEGACY_CATEGORIES) await center.resolveMigrationCategory(category, 'keep');
   const adapters = Object.fromEntries([...LEGACY_CATEGORIES, 'routines', 'goals'].map(id => [id, {
     count: () => 0,
     export: () => [],
@@ -244,8 +246,102 @@ test('legacy migration decisions remain idempotent after all categories are reso
   const restored = new PrivacyCenter({ categories: adapters, persistence, now: () => 1_800_000_000_000 });
 
   assert.equal(restored.overview().migration.status, 'complete');
-  assert.equal(restored.resolveMigrationCategory('progress', 'keep').duplicate, true);
-  assert.throws(() => restored.resolveMigrationCategory('progress', 'clear'), /conflict/i);
+  assert.equal((await restored.resolveMigrationCategory('progress', 'keep')).duplicate, true);
+  await assert.rejects(restored.resolveMigrationCategory('progress', 'clear'), /conflict/i);
+});
+
+test('legacy clear runs the category purge once and advances its revision fence', async () => {
+  const { center } = makeLegacyCenter(100);
+  let clears = 0;
+  center.categories.get('progress').clear = () => { clears += 1; return { deleted: 7 }; };
+  const before = center.categoryRevision('progress');
+
+  const result = await center.resolveMigrationCategory('progress', 'clear');
+  const replay = await center.resolveMigrationCategory('progress', 'clear');
+
+  assert.equal(clears, 1);
+  assert.equal(result.decisions.progress, 'clear');
+  assert.equal(result.categoryRevisions.progress, before + 1);
+  assert.equal(replay.duplicate, true);
+});
+
+test('concurrent legacy migration retries share one clear and reject a competing choice', async () => {
+  const { center } = makeLegacyCenter(100);
+  let clears = 0;
+  let releaseClear;
+  let markStarted;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  const waiting = new Promise(resolve => { releaseClear = resolve; });
+  center.categories.get('progress').clear = async () => {
+    clears += 1;
+    markStarted();
+    await waiting;
+    return { deleted: 1 };
+  };
+
+  const first = center.resolveMigrationCategory('progress', 'clear');
+  await started;
+  const replay = center.resolveMigrationCategory('progress', 'clear');
+  await assert.rejects(center.resolveMigrationCategory('progress', 'keep'), /conflict/i);
+  releaseClear();
+  const [result, duplicate] = await Promise.all([first, replay]);
+
+  assert.equal(clears, 1);
+  assert.equal(result.duplicate, false);
+  assert.equal(duplicate.duplicate, true);
+});
+
+test('shared privacy migration fixture matches server overview projection', () => {
+  const persistence = {
+    load(name) {
+      if (name !== 'privacy-audit') return null;
+      return {
+        version: 2,
+        categoryRevisions: Object.fromEntries(Object.entries(privacyMigrationFixture.categories).map(([id, value]) => [id, value.revision])),
+        migration: structuredClone(privacyMigrationFixture.migration),
+        receipts: [],
+      };
+    },
+    save() {},
+  };
+  const categories = Object.fromEntries(Object.entries(privacyMigrationFixture.categories).map(([id, item]) => [id, {
+    label: item.label,
+    count: () => item.count,
+    export: () => [],
+    clear: () => ({ deleted: item.count }),
+  }]));
+  const overview = new PrivacyCenter({ categories, persistence, now: () => 1_800_000_000_000 }).overview();
+
+  assert.deepEqual(overview.migration, privacyMigrationFixture.migration);
+  for (const [id, expected] of Object.entries(privacyMigrationFixture.categories)) {
+    assert.deepEqual(overview.categories[id], expected);
+  }
+});
+
+test('shared privacy overview fixture covers every client category and exclusion', () => {
+  const categories = Object.fromEntries(Object.entries(privacyOverviewFixture.categories).map(([id, item]) => [id, {
+    label: item.label,
+    count: () => item.count,
+    export: () => [],
+    clear: () => ({ deleted: item.count }),
+  }]));
+  const persistence = {
+    load(name) {
+      if (name !== 'privacy-audit') return null;
+      return {
+        version: 2,
+        categoryRevisions: Object.fromEntries(Object.entries(privacyOverviewFixture.categories).map(([id, item]) => [id, item.revision])),
+        migration: structuredClone(privacyOverviewFixture.migration),
+        receipts: [],
+      };
+    },
+    save() {},
+  };
+  const overview = new PrivacyCenter({ categories, persistence, now: () => 1_800_000_000_000 }).overview();
+
+  assert.deepEqual(overview.categories, privacyOverviewFixture.categories);
+  assert.deepEqual(overview.migration, privacyOverviewFixture.migration);
+  assert.deepEqual(overview.excluded, privacyOverviewFixture.excluded);
 });
 
 test('category revisions are allocated once, survive restart, and do not advance on deletion replay', async () => {

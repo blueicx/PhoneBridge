@@ -56,30 +56,30 @@
 - `android/app/src/test/java/com/phonebridge/PrivacyDataPolicyTest.kt`
 - `android/app/src/test/java/com/phonebridge/WorkspaceProtocolTest.kt`
 - `android/app/src/androidTest/java/com/phonebridge/WorkspaceDatabaseMigrationTest.kt`
-- `android/app/build.gradle`、`android/schemas/`、`.github/workflows/ci.yml`
+- `android/app/build.gradle`、`android/app/schemas/`、`.github/workflows/ci.yml`
 
-- [ ] 先为 wire compatibility、category/event 分类、revision 缺失/过期决策、Room 迁移默认值和逐类确认策略增加 JVM 单测。旧事件 JSON 不含新字段时必须继续解析。
-- [ ] Room 数据库升级至 v5；对 outbox 增加 `privacyCategory`、`privacyRevision`、`quarantined` 字段及安全默认值；新增持久化的 `workspace_privacy_state` 表，用于保存服务端已知类别 revision、迁移状态和用户逐类选择。迁移期间不得丢失已有 outbox 和 workspace 数据。
-- [ ] 开启 Room schema export 并加入与当前 Room 2.6.1 匹配的 `room-testing` / AndroidX test runner；在 `android/app/src/androidTest` 使用 `MigrationTestHelper` 覆盖 v4→v5 与后续 v5→v6 升级，校验原有 session/message/task/outbox 数据以及新字段安全默认值。更新 `.github/workflows/ci.yml` 使用 Android emulator 跑 `:app:connectedDebugAndroidTest`，不把 JVM 单测冒充真实 SQLite migration 验证。
-- [ ] `WorkspaceEvent` 增加可选类别/revision 元数据并序列化为服务端约定的 `privacyRevisions`；新建事件使用 Room 已确认的当前类别 revision。旧事件解析保持默认兼容。
-- [ ] 更新 `PrivacyDataPolicy.categories` 为旧四类加 `routines`、`goals`；探索记录归入 `progress`。按事件类型和关联任务元数据映射类别，不用字符串猜测未知事件；未知个人数据事件暂停发送并可诊断，不默认归入安全类别。
-- [ ] 扩展 Repository 的事务操作：按类别统计 Room/Preferences/outbox 本地数量；选择清除时在单一 DB transaction 中清除该类缓存与待发事件；选择保留时标记旧 outbox 为 `quarantined`，保留只读查看/导出能力，并确保 `readyOutbox()` 永远不返回隔离事件。
-- [ ] Room migration 测试验证从 v4 升到 v5 后原表保留、revision 默认为 0、已有事件不被意外发送或删除；后续 v5→v6 测试随批次 B 增加。
-- [ ] 运行 `.gradlew.bat :app:testDebugUnitTest`（工作目录 `android`）。
+- [x] 先为 wire compatibility、category/event 分类、revision 缺失/过期决策、Room 迁移默认值和逐类确认策略增加 JVM 单测。旧事件 JSON 不含新字段时必须继续解析。
+- [x] Room 数据库升级至 v5；对 outbox 增加 `privacyCategory`、`privacyRevision`、`quarantined` 字段及安全默认值；新增持久化的 `workspace_privacy_state` 表，用于保存服务端已知类别 revision、迁移状态和用户逐类选择。迁移期间不得丢失已有 outbox 和 workspace 数据。
+- [x] 开启 Room schema export 并加入与当前 Room 2.6.1 匹配的 `room-testing` / AndroidX test runner；在 `android/app/src/androidTest` 使用 `MigrationTestHelper` 覆盖 v4→v5 与后续 v5→v6 升级，校验原有 session/message/task/outbox 数据以及新字段安全默认值。更新 `.github/workflows/ci.yml` 使用 Android emulator 跑 `:app:connectedDebugAndroidTest`，不把 JVM 单测冒充真实 SQLite migration 验证。
+- [x] `WorkspaceEvent` 增加可选类别/revision 元数据并序列化为服务端约定的 `privacyRevisions`；新建事件使用 Room 已确认的当前类别 revision。旧事件解析保持默认兼容。
+- [x] 更新 `PrivacyDataPolicy.categories` 为旧四类加 `routines`、`goals`；探索记录归入 `progress`。按事件类型和关联任务元数据映射类别，不用字符串猜测未知事件；未知个人数据事件暂停发送并可诊断，不默认归入安全类别。
+- [x] 扩展 Repository 的事务操作：按类别统计 Room/Preferences/outbox 本地数量；选择清除时在单一 DB transaction 中清除该类缓存与待发事件；选择保留时标记旧 outbox 为 `quarantined`，保留只读查看/导出能力，并确保 `readyOutbox()` 永远不返回隔离事件。
+- [x] Room migration 测试验证从 v4 升到 v5 后原表保留、revision 默认为 0、已有事件不被意外发送或删除；后续 v5→v6 测试随批次 B 增加。
+- [x] 运行 `.gradlew.bat :app:testDebugUnitTest`（工作目录 `android`）；实际 emulator SQLite migration 仍以推送后的 CI 为验收门。
 
 ### A4. 首次升级逐类确认与恢复发送门
 
 **涉及文件：** `android/app/src/main/java/com/phonebridge/MainActivity.kt`、`android/app/src/main/java/com/phonebridge/WorkspaceClient.kt`、`android/app/src/main/java/com/phonebridge/OutboxSyncWorker.kt`、`server/index.js` 中隐私工作台、相应 Kotlin/Node 测试。
 
-- [ ] 新增纯逻辑测试保证：同步启动先拉取 privacy overview；模糊迁移待确认期间禁止任何 outbox 事件发送；逐类处理完成并写入 revision 后才恢复发送；应用重启后不会重放已隔离事件。
-- [ ] Android 连接恢复流程按顺序执行：取 overview → 更新远端类别 revision → 对 revision 落后或待迁移类别执行本地对账 → 再启动既有唯一 outbox worker。Activity 不得额外启动第二个发送循环。
-- [ ] 沉浸舞台维持可用；抽屉中的隐私提示逐类展示服务端计数、本机 Room/缓存/待发数量，以及“清除本机缓存”与“保留并隔离旧待发事件”两项明确选择。不能自动替用户清除或上传旧数据。
-- [ ] “保留”路径允许用户只读查看，并通过用户主动输入口令生成本机加密导出；不能编辑后偷偷重放或将 payload 写入日志。用户今后新建的数据附当前 revision，正常同步。选择结果需幂等且跨进程重启恢复。
-- [ ] Web 隐私中心展示类别 revision/迁移状态和服务端逐类处理进度；服务端不能替代用户对手机本地数据作决定。
-- [ ] 新增共享 fixture `protocol-fixtures/privacy-overview.json` 与 `protocol-fixtures/privacy-event-revision.json`；Node 和 Kotlin 两端读取同一 fixture 验证字段与旧字段兼容。
-- [ ] 增加 `POST /api/privacy/migration/resolve`，只接受旧类别和 `clear|keep`；Android 先将本机清理/隔离与选择持久化，再幂等确认服务端迁移选择。进程在两步之间退出后，重连可安全重试；不同决策重放返回冲突。该接口只更新迁移元数据，不代替本机数据处理。
-- [ ] 运行 `node --test server/*.test.js` 与 `.gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`。检查 `git diff --check` 和密钥/Token 扫描。
-- [ ] 更新 `README.md` 与 `HANDOFF.md`：记录 revision 语义、旧档案确认行为、验证命令和未完成实机项。提交批次 A 并 push `feature/integrated-enhancement`；确认该 commit 的 GitHub Actions 结果后再进入批次 B。
+- [x] 新增纯逻辑/Repository 测试保证：同步门需完整 privacy overview；模糊迁移待确认期间不允许 outbox 事件发送；逐类处理完成并写入 revision 后才恢复发送；应用重启后隔离事件不会进入 ready outbox。旧事件 revision 不会被首次概览“补盖”成新版本。
+- [x] Android 连接恢复流程按顺序执行：取 overview → 更新远端类别 revision → 对 revision 落后或待迁移类别执行本地对账 → 再启动既有唯一 outbox worker。Activity 不得额外启动第二个发送循环。
+- [x] 沉浸舞台维持可用；抽屉中的隐私提示逐类展示服务端计数、本机 Room/缓存/待发数量，以及“清除旧数据”与“保留并隔离旧待发事件”两项明确选择。不能自动替用户清除或上传旧数据。
+- [x] “保留”路径允许用户只读查看，并通过用户主动输入口令生成本机加密导出；不能编辑后偷偷重放或将 payload 写入日志。用户在本地选择后新建的数据附将确认的 revision，确认前仍保持发送门关闭。选择结果需幂等且跨进程重启恢复。
+- [x] Web 隐私中心展示类别 revision/迁移状态和服务端逐类处理进度；服务端不能替代用户对手机本地数据作决定。
+- [x] 新增共享 fixture `protocol-fixtures/privacy-overview.json` 与 `protocol-fixtures/privacy-event-revision.json`；Node 和 Kotlin 两端读取同一 fixture 验证字段与旧字段兼容。
+- [x] 增加 `POST /api/privacy/migration/resolve`，只接受旧类别和 `clear|keep`；Android 先将本机清理/隔离与选择持久化，再幂等确认服务端迁移选择。进程在两步之间退出后，重连可安全重试；不同决策重放返回冲突。接口不替代本机数据处理。
+- [x] 运行 `node --test server/*.test.js` 与 `.gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`。检查 `git diff --check` 和密钥/Token 扫描。
+- [x] `README.md` 与 `HANDOFF.md` 已记录 revision 语义、迁移确认、加密隔离、验证结果和实机待验收项；批次 A commit/push 及最新 Actions emulator migration 验收待完成，之后再进入批次 B。
 
 ## 批次 B：可选日常活动与用户确认目标板
 

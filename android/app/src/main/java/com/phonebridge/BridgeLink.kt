@@ -104,20 +104,22 @@ object BridgeLink {
 
     fun sendWorkspaceEvent(event: WorkspaceEvent): Boolean {
         val payload = runCatching { JSONObject(event.payload) }.getOrElse { JSONObject().put("value", event.payload) }
-        return send(
-            JSONObject()
-                .put("type", "workspace.event")
-                .put("eventId", event.eventId)
-                .put("origin", event.origin)
-                .put("sequence", event.sequence)
-                .put("eventType", event.type)
-                .put("payload", payload)
-                .put("createdAt", event.createdAt)
-                .put("ack", event.ack)
-                .put("localActionId", event.localActionId)
-                .put("localActionState", event.localActionState)
-                .put("revision", event.revision)
-        )
+        val envelope = JSONObject()
+            .put("type", "workspace.event")
+            .put("eventId", event.eventId)
+            .put("origin", event.origin)
+            .put("sequence", event.sequence)
+            .put("eventType", event.type)
+            .put("payload", payload)
+            .put("createdAt", event.createdAt)
+            .put("ack", event.ack)
+            .put("localActionId", event.localActionId)
+            .put("localActionState", event.localActionState)
+            .put("revision", event.revision)
+        if (event.privacyRevisions.isNotEmpty()) {
+            envelope.put("privacyRevisions", JSONObject(PrivacyRevisionWire.toJson(event.privacyRevisions)))
+        }
+        return send(envelope)
     }
 
     fun send(type: Int, sequence: Int, payload: ByteArray): Boolean {

@@ -91,6 +91,114 @@ class WorkspaceProtocolTest {
     }
 
     @Test
+    fun privacyRevisionWireIsStableAndLegacyEventsDefaultToNoRevisions() {
+        val revisions = linkedMapOf("conversations" to 2L, "tasks" to 4L)
+        val wire = PrivacyRevisionWire.toJson(revisions)
+        assertEquals("{\"conversations\":2,\"tasks\":4}", wire)
+        assertEquals(revisions, PrivacyRevisionWire.fromJson(wire))
+        assertEquals(emptyMap<String, Long>(), PrivacyRevisionWire.fromJson(null))
+        assertEquals(emptyMap<String, Long>(), PrivacyRevisionWire.fromJson("{}"))
+
+        val event = WorkspaceEvent(
+            origin = "phone", sequence = 1, type = WorkspaceEventTypes.MESSAGE,
+            payload = "{}", privacyRevisions = revisions
+        )
+        assertEquals(revisions, event.privacyRevisions)
+        assertEquals(revisions, WorkspaceEvent.fromJson(event.toJson()).privacyRevisions)
+    }
+
+    @Test
+    fun oldWorkspaceEnvelopeParsesWithoutRevisionAndInvalidRevisionFieldsAreDropped() {
+        val legacy = WorkspaceEvent.fromJson(
+            """{"eventId":"legacy","origin":"phone","sequence":3,"type":"workspace.message","payload":{"text":"hello"},"createdAt":5,"unknownField":"ignored"}"""
+        )
+        assertEquals("legacy", legacy.eventId)
+        assertEquals("{\"text\":\"hello\"}", legacy.payload)
+        assertEquals(emptyMap<String, Long>(), legacy.privacyRevisions)
+
+        val parsed = PrivacyRevisionWire.fromJson(
+            """{"conversations":2,"tasks":3.5,"progress":-1,"unknown":7,"memories":"4","goals":9007199254740992}"""
+        )
+        assertEquals(mapOf("conversations" to 2L), parsed)
+    }
+
+    @Test
+    fun sharedPrivacyRevisionFixtureParsesAndClassifiesTheSameCrossRuntimeEvents() {
+        val fixtureText = javaClass.getResourceAsStream("/privacy-event-revision.json")
+            ?.bufferedReader()?.use { it.readText() }
+            ?: error("shared privacy-event-revision.json fixture is missing")
+        val fixture = parseWorkspaceJsonObject(fixtureText)
+        val cases = fixture["cases"] as? List<*> ?: error("fixture cases are missing")
+        for (rawCase in cases) {
+            val item = fixtureObject(rawCase)
+            val eventJson = fixtureObject(item["event"])
+            val payload = fixtureObject(eventJson["payload"])
+            val event = WorkspaceEvent(
+                eventId = eventJson["eventId"] as String,
+                origin = eventJson["origin"] as String,
+                sequence = (eventJson["sequence"] as Number).toLong(),
+                type = eventJson["type"] as String,
+                payload = "{}",
+                createdAt = (eventJson["createdAt"] as Number).toLong(),
+                privacyRevisions = PrivacyRevisionWire.fromValue(eventJson["privacyRevisions"])
+            )
+            val categories = PrivacyDataPolicy.classifyEvent(event.type, payload)?.categories
+            val caseId = item["id"] as String
+            val expectedCategories = (item["expectedCategories"] as List<*>).map { it as String }
+            assertEquals(caseId, expectedCategories, categories)
+
+            val revisionsJson = fixtureObject(item["categoryRevisions"])
+            val expectedStatus = when {
+                categories.orEmpty().any { category ->
+                    val current = (revisionsJson[category] as? Number)?.toLong() ?: 0L
+                    val supplied = event.privacyRevisions[category]
+                    supplied == null && current > 0L
+                } -> "privacy_revision_required"
+                categories.orEmpty().any { category ->
+                    event.privacyRevisions[category]?.let { it < ((revisionsJson[category] as? Number)?.toLong() ?: 0L) } == true
+                } -> "privacy_revision_stale"
+                else -> "accepted"
+            }
+            assertEquals(caseId, item["expectedStatus"], expectedStatus)
+            val expectedRevisions = PrivacyRevisionWire.fromValue(eventJson["privacyRevisions"])
+            assertEquals(caseId, expectedRevisions, event.privacyRevisions)
+        }
+    }
+
+    @Test
+    fun privacyRevisionPolicyRejectsMissingOrStaleVersionsAndWaitsForEveryLegacyDecision() {
+        assertFalse(PrivacyRevisionPolicy.hasCompleteOverview(PrivacyDataPolicy.categories, emptySet()))
+        assertFalse(PrivacyRevisionPolicy.hasCompleteOverview(PrivacyDataPolicy.categories, PrivacyDataPolicy.categories.dropLast(1).toSet()))
+        assertTrue(PrivacyRevisionPolicy.hasCompleteOverview(PrivacyDataPolicy.categories, PrivacyDataPolicy.categories.toSet()))
+        assertTrue(PrivacyRevisionPolicy.shouldHoldOutbox(privacyOverviewLoaded = false, migrationPending = false))
+        assertTrue(PrivacyRevisionPolicy.shouldHoldOutbox(privacyOverviewLoaded = true, migrationPending = true))
+        assertFalse(PrivacyRevisionPolicy.shouldHoldOutbox(privacyOverviewLoaded = true, migrationPending = false))
+        assertEquals(PrivacyRevisionDisposition.ACCEPT, PrivacyRevisionPolicy.check(0L, null, false))
+        assertEquals(PrivacyRevisionDisposition.REVISION_REQUIRED, PrivacyRevisionPolicy.check(2L, null, false))
+        assertEquals(PrivacyRevisionDisposition.STALE, PrivacyRevisionPolicy.check(2L, 1L, false))
+        assertEquals(PrivacyRevisionDisposition.ACCEPT, PrivacyRevisionPolicy.check(2L, 2L, false))
+        assertEquals(PrivacyRevisionDisposition.ACCEPT, PrivacyRevisionPolicy.check(2L, 3L, false))
+        assertEquals(PrivacyRevisionDisposition.MIGRATION_REQUIRED, PrivacyRevisionPolicy.check(2L, 2L, true))
+        assertTrue(PrivacyRevisionPolicy.canApplyRemoteMigrationDecision(null, "clear"))
+        assertTrue(PrivacyRevisionPolicy.canApplyRemoteMigrationDecision("keep", "keep"))
+        assertFalse(PrivacyRevisionPolicy.canApplyRemoteMigrationDecision("keep", "clear"))
+        assertFalse(PrivacyRevisionPolicy.canApplyRemoteMigrationDecision(null, "upload"))
+        assertEquals(0L, PrivacyRevisionPolicy.revisionForNewEvent(0L, migrationRequired = false, localDecision = null))
+        assertEquals(0L, PrivacyRevisionPolicy.revisionForNewEvent(0L, migrationRequired = true, localDecision = null))
+        assertEquals(1L, PrivacyRevisionPolicy.revisionForNewEvent(0L, migrationRequired = true, localDecision = "keep"))
+        assertEquals(5L, PrivacyRevisionPolicy.revisionForNewEvent(4L, migrationRequired = true, localDecision = "clear"))
+        assertEquals(4L, PrivacyRevisionPolicy.revisionForNewEvent(4L, migrationRequired = true, localDecision = "other"))
+        assertFalse(PrivacyRevisionPolicy.canResumeMigration(setOf("conversations", "tasks"), mapOf("tasks" to "keep")))
+        assertTrue(PrivacyRevisionPolicy.canResumeMigration(setOf("conversations", "tasks"), mapOf("tasks" to "keep", "conversations" to "clear")))
+        assertTrue(PrivacyRevisionPolicy.canResumeMigration(emptySet(), emptyMap()))
+        val firstDecision = PrivacyRevisionPolicy.resolveMigrationDecision(setOf("conversations"), emptyMap(), "conversations", "keep")
+        assertEquals(mapOf("conversations" to "keep"), firstDecision)
+        assertNull(PrivacyRevisionPolicy.resolveMigrationDecision(setOf("conversations"), firstDecision.orEmpty(), "conversations", "clear"))
+        assertNull(PrivacyRevisionPolicy.resolveMigrationDecision(setOf("conversations"), emptyMap(), "tasks", "keep"))
+        assertNull(PrivacyRevisionPolicy.resolveMigrationDecision(setOf("conversations"), emptyMap(), "conversations", "upload"))
+    }
+
+    @Test
     fun outboxLeaseSeparatesTransportSendFromBusinessAckAndRecoversAfterTimeout() {
         val queue = OutboxQueue()
         val event = WorkspaceEvent(origin = "phone", sequence = 9, type = WorkspaceEventTypes.MOTE_EXPLORATION, payload = "{}", createdAt = 100L)
@@ -306,13 +414,20 @@ class WorkspaceProtocolTest {
     }
 
     @Test
-    fun workspaceDatabaseDeclaresV3Migration() {
-        assertEquals(4, WORKSPACE_DB_VERSION)
+    fun workspaceDatabaseDeclaresPrivacyFenceMigration() {
+        assertEquals(5, WORKSPACE_DB_VERSION)
         val migrations = WorkspaceRepository.MIGRATIONS.toList()
         assertTrue(migrations.any { it.startVersion == 1 && it.endVersion == 2 })
         assertTrue(migrations.any { it.startVersion == 3 && it.endVersion == 4 })
+        assertTrue(migrations.any { it.startVersion == 4 && it.endVersion == 5 })
         assertTrue(migrations.all { it is Migration })
     }
+
+    private fun fixtureObject(value: Any?): Map<String, Any?> =
+        (value as? Map<*, *>)?.entries?.mapNotNull { (key, item) ->
+            (key as? String)?.let { it to item }
+        }?.toMap().orEmpty()
+
     @Test
     fun workspaceEventGateBehaviors() {
         val gate = WorkspaceEventGate()

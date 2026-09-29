@@ -273,3 +273,11 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 删除期间会临时阻止新的写操作、取消并等待在途聊天，排空已进入的 HTTP 写请求；清理关联的终态任务内存记录和 Room/outbox 后再确认完成。手机重连先拉取有限的已完成删除收据并清缓存，再恢复 outbox，避免离线错过实时广播。
 - Android 本机删除未成功时会暂停 outbox 恢复发送，待下次成功对账服务端删除收据后再同步，避免被删数据重新上传。
 - 批次验证见 [`docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md`](docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md)；本批 CI [run 36599821041](https://github.com/blueicx/PhoneBridge/actions/runs/36599821041) 已通过并上传内部 Debug artifact。手机上的隐私对话框与系统文件选择器尚待点击验收。
+
+## 2026-09-30 隐私 revision 与旧客户端迁移
+
+- 服务端按六个隐私类别维护单调 revision；旧审计无法无歧义迁移时，按旧类别逐项保留或清除确认。已确认选择可幂等重试，冲突选择明确拒绝。
+- Android Room v5 为 outbox 保存类别、revision 和 quarantine 状态；旧 outbox 默认隔离，未知个人事件 fail-closed。同步需先取得完整六类别 overview，并完成待确认迁移；未完成时只暂停联网发送，不阻塞沉浸舞台。
+- 首次 overview 不会把旧 outbox 事件重盖成较新的删除 revision；用户选择后新建的事件预附将确认的 revision，但仍等服务端确认后才恢复发送。隔离数据只读，可由用户主动口令加密导出。
+- Node 与 Kotlin 共用 `privacy-overview.json`、`privacy-event-revision.json` fixtures，覆盖旧字段兼容、缺失/过期 revision 和关联任务双类别校验。Room v4→v5 SQLite migration 与本地恢复由 Android emulator CI 实际运行；JVM 单测或仪器测试编译不替代该验证。
+- 本机自动验证：Node **195/195**；Android JVM **149/149**，Lint 0 issues，Debug 构建成功，Android instrumentation 测试源码编译成功。实际 emulator migration run 等推送后 CI；本轮未运行 ADB、未安装或操作手机。正式 Release 签名与真实设备迁移/扫码仍按交接待验收。

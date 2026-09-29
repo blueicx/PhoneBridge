@@ -104,6 +104,7 @@ class PrivacyCenter {
     this.activeMutations = 0;
     this.mutationWaiters = [];
     this.inFlightDeletes = new Map();
+    this.inFlightMigrationDecisions = new Map();
     const saved = persistence?.load?.('privacy-audit', null);
     const rawReceipts = Array.isArray(saved?.receipts) ? saved.receipts : [];
     this.receipts = rawReceipts.slice(-MAX_RECEIPTS).map(receipt => clone(receipt));
@@ -240,21 +241,64 @@ class PrivacyCenter {
 
   resolveMigrationCategory(category, decision) {
     if (!LEGACY_CATEGORIES.includes(category) || !this.migration.requiredCategories.includes(category)) {
-      throw new Error(`privacy migration category is not pending: ${category}`);
+      return Promise.reject(new Error(`privacy migration category is not pending: ${category}`));
     }
-    if (decision !== 'clear' && decision !== 'keep') throw new Error('privacy migration decision must be clear or keep');
+    if (decision !== 'clear' && decision !== 'keep') return Promise.reject(new Error('privacy migration decision must be clear or keep'));
     const previous = this.migration.decisions[category];
-    if (previous && previous !== decision) throw new Error('privacy migration decision conflict');
-    if (previous === decision) return { ...clone(this.migration), duplicate: true };
+    if (previous && previous !== decision) return Promise.reject(new Error('privacy migration decision conflict'));
+    if (previous === decision) return Promise.resolve(this._migrationDecisionResult(category, decision, true));
+    const inFlight = this.inFlightMigrationDecisions.get(category);
+    if (inFlight) {
+      if (inFlight.decision !== decision) return Promise.reject(new Error('privacy migration decision conflict'));
+      return inFlight.promise.then(() => this._migrationDecisionResult(category, decision, true));
+    }
 
+    const operation = this._applyMigrationCategoryDecision(category, decision);
+    this.inFlightMigrationDecisions.set(category, { decision, promise: operation });
+    return operation.finally(() => {
+      if (this.inFlightMigrationDecisions.get(category)?.promise === operation) this.inFlightMigrationDecisions.delete(category);
+    });
+  }
+
+  async _applyMigrationCategoryDecision(category, decision) {
+    const adapter = this.categories.get(category);
+    let release = null;
+    let clearResult = null;
+    if (decision === 'clear') {
+      await adapter.validateClear?.();
+      release = await adapter.prepareDelete?.();
+      try { clearResult = await adapter.clear(); }
+      finally { if (typeof release === 'function') { try { release(); } catch (_) {} } }
+    }
+
+    const previousMigration = clone(this.migration);
+    const previousRevision = this.categoryRevisions[category] || 0;
     this.migration.decisions[category] = decision;
-    this.categoryRevisions[category] = Math.max(1, this.categoryRevisions[category] || 0);
+    this.categoryRevisions[category] = Math.max(1, previousRevision + 1);
     if (!this.isMigrationRequired()) {
       this.migration.status = 'complete';
       this.migration.completedAt = new Date(this.now()).toISOString();
     }
-    this._save();
-    return clone(this.migration);
+    try { this._save(); }
+    catch (error) {
+      this.migration = previousMigration;
+      this.categoryRevisions[category] = previousRevision;
+      throw error;
+    }
+    return this._migrationDecisionResult(category, decision, false, clearResult);
+  }
+
+  _migrationDecisionResult(category, decision, duplicate, clearResult = null) {
+    const revision = this.categoryRevisions[category] || 0;
+    return {
+      ...clone(this.migration),
+      category,
+      decision,
+      categoryRevision: revision,
+      categoryRevisions: { [category]: revision },
+      ...(clearResult ? { deletedCount: Math.max(0, Number(clearResult.deleted) || 0) } : {}),
+      duplicate,
+    };
   }
 
   exportEncrypted({ categories = [...this.categories.keys()], passphrase } = {}) {

@@ -487,3 +487,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 正式签名、扫码/WSS、相机线索/ARCore、PTT、同步恢复和两小时稳定性继续待验收。
 
 实现记录：[`docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md`](docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md)。
+
+## 40. 2026-09-30 隐私 revision、旧档案迁移与恢复发送门
+
+- PrivacyCenter v2 继续维护每类单调 revision；旧 v1 审计 receipt 少于 100 条时可按唯一 request/category 重建，达到或超过上限时只将旧四类标记为待确认。服务端 migration resolve 对同一决策幂等，对冲突决策返回冲突；“clear”执行对应服务端类别清理并提升 revision。
+- Android Room 数据库升级到 v5，新增 `workspace_privacy_state` 和 outbox 类别/revision/quarantined 字段。v4 历史 outbox 安全默认隔离，Room 原 session/message/task 保留；未知个人事件不自动发送。Repository 提供六类本机计数、分类清理、只读隔离查看和 revision 栅栏。
+- Android 连接时先读取完整六类 privacy overview、写入 revision 并逐类对账，再恢复唯一 WorkManager outbox。overview 缺失/不完整或迁移未确认时暂停联网同步。旧事件不会被首次 overview“补盖”新 revision；迁移选择后本地新建事件可带预期下一 revision，但在节点确认前仍受门控。WS migration 通知触发重新对账。
+- “保留”流程将旧偏好/对话缓存/个人镜像按类使用 Android Keystore AES-GCM 隔离；旧 outbox 标记 quarantined，保持只读且不重放。用户可查看脱敏结构并在本机输入口令，以 PBKDF2-HMAC-SHA256 + AES-256-GCM 生成便携密文；Node CLI 可解密，口令和明文不进日志。Android 本机加密与 Node 互通使用共享 fixture 验证。
+- Web 隐私中心以服务端 overview 动态呈现六类别、revision、迁移进度和单类决策；修正 HTML 内嵌脚本中任务/Attention/审批/Mote handler 的转义，并在 API 测试中编译解析所有内嵌脚本。
+- 回归额外覆盖旧 outbox revision 不因首次 overview 被改写、用户选择后的新事件附未来 revision、overview 类别不完整时同步仍关闭；共享 `privacy-overview.json` 和 `privacy-event-revision.json` 由 Node/Kotlin 读取。
+- 节点与本机迁移选择不一致时，客户端在清理任何本机偏好/缓存前先拒绝该决策；冲突保持 fail-closed，不静默替用户清除数据，需显式排查后才能恢复同步。
+- 本机自动验收：Node `node --test` **195/195**；Android `:app:testDebugUnitTest` **149/149**、`:app:compileDebugAndroidTestKotlin`、`:app:lintDebug`（0 issues）和 `:app:assembleDebug` 全部成功；`node --check`、`scan_secrets.ps1`、`bench_workspace.ps1`、`git diff --check` 通过。性能预算输出 `elapsedMs=0.746`、完整快照 `1694 bytes`、摘要 `48 bytes`、快照缓存命中 `10000`、突发广播 `1`。
+- Android emulator 上的实际 Room v4→v5 SQLite migration / 仪器测试尚未在本机运行，`.github/workflows/ci.yml` 已配置在 API 34 emulator 执行；推送后须确认最新 Actions 成功才进入 Batch B。没有用本机仪器测试编译结果冒充模拟器执行通过。
+- 本轮没有运行 ADB、连接手机、安装 APK、触碰或授予权限；二维码/真实连接与迁移确认操作仍待设备验收。当前正式 Release signing 仍无已验证的独立加密密钥恢复副本，故未生成正式签名 APK。
+- Batch A 本地验收已完成；源码提交/ref 与推送后的 Actions run 结果由随后的交付记录补齐（当前尚未触发 CI）。
+
+实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。

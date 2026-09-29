@@ -2,17 +2,31 @@ package com.phonebridge
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.withTransaction
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
 
-class WorkspaceRepository private constructor(context: Context) {
+data class PrivacyLocalCounts(
+    val roomRecords: Long = 0L,
+    val preferencesRecords: Long = 0L,
+    val pendingOutbox: Long = 0L,
+    val quarantinedOutbox: Long = 0L
+)
+
+class WorkspaceRepository internal constructor(
+    context: Context,
+    databaseName: String = "phonebridge-workspace.db"
+) {
+    private val appContext = context.applicationContext
     private val database = Room.databaseBuilder(
-        context.applicationContext,
+        appContext,
         WorkspaceDatabase::class.java,
-        "phonebridge-workspace.db"
+        databaseName
     )
         .addMigrations(*MIGRATIONS)
         .build()
@@ -96,13 +110,240 @@ class WorkspaceRepository private constructor(context: Context) {
     suspend fun purgePrivacyCategories(categories: List<String>, linkedConversationTaskIds: List<String> = emptyList()) = withContext(Dispatchers.IO) {
         val normalized = PrivacyDataPolicy.normalizeCategories(categories)
             ?: throw IllegalArgumentException("invalid privacy categories")
-        normalized.forEach { category ->
-            when (category) {
-                "memories" -> Unit // Preference-backed; cleared by the activity owner.
-                "conversations" -> dao.purgeConversationData(linkedConversationTaskIds)
-                "tasks" -> dao.purgeTaskData()
-                "progress" -> dao.purgeProgressData()
+        database.withTransaction {
+            normalized.forEach { category -> clearRoomPrivacyCategory(category, linkedConversationTaskIds) }
+            purgeClassifiedOutbox(normalized.toSet())
+        }
+    }
+
+    /** Applies a remote deletion fence and local purge atomically with respect to outbox enqueue. */
+    suspend fun applyPrivacyDeletion(
+        categories: List<String>,
+        revisions: Map<String, Long>,
+        linkedConversationTaskIds: List<String> = emptyList(),
+        updatedAt: Long = System.currentTimeMillis()
+    ) = withContext(Dispatchers.IO) {
+        val normalized = PrivacyDataPolicy.normalizeCategories(categories)
+            ?: throw IllegalArgumentException("invalid privacy categories")
+        val safeRevisions = PrivacyRevisionWire.fromValue(revisions)
+        database.withTransaction {
+            persistPrivacyRevisions(safeRevisions, updatedAt)
+            normalized.forEach { category -> clearRoomPrivacyCategory(category, linkedConversationTaskIds) }
+            val currentStates = dao.privacyStates().associateBy { it.category }
+            dao.allOutbox().forEach { row ->
+                val eventCategories = PrivacyDataPolicy.classifyEvent(row.type, parseWorkspaceJsonObject(row.payload))
+                    ?.categories.orEmpty()
+                val touchedCategories = eventCategories.filter(normalized::contains)
+                val stamped = PrivacyRevisionWire.fromJson(row.privacyRevisionsJson)
+                val stale = touchedCategories.any { category ->
+                    val receiptRevision = safeRevisions[category]
+                    val deletionRevision = receiptRevision?.let {
+                        maxOf(it, currentStates[category]?.revision ?: 0L)
+                    }
+                    val eventRevision = stamped[category]
+                    deletionRevision == null || eventRevision == null || eventRevision < deletionRevision
+                }
+                if (stale) dao.deleteOutboxEvent(row.eventId)
             }
+            quarantineInvalidOutbox(dao.privacyStates().associateBy { it.category })
+        }
+    }
+
+    suspend fun localPrivacyCounts(): Map<String, PrivacyLocalCounts> = withContext(Dispatchers.IO) {
+        val allEvents = dao.allOutbox()
+        val roomCounts = mapOf(
+            "memories" to 0L,
+            "conversations" to (
+                dao.countSessions() + dao.countMessages() + dao.countConversationTasks() +
+                    dao.countConversationAttention() + dao.countConversationActionRuns()
+                ),
+            "tasks" to (dao.countTasks() + dao.countAttention() + dao.countActionRuns()),
+            "progress" to 0L,
+            "routines" to 0L,
+            "goals" to 0L
+        )
+        PrivacyDataPolicy.categories.associateWith { category ->
+            val matching = allEvents.filter { row ->
+                PrivacyDataPolicy.classifyEvent(row.type, parseWorkspaceJsonObject(row.payload))
+                    ?.categories?.contains(category) == true
+            }
+            PrivacyLocalCounts(
+                roomRecords = roomCounts[category] ?: 0L,
+                preferencesRecords = when (category) {
+                    "memories" -> MoteMemory.load(appContext).size.toLong() +
+                        if (PrivacyQuarantineStore.hasCategory(appContext, category)) 1L else 0L
+                    "conversations" -> ChatOutbox.load(appContext).size.toLong() +
+                        (if (MoteHandoff.load(appContext).isEmpty()) 0L else 1L) +
+                        (if (PrivacyQuarantineStore.hasCategory(appContext, category)) 1L else 0L)
+                    "progress" -> localProgressPreferenceRecords() +
+                        if (PrivacyQuarantineStore.hasCategory(appContext, category)) 1L else 0L
+                    else -> 0L
+                },
+                pendingOutbox = matching.count { !it.ack }.toLong(),
+                quarantinedOutbox = matching.count { !it.ack && it.quarantined }.toLong()
+            )
+        }
+    }
+
+    suspend fun quarantinedOutboxForCategory(category: String): List<WorkspaceEvent> = withContext(Dispatchers.IO) {
+        require(category in PrivacyDataPolicy.categories) { "invalid privacy category" }
+        dao.allOutbox().asSequence()
+            .filter { it.quarantined }
+            .filter { row ->
+                PrivacyDataPolicy.classifyEvent(row.type, parseWorkspaceJsonObject(row.payload))
+                    ?.categories?.contains(category) == true
+            }
+            .map { it.toEvent() }
+            .toList()
+    }
+
+    suspend fun unclassifiedQuarantinedOutboxCount(): Long = withContext(Dispatchers.IO) {
+        dao.allOutbox().count { row ->
+            row.quarantined && PrivacyDataPolicy.classifyEvent(row.type, parseWorkspaceJsonObject(row.payload)) == null
+        }.toLong()
+    }
+
+    suspend fun unclassifiedQuarantinedOutbox(): List<WorkspaceEvent> = withContext(Dispatchers.IO) {
+        dao.allOutbox().asSequence()
+            .filter { it.quarantined }
+            .filter { PrivacyDataPolicy.classifyEvent(it.type, parseWorkspaceJsonObject(it.payload)) == null }
+            .map { it.toEvent() }
+            .toList()
+    }
+
+    private fun localProgressPreferenceRecords(): Long {
+        val roster = appContext.getSharedPreferences("mote_roster", Context.MODE_PRIVATE)
+        fun arraySize(key: String): Long = runCatching {
+            val raw = roster.getString(key, null) ?: return@runCatching 0L
+            JSONArray(raw).length().toLong()
+        }.getOrDefault(0L)
+        fun objectSize(key: String): Long = runCatching {
+            val raw = roster.getString(key, null) ?: return@runCatching 0L
+            JSONObject(raw).length().toLong()
+        }.getOrDefault(0L)
+        val hasPetSnapshot = appContext.getSharedPreferences("mote_pet", Context.MODE_PRIVATE)
+            .let { prefs -> listOf("level", "experience", "appearance").any(prefs::contains) }
+        return arraySize("roster") + objectSize("state") + arraySize("story") + if (hasPetSnapshot) 1L else 0L
+    }
+
+    /** Applies the local half of a legacy-data decision before the caller confirms it with the server. */
+    suspend fun applyLegacyPrivacyDecision(
+        category: String,
+        decision: String,
+        linkedConversationTaskIds: List<String> = emptyList(),
+        updatedAt: Long = System.currentTimeMillis()
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (category !in PrivacyDataPolicy.categories || decision !in setOf("clear", "keep")) return@withContext false
+        database.withTransaction {
+            val existing = dao.privacyState(category)
+            if (existing?.decision != null && existing.decision != decision) return@withTransaction false
+            if (existing?.decision == decision) return@withTransaction true
+            if (decision == "clear") {
+                clearRoomPrivacyCategory(category, linkedConversationTaskIds)
+                purgeClassifiedOutbox(setOf(category))
+            }
+            dao.savePrivacyState((existing ?: WorkspacePrivacyStateEntity(category = category, migrationRequired = true)).copy(
+                decision = decision,
+                updatedAt = updatedAt
+            ))
+            true
+        }
+    }
+
+    private suspend fun clearRoomPrivacyCategory(category: String, linkedConversationTaskIds: List<String>) {
+        when (category) {
+            "conversations" -> dao.purgeConversationData(linkedConversationTaskIds)
+            "tasks" -> dao.purgeTaskData()
+            "progress" -> dao.purgeProgressData()
+            "memories", "routines", "goals" -> Unit
+        }
+    }
+
+    private suspend fun purgeClassifiedOutbox(categories: Set<String>) {
+        dao.allOutbox().forEach { row ->
+            val classification = PrivacyDataPolicy.classifyEvent(row.type, parseWorkspaceJsonObject(row.payload))
+            if (classification?.categories.orEmpty().any(categories::contains)) dao.deleteOutboxEvent(row.eventId)
+        }
+    }
+
+    suspend fun privacyStates(): List<WorkspacePrivacyStateEntity> = withContext(Dispatchers.IO) {
+        dao.privacyStates()
+    }
+
+    suspend fun privacySyncBlocked(): Boolean = withContext(Dispatchers.IO) {
+        val states = dao.privacyStates()
+        PrivacyRevisionPolicy.shouldHoldOutbox(
+            privacyOverviewLoaded = PrivacyRevisionPolicy.hasCompleteOverview(
+                PrivacyDataPolicy.categories,
+                states.mapTo(mutableSetOf()) { it.category }
+            ),
+            migrationPending = states.any { it.migrationRequired }
+        )
+    }
+
+    suspend fun observePrivacyStates(incoming: List<WorkspacePrivacyStateEntity>) = withContext(Dispatchers.IO) {
+        val safe = incoming.filter { it.category in PrivacyDataPolicy.categories && it.revision >= 0L }
+        if (safe.isEmpty()) return@withContext
+        database.withTransaction {
+            safe.forEach { next ->
+                val previous = dao.privacyState(next.category)
+                if (previous == null || next.revision >= previous.revision) {
+                    val pendingLocalDecision = previous?.decision?.takeIf { next.migrationRequired && next.decision == null }
+                    dao.savePrivacyState(next.copy(
+                        decision = next.decision ?: pendingLocalDecision,
+                        updatedAt = if (next.migrationRequired && previous?.migrationRequired == true) previous.updatedAt else next.updatedAt
+                    ))
+                }
+            }
+            // Never rewrite an existing event's fence from the newly fetched snapshot:
+            // an event queued before this overview may predate a remote deletion.
+            quarantineInvalidOutbox(dao.privacyStates().associateBy { it.category })
+        }
+    }
+
+    /** Applies monotonic server revisions and quarantines any local event stamped before a deletion. */
+    suspend fun observePrivacyRevisions(revisions: Map<String, Long>, updatedAt: Long = System.currentTimeMillis()) = withContext(Dispatchers.IO) {
+        val safe = PrivacyRevisionWire.fromValue(revisions)
+        if (safe.isEmpty()) return@withContext
+        database.withTransaction {
+            persistPrivacyRevisions(safe, updatedAt)
+            val current = dao.privacyStates().associateBy { it.category }
+            quarantineInvalidOutbox(current)
+        }
+    }
+
+    private suspend fun persistPrivacyRevisions(revisions: Map<String, Long>, updatedAt: Long) {
+        revisions.forEach { (category, revision) ->
+            val previous = dao.privacyState(category)
+            if (revision >= (previous?.revision ?: 0L)) {
+                dao.savePrivacyState(
+                    WorkspacePrivacyStateEntity(
+                        category = category,
+                        revision = revision,
+                        migrationRequired = previous?.migrationRequired ?: false,
+                        decision = previous?.decision,
+                        updatedAt = updatedAt
+                    )
+                )
+            }
+        }
+    }
+
+    private suspend fun quarantineInvalidOutbox(states: Map<String, WorkspacePrivacyStateEntity>) {
+        dao.pendingOutbox().forEach { row ->
+            val categories = PrivacyDataPolicy.classifyEvent(row.type, parseWorkspaceJsonObject(row.payload))?.categories
+                ?: run { dao.quarantineOutbox(row.eventId); return@forEach }
+            val stamped = PrivacyRevisionWire.fromJson(row.privacyRevisionsJson)
+            val invalid = categories.any { category ->
+                val state = states[category]
+                if (state?.migrationRequired == true) return@any false
+                PrivacyRevisionPolicy.check(
+                    currentRevision = state?.revision ?: 0L,
+                    clientRevision = stamped[category],
+                    migrationRequired = state?.migrationRequired == true
+                ) != PrivacyRevisionDisposition.ACCEPT
+            }
+            if (invalid) dao.quarantineOutbox(row.eventId)
         }
     }
 
@@ -119,24 +360,44 @@ class WorkspaceRepository private constructor(context: Context) {
     }
 
     suspend fun enqueue(event: WorkspaceEvent): Boolean = withContext(Dispatchers.IO) {
-        dao.enqueue(
-            WorkspaceOutboxEntity(
-                eventId = event.eventId,
-                origin = event.origin,
-                sequence = event.sequence,
-                type = event.type,
-                payload = event.payload,
-                createdAt = event.createdAt,
-                ack = event.ack,
-                nextAttemptAt = event.createdAt,
-                localActionId = event.localActionId,
-                localActionState = event.localActionState?.let(ActionRunState::fromWire)
+        database.withTransaction {
+            val classification = PrivacyDataPolicy.classifyEvent(event.type, parseWorkspaceJsonObject(event.payload))
+            val states = dao.privacyStates().associateBy { it.category }
+            val categories = classification?.categories.orEmpty()
+            val revisions = categories.associateWith { category ->
+                val state = states[category]
+                PrivacyRevisionPolicy.revisionForNewEvent(
+                    currentRevision = state?.revision ?: 0L,
+                    migrationRequired = state?.migrationRequired == true,
+                    localDecision = state?.decision
+                )
+            }
+            val quarantined = classification == null
+            val primaryCategory = categories.singleOrNull()
+            val inserted = dao.enqueue(
+                WorkspaceOutboxEntity(
+                    eventId = event.eventId,
+                    origin = event.origin,
+                    sequence = event.sequence,
+                    type = event.type,
+                    payload = event.payload,
+                    createdAt = event.createdAt,
+                    ack = event.ack,
+                    nextAttemptAt = event.createdAt,
+                    localActionId = event.localActionId,
+                    localActionState = event.localActionState?.let(ActionRunState::fromWire),
+                    privacyCategory = primaryCategory,
+                    privacyRevision = primaryCategory?.let { revisions[it] } ?: 0L,
+                    privacyRevisionsJson = PrivacyRevisionWire.toJson(revisions),
+                    quarantined = quarantined
+                )
             )
-        ) != -1L
+            inserted != -1L
+        }
     }
 
     suspend fun readyOutbox(now: Long = System.currentTimeMillis()): List<WorkspaceEvent> = withContext(Dispatchers.IO) {
-        dao.readyOutbox(now).map { it.toEvent() }
+        if (privacySyncBlocked()) emptyList() else dao.readyOutbox(now).map { it.toEvent() }
     }
 
     suspend fun claimOutbox(
@@ -281,7 +542,8 @@ class WorkspaceRepository private constructor(context: Context) {
         createdAt = createdAt,
         ack = ack,
         localActionId = localActionId,
-        localActionState = localActionState
+        localActionState = localActionState,
+        privacyRevisions = PrivacyRevisionWire.fromJson(privacyRevisionsJson)
     )
 
     companion object {
@@ -364,6 +626,27 @@ class WorkspaceRepository private constructor(context: Context) {
                     database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `businessStatus` TEXT")
                     database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `businessReason` TEXT")
                     database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `resultRevision` INTEGER")
+                }
+            },
+            object : Migration(4, 5) {
+                override fun migrate(database: SupportSQLiteDatabase) {
+                    database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `privacyCategory` TEXT")
+                    database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `privacyRevision` INTEGER NOT NULL DEFAULT 0")
+                    database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `privacyRevisionsJson` TEXT NOT NULL DEFAULT '{}'")
+                    // Pre-fence outbox rows have no trustworthy category revision; retain but never replay them.
+                    database.execSQL("ALTER TABLE `workspace_outbox` ADD COLUMN `quarantined` INTEGER NOT NULL DEFAULT 1")
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `workspace_privacy_state` (
+                            `category` TEXT NOT NULL,
+                            `revision` INTEGER NOT NULL DEFAULT 0,
+                            `migrationRequired` INTEGER NOT NULL DEFAULT 0,
+                            `decision` TEXT,
+                            `updatedAt` INTEGER NOT NULL DEFAULT 0,
+                            PRIMARY KEY(`category`)
+                        )
+                        """.trimIndent()
+                    )
                 }
             }
         )

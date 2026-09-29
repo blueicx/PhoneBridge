@@ -433,6 +433,18 @@ const privacyCenter = new PrivacyCenter({
         return { deleted };
       },
     },
+    routines: {
+      label: '日常与习惯',
+      count: () => 0,
+      export: () => [],
+      clear: () => ({ deleted: 0 }),
+    },
+    goals: {
+      label: '个人目标',
+      count: () => 0,
+      export: () => [],
+      clear: () => ({ deleted: 0 }),
+    },
   },
 });
 
@@ -1691,11 +1703,12 @@ const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name
 <div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>手机安全配对</h2><div class="row"><button onclick="startPairing()">生成五分钟二维码</button><span id="pairingStatus" class="sub" aria-live="polite">在手机“节点”中选择“扫码配对”</span></div><img id="pairingQr" alt="手机配对二维码" style="display:none;width:min(300px,100%);margin-top:12px;background:white;border-radius:12px;padding:8px"></div>
 <div class="panel" style="grid-column:1/-1"><h2>现实探索</h2><div class="sub">只输入粗区域 ID，不上传精确位置；例如 <code>cell:1561:6073</code>。</div><div class="row"><input id="realityRegion" placeholder="粗区域 ID" style="flex:1"><button class="primary" onclick="refreshReality()">刷新事件</button></div><div id="realitySummary" class="sub" style="margin-top:8px">尚未加载现实事件</div></div>
-<div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出加密档案</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
+<div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div id="privacyMigration" class="sub" role="status" style="margin-top:8px"></div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出加密档案</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
 <script>
 let selected='';
 let companionSummaryRevision = '';
 let providerOptionsRevision = '';
+let privacyCategoryIds = [];
 function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 function jsAttr(s){return JSON.stringify(String(s??'')).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function sel(id){selected=id;let t=(window.TASKS||{})[id];detail.value=t?t.detail:''}
@@ -1806,14 +1819,42 @@ async function startPairing(){
 async function refreshPrivacy(){
   try{
     const result=await api('/api/privacy/overview');
+    if(result._status===304)return;
+    privacyCategoryIds=Object.keys(result.categories||{});
     const lines=Object.entries(result.categories||{}).map(([id,item])=>id+'：'+item.label+' '+item.count+' 条');
     privacySummary.textContent='可管理数据：'+lines.join(' · ')+'。排除：'+(result.excluded||[]).join('、');
+    renderPrivacyMigration(result.migration,result.categories||{});
   }catch(error){privacySummary.textContent='数据概览读取失败：'+error.message}
 }
+function renderPrivacyMigration(migration,categories){
+  const root=document.getElementById('privacyMigration');root.replaceChildren();
+  const required=Array.isArray(migration?.requiredCategories)?migration.requiredCategories:[];
+  const decisions=migration?.decisions||{};
+  const pending=required.filter(id=>!['clear','keep'].includes(decisions[id]));
+  if(!pending.length){root.textContent=migration?.status==='complete'?'历史隐私迁移已确认，数据同步正常。':'没有待确认的历史数据迁移。';return}
+  const notice=document.createElement('div');notice.textContent='历史记录存在歧义；手机同步已暂停。逐类选择清除或保留并隔离：';root.appendChild(notice);
+  for(const id of pending){
+    const row=document.createElement('div');row.className='row';row.style.alignItems='center';
+    const label=document.createElement('span');label.textContent=(categories[id]?.label||id)+' · 节点 '+(categories[id]?.count||0)+' 条';row.appendChild(label);
+    for(const [decision,title] of [['clear','清除旧数据'],['keep','保留并隔离']]){
+      const button=document.createElement('button');button.textContent=title;
+      button.onclick=()=>resolvePrivacyMigration(id,decision);row.appendChild(button);
+    }
+    root.appendChild(row);
+  }
+}
+async function resolvePrivacyMigration(category,decision){
+  if(decision==='clear'&&!confirm('将清除节点上的“'+(category)+'”历史数据。此操作不可撤销，继续吗？'))return;
+  try{
+    const result=await api('/api/privacy/migration/resolve',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({category,decision})});
+    privacyResult.textContent=(decision==='clear'?'已清除并确认迁移：':'已保留并隔离确认：')+category+' · revision '+result.migration.categoryRevision;
+    await refreshPrivacy();
+  }catch(error){privacyResult.textContent='迁移确认未完成：'+error.message}
+}
 function selectedPrivacyCategories(){
-  const value=prompt('输入要处理的数据类别，逗号分隔：memories, conversations, tasks, progress；输入 all 表示全部');
+  const value=prompt('输入要处理的数据类别，逗号分隔：'+privacyCategoryIds.join(', ')+'；输入 all 表示全部');
   if(value===null)return null;
-  const ids=value.trim()==='all'?['memories','conversations','tasks','progress']:value.split(',').map(item=>item.trim()).filter(Boolean);
+  const ids=value.trim()==='all'?privacyCategoryIds:value.split(',').map(item=>item.trim()).filter(Boolean);
   if(!ids.length)throw new Error('请至少选择一个类别');
   return [...new Set(ids)];
 }
@@ -1888,7 +1929,7 @@ async function refreshWorkspaceNow(){try{
   }
   if (filter) filteredTasks = filteredTasks.filter(t => (t.state || t.status) === filter);
 
-  const tasksHtml = filteredTasks.slice(0,10).map(t=>'<div class=item onclick="selectTask(\''+esc(t.id)+'\')" style="cursor:pointer;border:1px solid #ccc;padding:4px;margin-bottom:4px;"><b>'+esc(t.title)+'</b> · '+esc(t.state||t.status)+' · '+(t.progress||0)+'% <br><button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'pause\')">暂停</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'continue\')">继续</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'retry\')">重试</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'cancel\')">取消</button> <button onclick="event.stopPropagation();taskAction(this,\''+esc(t.id)+'\',\'archive\')">归档</button></div>').join('');
+  const tasksHtml = filteredTasks.slice(0,10).map(t=>'<div class=item onclick="selectTask('+jsAttr(t.id)+')" style="cursor:pointer;border:1px solid #ccc;padding:4px;margin-bottom:4px;"><b>'+esc(t.title)+'</b> · '+esc(t.state||t.status)+' · '+(t.progress||0)+'% <br><button onclick="event.stopPropagation();taskAction(this,'+jsAttr(t.id)+','+jsAttr('pause')+')">暂停</button> <button onclick="event.stopPropagation();taskAction(this,'+jsAttr(t.id)+','+jsAttr('continue')+')">继续</button> <button onclick="event.stopPropagation();taskAction(this,'+jsAttr(t.id)+','+jsAttr('retry')+')">重试</button> <button onclick="event.stopPropagation();taskAction(this,'+jsAttr(t.id)+','+jsAttr('cancel')+')">取消</button> <button onclick="event.stopPropagation();taskAction(this,'+jsAttr(t.id)+','+jsAttr('archive')+')">归档</button></div>').join('');
   const counts=(w.tasks||[]).reduce((all,t)=>{const key=t.state||t.status||'unknown';all[key]=(all[key]||0)+1;return all},{});
   const statsHtml = '<div style="margin-bottom:8px">任务视图: <select id="taskViewSelect" onchange="window.taskViewMode=this.value;refreshWorkspace()"><option value="all" '+(viewMode==='all'?'selected':'')+'>全部任务</option><option value="inbox" '+(viewMode==='inbox'?'selected':'')+'>收件箱 (待处理/需确认)</option><option value="in_progress" '+(viewMode==='in_progress'?'selected':'')+'>进行中 (运行/暂停)</option><option value="history" '+(viewMode==='history'?'selected':'')+'>历史任务 (完成/失败/归档)</option></select> 状态筛选: <select id="taskFilter" onchange="refreshWorkspace()"><option value="">全部状态</option><option value="pending">待处理</option><option value="running">运行中</option><option value="needs_confirmation">需确认</option><option value="succeeded">已完成</option><option value="failed">失败</option><option value="archived">已归档</option></select> 统计: 共 '+(w.taskCount||0)+' · 待处理 '+(counts.pending||0)+' · 运行中 '+(counts.running||0)+' · 需确认 '+(counts.needs_confirmation||0)+' · 完成 '+(counts.succeeded||0)+' · 失败 '+(counts.failed||0)+'</div>';
   const attentionItems = (w.attention || s.attention || []);
@@ -1896,13 +1937,13 @@ async function refreshWorkspaceNow(){try{
     const taskId = a.relatedTaskId || '';
     const sessId = a.relatedSessionId || '';
     const link = taskId ? ('phonebridge://task/' + esc(taskId)) : ('phonebridge://attention/' + esc(a.id));
-    return '<div class="item attention-item" data-attention-id="' + esc(a.id) + '" data-task-id="' + esc(taskId) + '" data-session-id="' + esc(sessId) + '" data-deep-link="' + esc(link) + '" style="cursor:pointer;border-left:3px solid var(--amber);" onclick="onAttentionClick(\'' + esc(taskId) + '\')">' +
+    return '<div class="item attention-item" data-attention-id="' + esc(a.id) + '" data-task-id="' + esc(taskId) + '" data-session-id="' + esc(sessId) + '" data-deep-link="' + esc(link) + '" style="cursor:pointer;border-left:3px solid var(--amber);" onclick="onAttentionClick(' + jsAttr(taskId) + ')">' +
       '<b>[Attention/' + esc(a.severity) + ']</b> ' + esc(a.title) + ' - ' + esc(a.summary) +
       (taskId ? ' <span style="font-size:10px;color:var(--mint)">[关联任务: ' + esc(taskId) + ']</span>' : '') +
     '</div>';
   }).join('');
-  const approvalsHtml=(w.approvals||[]).filter(a=>a.state==='needs_confirmation'||a.state==='approved').map(a=>'<div class=item>待批准：<b>'+esc(a.toolId)+'</b> · '+esc(a.state)+' <button class=primary onclick="approveApproval(\''+esc(a.id)+'\')">批准并执行</button></div>').join('');
-  const roster=(s.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote(\''+esc(m.id)+'\')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
+  const approvalsHtml=(w.approvals||[]).filter(a=>a.state==='needs_confirmation'||a.state==='approved').map(a=>'<div class=item>待批准：<b>'+esc(a.toolId)+'</b> · '+esc(a.state)+' <button class=primary onclick="approveApproval('+jsAttr(a.id)+')">批准并执行</button></div>').join('');
+  const roster=(s.motes?.roster||[]).map(m=>'<button '+(m.unlocked?'':'disabled')+' class="'+(m.active?'primary':'')+'" onclick="activateMote('+jsAttr(m.id)+')">'+esc(m.name)+(m.unlocked?'':' 🔒')+'</button>').join('');
   const revision=String(w.eventRevision||s.revision||'');
   if(!moteRoster.querySelector('[data-workspace-shell]')){
     moteRoster.innerHTML='<div data-workspace-shell style="width:100%"><div data-workspace-stats></div><div data-workspace-attention></div><div data-workspace-tasks></div><div data-workspace-approvals></div><div data-workspace-roster style="width:100%;margin-top:8px"></div><div id="taskDetail" style="margin-top:8px;padding:8px;background:#101E18;font-size:12px;white-space:pre-wrap"></div></div>';
@@ -1947,12 +1988,12 @@ async function selectTask(id) {
         const msgsRes = await api('/api/workspace/sessions/' + encodeURIComponent(sessionId) + '/messages');
         const msgs = msgsRes.messages || [];
         if (msgs.length > 0) {
-          chatSnippet = '\n关联会话 [' + esc(sessionId) + '] 消息:\n' + msgs.slice(-2).map(m => '  [' + esc(m.role) + '] ' + esc(m.text)).join('\n');
+          chatSnippet = '\\n关联会话 [' + esc(sessionId) + '] 消息:\\n' + msgs.slice(-2).map(m => '  [' + esc(m.role) + '] ' + esc(m.text)).join('\\n');
         }
       } catch (_) {}
     }
-    let auditText = (auditRes.audit||[]).slice(-5).map(a => a.createdAt + ' ' + a.actor + ' ' + a.action).join('\n');
-    div.textContent = '任务: ' + t.title + '\n状态: ' + t.state + '\n进度: ' + t.progress + '%\n重试: ' + (runner.retryCount||0) + '\n结果: ' + (t.result||t.error||'-') + chatSnippet + '\n近期审计:\n' + auditText;
+    let auditText = (auditRes.audit||[]).slice(-5).map(a => a.createdAt + ' ' + a.actor + ' ' + a.action).join('\\n');
+    div.textContent = '任务: ' + t.title + '\\n状态: ' + t.state + '\\n进度: ' + t.progress + '%\\n重试: ' + (runner.retryCount||0) + '\\n结果: ' + (t.result||t.error||'-') + chatSnippet + '\\n近期审计:\\n' + auditText;
   } catch(e) {
     div.textContent = '加载失败: ' + e.message;
   }
@@ -1966,7 +2007,7 @@ async function taskAction(btn,id,action){
     refreshWorkspace();
   } catch(e) {
     const div = document.getElementById('taskDetail');
-    if(div && window.selectedTaskId === id) div.textContent += '\n动作失败: ' + e.message;
+    if(div && window.selectedTaskId === id) div.textContent += '\\n动作失败: ' + e.message;
   } finally {
     if(btn) btn.disabled=false;
   }
@@ -2182,6 +2223,41 @@ const handleHttpRequest = async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/privacy/overview' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, ...privacyCenter.overview() });
+    }
+    if (parsedUrl.pathname === '/api/privacy/migration/resolve' && req.method === 'POST') {
+      try {
+        const payload = await readJson(req);
+        const result = await privacyCenter.resolveMigrationCategory(
+          String(payload.category || ''),
+          String(payload.decision || '')
+        );
+        if (!result.duplicate) {
+          workspaceTimeline.recordEvent({
+            eventId: `privacy-migration-${result.category}-${result.categoryRevision}`,
+            entityType: 'privacy',
+            entityId: `migration-${result.category}`,
+            operation: 'upsert',
+            payload: {
+              category: result.category,
+              decision: result.decision,
+              categoryRevision: result.categoryRevision,
+              status: result.status,
+            },
+          });
+          broadcast({
+            type: 'privacy.migration',
+            category: result.category,
+            decision: result.decision,
+            categoryRevision: result.categoryRevision,
+            categoryRevisions: result.categoryRevisions,
+            migration: result,
+          });
+        }
+        return sendJson(res, 200, { ok: true, migration: result });
+      } catch (error) {
+        const conflict = /decision conflict|not pending/i.test(String(error.message || ''));
+        return sendJson(res, conflict ? 409 : 400, { ok: false, error: error.message });
+      }
     }
     if (parsedUrl.pathname === '/api/privacy/export' && req.method === 'POST') {
       const remote = String(req.socket.remoteAddress || '');

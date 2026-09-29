@@ -1,0 +1,63 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "id": "legacy-at-zero",
+      "categoryRevisions": { "conversations": 0 },
+      "event": {
+        "eventId": "fixture-legacy-at-zero",
+        "origin": "fixture-phone",
+        "sequence": 1,
+        "type": "workspace.message",
+        "payload": { "text": "fixture text" },
+        "createdAt": 100
+      },
+      "expectedCategories": ["conversations"],
+      "expectedStatus": "accepted"
+    },
+    {
+      "id": "missing-after-deletion",
+      "categoryRevisions": { "conversations": 1 },
+      "event": {
+        "eventId": "fixture-missing-after-deletion",
+        "origin": "fixture-phone",
+        "sequence": 2,
+        "type": "workspace.message",
+        "payload": { "text": "stale legacy text" },
+        "createdAt": 101
+      },
+      "expectedCategories": ["conversations"],
+      "expectedStatus": "privacy_revision_required"
+    },
+    {
+      "id": "stale-linked-task",
+      "categoryRevisions": { "conversations": 2, "tasks": 3 },
+      "event": {
+        "eventId": "fixture-stale-linked-task",
+        "origin": "fixture-phone",
+        "sequence": 3,
+        "type": "workspace.task.progress",
+        "payload": { "source": "conversation", "metadata": { "sessionId": "fixture-session" } },
+        "privacyRevisions": { "conversations": 2, "tasks": 2 },
+        "createdAt": 102
+      },
+      "expectedCategories": ["conversations", "tasks"],
+      "expectedStatus": "privacy_revision_stale"
+    },
+    {
+      "id": "current-linked-task",
+      "categoryRevisions": { "conversations": 2, "tasks": 3 },
+      "event": {
+        "eventId": "fixture-current-linked-task",
+        "origin": "fixture-phone",
+        "sequence": 4,
+        "type": "workspace.task.progress",
+        "payload": { "source": "conversation", "metadata": { "sessionId": "fixture-session" } },
+        "privacyRevisions": { "conversations": 2, "tasks": 3 },
+        "createdAt": 103
+      },
+      "expectedCategories": ["conversations", "tasks"],
+      "expectedStatus": "accepted"
+    }
+  ]
+}

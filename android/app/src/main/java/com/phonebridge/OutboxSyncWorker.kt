@@ -6,8 +6,12 @@ import androidx.work.WorkerParameters
 
 class OutboxSyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        if (!BridgeLink.isOnline) return Result.retry()
         val repository = WorkspaceRepository.get(applicationContext)
+        // A missing overview or unresolved legacy decision is a user-action gate,
+        // not a transient transport failure. Reconnect schedules the worker again
+        // after the server confirms all category decisions.
+        if (repository.privacySyncBlocked()) return Result.success()
+        if (!BridgeLink.isOnline) return Result.retry()
         repository.expireOutboxLeases(System.currentTimeMillis())
         var sent = 0
         repeat(8) {

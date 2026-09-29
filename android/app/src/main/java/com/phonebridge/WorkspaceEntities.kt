@@ -3,6 +3,7 @@ package com.phonebridge
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -11,7 +12,7 @@ import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 
-const val WORKSPACE_DB_VERSION = 4
+const val WORKSPACE_DB_VERSION = 5
 
 @Entity(tableName = "workspace_sessions")
 data class WorkspaceSessionEntity(
@@ -136,7 +137,20 @@ data class WorkspaceOutboxEntity(
     val businessReason: String? = null,
     val resultRevision: Long? = null,
     val localActionId: String? = null,
-    val localActionState: String? = null
+    val localActionState: String? = null,
+    val privacyCategory: String? = null,
+    @ColumnInfo(defaultValue = "0") val privacyRevision: Long = 0L,
+    @ColumnInfo(defaultValue = "'{}'") val privacyRevisionsJson: String = "{}",
+    @ColumnInfo(defaultValue = "1") val quarantined: Boolean = false
+)
+
+@Entity(tableName = "workspace_privacy_state")
+data class WorkspacePrivacyStateEntity(
+    @PrimaryKey val category: String,
+    @ColumnInfo(defaultValue = "0") val revision: Long = 0L,
+    @ColumnInfo(defaultValue = "0") val migrationRequired: Boolean = false,
+    val decision: String? = null,
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0L
 )
 
 @Dao
@@ -265,20 +279,23 @@ abstract class WorkspaceDao {
         if (items.isNotEmpty()) saveActionRuns(items)
     }
 
-    @Query("SELECT * FROM workspace_outbox WHERE ack = 0 AND nextAttemptAt <= :now AND (leaseUntil IS NULL OR leaseUntil <= :now) ORDER BY createdAt ASC")
+    @Query("SELECT * FROM workspace_outbox WHERE ack = 0 AND quarantined = 0 AND nextAttemptAt <= :now AND (leaseUntil IS NULL OR leaseUntil <= :now) ORDER BY createdAt ASC")
     abstract suspend fun readyOutbox(now: Long): List<WorkspaceOutboxEntity>
+
+    @Query("SELECT * FROM workspace_outbox WHERE ack = 0 ORDER BY createdAt ASC")
+    abstract suspend fun pendingOutbox(): List<WorkspaceOutboxEntity>
 
     @Query("SELECT * FROM workspace_outbox WHERE eventId = :eventId LIMIT 1")
     abstract suspend fun outbox(eventId: String): WorkspaceOutboxEntity?
 
-    @Query("DELETE FROM workspace_outbox WHERE type IN (:types)")
-    abstract suspend fun clearOutboxTypes(types: List<String>)
+    @Query("SELECT * FROM workspace_outbox ORDER BY createdAt ASC")
+    abstract suspend fun allOutbox(): List<WorkspaceOutboxEntity>
 
-    @Query("DELETE FROM workspace_outbox WHERE type = 'workspace.message' OR (type IN ('workspace.task.progress', 'workspace.task.finished', 'workspace.attention', 'workspace.action_run') AND (payload LIKE '%sessionId%' OR payload LIKE '%messageId%' OR payload LIKE '%\"source\":\"conversation\"%'))")
-    abstract suspend fun clearConversationOutbox()
+    @Query("DELETE FROM workspace_outbox WHERE eventId = :eventId")
+    abstract suspend fun deleteOutboxEvent(eventId: String)
 
-    @Query("DELETE FROM workspace_outbox WHERE type IN ('workspace.task.progress', 'workspace.task.finished', 'workspace.attention', 'workspace.action_run') AND instr(payload, :taskId) > 0")
-    abstract suspend fun clearOutboxForTask(taskId: String)
+    @Query("UPDATE workspace_outbox SET privacyCategory = :category, quarantined = 1 WHERE eventId = :eventId")
+    abstract suspend fun classifyAndQuarantineLegacyOutbox(eventId: String, category: String)
 
     @Transaction
     open suspend fun purgeConversationData(linkedTaskIds: List<String>) {
@@ -287,12 +304,10 @@ abstract class WorkspaceDao {
         clearConversationTasks()
         clearConversationAttention()
         clearConversationActionRuns()
-        clearConversationOutbox()
         linkedTaskIds.filter(String::isNotBlank).distinct().forEach {
             clearTaskById(it)
             clearAttentionForTask(it)
             clearActionRunsForTask(it)
-            clearOutboxForTask(it)
         }
     }
 
@@ -301,22 +316,10 @@ abstract class WorkspaceDao {
         clearTasks()
         clearAttention()
         clearActionRuns()
-        clearOutboxTypes(listOf(WorkspaceEventTypes.TASK_PROGRESS, WorkspaceEventTypes.TASK_FINISHED, WorkspaceEventTypes.ATTENTION, WorkspaceEventTypes.ACTION_RUN))
     }
 
     @Transaction
-    open suspend fun purgeProgressData() {
-        clearOutboxTypes(
-            listOf(
-                WorkspaceEventTypes.MOTE_ROSTER,
-                WorkspaceEventTypes.MOTE_PROFILE,
-                WorkspaceEventTypes.MOTE_EXPLORATION,
-                WorkspaceEventTypes.MOTE_RELATIONSHIP,
-                WorkspaceEventTypes.MOTE_QUEST,
-                WorkspaceEventTypes.MOTE_STORY
-            )
-        )
-    }
+    open suspend fun purgeProgressData() = Unit
 
     @Query("SELECT eventId FROM workspace_outbox WHERE ack = 0 AND leaseUntil IS NOT NULL AND leaseUntil <= :now")
     abstract suspend fun expiredOutbox(now: Long): List<String>
@@ -324,7 +327,46 @@ abstract class WorkspaceDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun enqueue(event: WorkspaceOutboxEntity): Long
 
-    @Query("UPDATE workspace_outbox SET leaseUntil = :leaseUntil, lastSentAt = :sentAt WHERE eventId = :eventId AND ack = 0 AND nextAttemptAt <= :now AND (leaseUntil IS NULL OR leaseUntil <= :now)")
+    @Query("SELECT * FROM workspace_privacy_state ORDER BY category ASC")
+    abstract suspend fun privacyStates(): List<WorkspacePrivacyStateEntity>
+
+    @Query("SELECT * FROM workspace_privacy_state WHERE category = :category LIMIT 1")
+    abstract suspend fun privacyState(category: String): WorkspacePrivacyStateEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun savePrivacyState(state: WorkspacePrivacyStateEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun savePrivacyStates(states: List<WorkspacePrivacyStateEntity>)
+
+    @Query("SELECT COUNT(*) FROM workspace_sessions")
+    abstract suspend fun countSessions(): Long
+
+    @Query("SELECT COUNT(*) FROM workspace_messages")
+    abstract suspend fun countMessages(): Long
+
+    @Query("SELECT COUNT(*) FROM workspace_tasks")
+    abstract suspend fun countTasks(): Long
+
+    @Query("SELECT COUNT(*) FROM workspace_tasks WHERE source = 'conversation'")
+    abstract suspend fun countConversationTasks(): Long
+
+    @Query("SELECT COUNT(*) FROM workspace_attention")
+    abstract suspend fun countAttention(): Long
+
+    @Query("SELECT COUNT(*) FROM workspace_attention WHERE relatedSessionId IS NOT NULL")
+    abstract suspend fun countConversationAttention(): Long
+
+    @Query("SELECT COUNT(*) FROM workspace_action_runs")
+    abstract suspend fun countActionRuns(): Long
+
+    @Query("SELECT COUNT(*) FROM workspace_action_runs WHERE sessionId IS NOT NULL")
+    abstract suspend fun countConversationActionRuns(): Long
+
+    @Query("UPDATE workspace_outbox SET quarantined = 1 WHERE eventId = :eventId")
+    abstract suspend fun quarantineOutbox(eventId: String)
+
+    @Query("UPDATE workspace_outbox SET leaseUntil = :leaseUntil, lastSentAt = :sentAt WHERE eventId = :eventId AND ack = 0 AND quarantined = 0 AND nextAttemptAt <= :now AND (leaseUntil IS NULL OR leaseUntil <= :now)")
     abstract suspend fun claimOutbox(eventId: String, now: Long, leaseUntil: Long, sentAt: Long): Int
 
     @Query("UPDATE workspace_outbox SET ack = 1, leaseUntil = NULL, businessStatus = :businessStatus, businessReason = :businessReason, resultRevision = :resultRevision WHERE eventId = :eventId")
@@ -342,10 +384,11 @@ abstract class WorkspaceDao {
         WorkspaceAttentionEntity::class,
         WorkspaceAutonomyPolicyEntity::class,
         WorkspaceActionRunEntity::class,
-        WorkspaceOutboxEntity::class
+        WorkspaceOutboxEntity::class,
+        WorkspacePrivacyStateEntity::class
     ],
     version = WORKSPACE_DB_VERSION,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class WorkspaceDatabase : RoomDatabase() {
     abstract fun workspaceDao(): WorkspaceDao

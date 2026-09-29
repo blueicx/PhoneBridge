@@ -14,8 +14,83 @@ data class WorkspaceEvent(
     val ack: Boolean = false,
     val localActionId: String? = null,
     val localActionState: String? = null,
-    val revision: Long = 0L
-)
+    val revision: Long = 0L,
+    val privacyRevisions: Map<String, Long> = emptyMap()
+) {
+    fun toJson(): String {
+        val entries = mutableListOf(
+            "eventId" to eventId,
+            "origin" to origin,
+            "sequence" to sequence,
+            "type" to type,
+            "payload" to rawJsonOrText(payload),
+            "createdAt" to createdAt,
+            "revision" to revision,
+            "ack" to ack,
+            "localActionId" to localActionId,
+            "localActionState" to localActionState
+        )
+        if (privacyRevisions.isNotEmpty()) entries += "privacyRevisions" to RawJson(PrivacyRevisionWire.toJson(privacyRevisions))
+        return jsonObject(*entries.toTypedArray())
+    }
+
+    companion object {
+        fun fromJson(text: String): WorkspaceEvent {
+            val values = parseJsonObject(text)
+            val rawPayload = values["payload"]
+            return WorkspaceEvent(
+                eventId = values.string("eventId").ifBlank { UUID.randomUUID().toString() },
+                origin = values.string("origin"),
+                sequence = values.long("sequence"),
+                type = values.string("type"),
+                payload = when (rawPayload) {
+                    null -> "{}"
+                    is String -> rawPayload
+                    else -> rawPayload.toJsonLiteral()
+                },
+                createdAt = values.long("createdAt"),
+                ack = values.boolean("ack"),
+                localActionId = values.nullableString("localActionId"),
+                localActionState = values.nullableString("localActionState"),
+                revision = values.long("revision"),
+                privacyRevisions = PrivacyRevisionWire.fromValue(values["privacyRevisions"])
+            )
+        }
+    }
+}
+
+/** Privacy revisions are optional on legacy envelopes and only known, safe integer categories survive parsing. */
+object PrivacyRevisionWire {
+    private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
+
+    fun toJson(revisions: Map<String, Long>): String = revisions
+        .filter { (category, revision) -> category in PrivacyDataPolicy.categories && revision in 0L..MAX_SAFE_INTEGER }
+        .toSortedMap()
+        .entries
+        .joinToString(prefix = "{", postfix = "}", separator = ",") { (category, revision) ->
+            "${quoteJson(category)}:$revision"
+        }
+
+    fun fromJson(text: String?): Map<String, Long> = runCatching {
+        fromValue(text?.takeIf(String::isNotBlank)?.let { JsonParser(it).parseValue() })
+    }.getOrDefault(emptyMap())
+
+    internal fun fromValue(value: Any?): Map<String, Long> {
+        val source = value as? Map<*, *> ?: return emptyMap()
+        return source.entries.mapNotNull { (rawCategory, rawRevision) ->
+            val category = rawCategory as? String ?: return@mapNotNull null
+            if (category !in PrivacyDataPolicy.categories) return@mapNotNull null
+            val revision = when (rawRevision) {
+                is Byte, is Short, is Int, is Long -> (rawRevision as Number).toLong()
+                is Float -> rawRevision.takeIf { it.isFinite() && it % 1f == 0f }?.toLong()
+                is Double -> rawRevision.takeIf { it.isFinite() && it % 1.0 == 0.0 }?.toLong()
+                else -> null
+            } ?: return@mapNotNull null
+            if (revision < 0L || revision > MAX_SAFE_INTEGER) return@mapNotNull null
+            category to revision
+        }.toMap().toSortedMap()
+    }
+}
 
 object WorkspaceEventTypes {
     const val MESSAGE = "workspace.message"
@@ -538,8 +613,16 @@ private fun Any?.toJsonLiteral(): String = when (this) {
     is String -> quoteJson(this)
     is Boolean, is Int, is Long, is Double, is Float -> toString()
     is List<*> -> joinToString(prefix = "[", postfix = "]", separator = ",") { it.toJsonLiteral() }
+    is Map<*, *> -> entries.mapNotNull { (key, value) ->
+        (key as? String)?.let { quoteJson(it) to value }
+    }.sortedBy { it.first }.joinToString(prefix = "{", postfix = "}", separator = ",") { (key, value) ->
+        "$key:${value.toJsonLiteral()}"
+    }
     else -> quoteJson(toString())
 }
+
+private fun rawJsonOrText(text: String): Any =
+    runCatching { JsonParser(text).parseValue(); RawJson(text) }.getOrElse { text }
 
 private data class RawJson(val value: String)
 
@@ -566,6 +649,9 @@ private fun parseJsonObject(text: String): Map<String, Any?> = when (val value =
     is Map<*, *> -> value.entries.associate { (key, item) -> key.toString() to item }
     else -> emptyMap()
 }
+
+internal fun parseWorkspaceJsonObject(text: String): Map<String, Any?> =
+    runCatching { parseJsonObject(text) }.getOrDefault(emptyMap())
 
 private fun parseJsonObjectArray(text: String?): List<Map<String, Any?>> {
     val raw = text?.trim().orEmpty()
