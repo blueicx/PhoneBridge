@@ -7,6 +7,8 @@ const FORMAT_VERSION = 1;
 const CONFIRMATION = 'DELETE SELECTED DATA';
 const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024;
 const MAX_RECEIPTS = 100;
+const AUDIT_VERSION = 2;
+const LEGACY_CATEGORIES = Object.freeze(['memories', 'conversations', 'tasks', 'progress']);
 const KDF = Object.freeze({ name: 'scrypt', n: 16384, r: 8, p: 1, keyBytes: 32 });
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
@@ -103,11 +105,75 @@ class PrivacyCenter {
     this.mutationWaiters = [];
     this.inFlightDeletes = new Map();
     const saved = persistence?.load?.('privacy-audit', null);
-    this.receipts = Array.isArray(saved?.receipts) ? saved.receipts.slice(-MAX_RECEIPTS) : [];
+    const rawReceipts = Array.isArray(saved?.receipts) ? saved.receipts : [];
+    this.receipts = rawReceipts.slice(-MAX_RECEIPTS).map(receipt => clone(receipt));
+    this.categoryRevisions = Object.fromEntries([...this.categories.keys()].map(id => [
+      id,
+      Math.max(0, Math.trunc(Number(saved?.categoryRevisions?.[id]) || 0)),
+    ]));
+    this.migration = this._loadMigration(saved, rawReceipts);
+    if (Number(saved?.version) !== AUDIT_VERSION) this._save();
   }
 
   _save() {
-    this.persistence?.save?.('privacy-audit', { version: 1, receipts: this.receipts.slice(-MAX_RECEIPTS) });
+    const unfinished = this.receipts.filter(receipt => receipt.status !== 'completed');
+    const completed = this.receipts.filter(receipt => receipt.status === 'completed').slice(-MAX_RECEIPTS);
+    this.receipts = [...completed, ...unfinished];
+    this.persistence?.save?.('privacy-audit', {
+      version: AUDIT_VERSION,
+      categoryRevisions: { ...this.categoryRevisions },
+      migration: clone(this.migration),
+      receipts: this.receipts.map(clone),
+    });
+  }
+
+  _loadMigration(saved, rawReceipts) {
+    if (Number(saved?.version) === AUDIT_VERSION && saved?.migration && typeof saved.migration === 'object') {
+      const requiredCategories = [...new Set((Array.isArray(saved.migration.requiredCategories)
+        ? saved.migration.requiredCategories
+        : []).map(String))].filter(id => LEGACY_CATEGORIES.includes(id));
+      const decisions = {};
+      for (const category of requiredCategories) {
+        const decision = saved.migration.decisions?.[category];
+        if (decision === 'clear' || decision === 'keep') decisions[category] = decision;
+      }
+      const pending = requiredCategories.some(category => !decisions[category]);
+      return {
+        sourceVersion: 1,
+        status: pending ? 'required' : 'complete',
+        requiredCategories,
+        decisions,
+        ...(saved.migration.completedAt ? { completedAt: String(saved.migration.completedAt) } : {}),
+      };
+    }
+
+    const versions = { ...this.categoryRevisions };
+    const receiptVersions = new Map();
+    const seenRequests = new Set();
+    for (const receipt of rawReceipts) {
+      const requestId = String(receipt?.requestId || '');
+      if (!requestId || seenRequests.has(requestId)) continue;
+      seenRequests.add(requestId);
+      const revisions = {};
+      for (const category of [...new Set(Array.isArray(receipt?.categories) ? receipt.categories.map(String) : [])]) {
+        if (!Object.hasOwn(versions, category)) continue;
+        versions[category] += 1;
+        revisions[category] = versions[category];
+      }
+      receiptVersions.set(requestId, revisions);
+    }
+    this.categoryRevisions = versions;
+    for (const receipt of this.receipts) {
+      receipt.categoryRevisions ||= receiptVersions.get(String(receipt.requestId || '')) || {};
+    }
+
+    const ambiguous = Number(saved?.version || 1) < AUDIT_VERSION && rawReceipts.length >= MAX_RECEIPTS;
+    return {
+      sourceVersion: Number(saved?.version) || 1,
+      status: ambiguous ? 'required' : 'complete',
+      requiredCategories: ambiguous ? LEGACY_CATEGORIES.filter(category => Object.hasOwn(this.categoryRevisions, category)) : [],
+      decisions: {},
+    };
   }
 
   _normalizeCategories(value) {
@@ -120,16 +186,52 @@ class PrivacyCenter {
   overview() {
     const categories = {};
     for (const [id, adapter] of this.categories) {
-      categories[id] = { label: String(adapter.label || id), count: Math.max(0, Number(adapter.count()) || 0) };
+      categories[id] = {
+        label: String(adapter.label || id),
+        count: Math.max(0, Number(adapter.count()) || 0),
+        revision: this.categoryRevisions[id] || 0,
+        migrationRequired: this.isMigrationRequired(id),
+      };
     }
     return {
       formatVersion: 1,
       generatedAt: new Date(this.now()).toISOString(),
       categories,
+      migration: clone(this.migration),
       excluded: ['访问令牌与配对凭据', 'Provider 密钥', '原始照片/画面', '精确位置与连续轨迹'],
       latestDeletion: this.receipts.at(-1) ? clone(this.receipts.at(-1)) : null,
       recentDeletions: this.receipts.filter(receipt => receipt.status === 'completed').map(clone),
     };
+  }
+
+  categoryRevision(category) {
+    if (!this.categories.has(category)) throw new Error(`unknown privacy category: ${category}`);
+    return this.categoryRevisions[category] || 0;
+  }
+
+  isMigrationRequired(category = null) {
+    if (this.migration.status !== 'required') return false;
+    if (category == null) return this.migration.requiredCategories.some(id => !this.migration.decisions[id]);
+    return this.migration.requiredCategories.includes(category) && !this.migration.decisions[category];
+  }
+
+  resolveMigrationCategory(category, decision) {
+    if (!LEGACY_CATEGORIES.includes(category) || !this.migration.requiredCategories.includes(category)) {
+      throw new Error(`privacy migration category is not pending: ${category}`);
+    }
+    if (decision !== 'clear' && decision !== 'keep') throw new Error('privacy migration decision must be clear or keep');
+    const previous = this.migration.decisions[category];
+    if (previous && previous !== decision) throw new Error('privacy migration decision conflict');
+    if (previous === decision) return { ...clone(this.migration), duplicate: true };
+
+    this.migration.decisions[category] = decision;
+    this.categoryRevisions[category] = Math.max(1, this.categoryRevisions[category] || 0);
+    if (!this.isMigrationRequired()) {
+      this.migration.status = 'complete';
+      this.migration.completedAt = new Date(this.now()).toISOString();
+    }
+    this._save();
+    return clone(this.migration);
   }
 
   exportEncrypted({ categories = [...this.categories.keys()], passphrase } = {}) {
@@ -200,9 +302,13 @@ class PrivacyCenter {
     try {
       if (!receipt) {
         for (const category of selected) await this.categories.get(category).validateClear?.();
-        receipt = { requestId: id, categories: selected, status: 'pending', completedCategories: [], createdAt: new Date(this.now()).toISOString() };
+        const categoryRevisions = {};
+        for (const category of selected) {
+          this.categoryRevisions[category] = (this.categoryRevisions[category] || 0) + 1;
+          categoryRevisions[category] = this.categoryRevisions[category];
+        }
+        receipt = { requestId: id, categories: selected, categoryRevisions, status: 'pending', completedCategories: [], createdAt: new Date(this.now()).toISOString() };
         this.receipts.push(receipt);
-        this.receipts = this.receipts.slice(-MAX_RECEIPTS);
         this._save();
       }
 

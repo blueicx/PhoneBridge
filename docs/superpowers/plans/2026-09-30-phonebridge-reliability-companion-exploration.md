@@ -25,14 +25,14 @@
 
 **涉及文件：** `server/privacy-center.test.js`、`server/privacy-center.js`
 
-- [ ] 增加旧 `privacy-audit` v1 存档迁移测试：99 条回执可无歧义迁移；恰好 100 条及原始输入超过 100 条（加载后触顶）都产生旧类别逐项确认状态；新类别不被误判为历史类别。
-- [ ] 增加类别 revision 的测试：初始值为 0；overview 暴露各类别 revision/迁移状态；新删除请求为涉及类别分配一次单调递增 revision；相同 `requestId` 重放或 pending 删除恢复不重复递增；进程重建后 revision 和迁移选择仍存在。
-- [ ] 增加部分删除失败、重试、并发删除、不同类别删除的测试，验证 revision 分配、receipt 和已完成类别一致，不能因历史回执仅保留 100 条而回退版本。
-- [ ] 运行 `node --test server/privacy-center.test.js`，先确认新增用例失败，再实现。
-- [ ] 将持久格式升级至版本 2，保存 `categoryRevisions`、`migration` 与既有最近 100 条 receipts。旧档案回执数达到上限时，`migration` 仅要求对旧类别 `memories`、`conversations`、`tasks`、`progress` 逐类确认；其它新类别 revision 从 0 开始。
-- [ ] 在新删除 receipt 首次持久化时原子记录本次各类别的新 revision；重复请求沿用 receipt 中原有版本。`overview()` 返回每类 `revision` 及 `migrationRequired`，并返回总迁移状态；保持已有字段不删改。
-- [ ] 最近完成历史仍最多展示/保留 100 条；pending/partial 删除 receipt 在完成前不能被新历史挤出，以保证进程重启后的重试可恢复。
-- [ ] 暴露纯领域方法读取类别 revision、确认指定类别的旧数据决策，以及在决策集合完成前查询同步是否暂停；拒绝未知类别、重复选择冲突或未完成的非法状态。A/B 批次新增类别缺少历史记录时 revision 默认为 0，且不加入旧类别待确认清单。
+- [x] 增加旧 `privacy-audit` v1 存档迁移测试：99 条回执可无歧义迁移并按每个类别中唯一删除 `requestId` 数量重建 revision；恰好 100 条及原始输入超过 100 条（加载后触顶）都产生旧类别逐项确认状态，确认任何旧类别后其 revision 至少为 1；新类别不被误判为历史类别。
+- [x] 增加类别 revision 的测试：初始值为 0；overview 暴露各类别 revision/迁移状态；新删除请求为涉及类别分配一次单调递增 revision；相同 `requestId` 重放或 pending 删除恢复不重复递增；进程重建后 revision 和迁移选择仍存在。
+- [x] 增加部分删除失败、重试、并发删除、不同类别删除的测试，验证 revision 分配、receipt 和已完成类别一致，不能因历史回执仅保留 100 条而回退版本。
+- [x] 运行 `node --test server/privacy-center.test.js`，先确认新增用例失败，再实现。
+- [x] 将持久格式升级至版本 2，保存 `categoryRevisions`、`migration` 与既有最近 100 条 receipts。少于上限的旧档案从完整 receipt 历史重建各类别 revision；达到上限时，`migration` 仅要求对旧类别 `memories`、`conversations`、`tasks`、`progress` 逐类确认；其它新类别 revision 从 0 开始。模糊类别在用户确认后 revision 至少为 1，确认前暂停相关同步。
+- [x] 在新删除 receipt 首次持久化时原子记录本次各类别的新 revision；重复请求沿用 receipt 中原有版本。`overview()` 返回每类 `revision` 及 `migrationRequired`，并返回总迁移状态；保持已有字段不删改。
+- [x] 最近完成历史仍最多展示/保留 100 条；pending/partial 删除 receipt 在完成前不能被新历史挤出，以保证进程重启后的重试可恢复。
+- [x] 暴露纯领域方法读取类别 revision、确认指定类别的旧数据决策，以及在决策集合完成前查询同步是否暂停；拒绝未知类别、重复选择冲突或未完成的非法状态。A/B 批次新增类别缺少历史记录时 revision 默认为 0，且不加入旧类别待确认清单。
 
 ### A2. 将版本栅栏接入 HTTP/WS 事件接收
 

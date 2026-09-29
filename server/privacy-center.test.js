@@ -35,6 +35,32 @@ function makeCenter(overrides = {}) {
   return { center: new PrivacyCenter({ categories, persistence, now: () => 1_800_000_000_000 }), calls, persistence };
 }
 
+const LEGACY_CATEGORIES = ['memories', 'conversations', 'tasks', 'progress'];
+
+function makeLegacyCenter(receiptCount) {
+  const receipts = Array.from({ length: receiptCount }, (_, index) => {
+    const category = LEGACY_CATEGORIES[index % LEGACY_CATEGORIES.length];
+    return {
+      requestId: `legacy-delete-${String(index).padStart(3, '0')}`,
+      categories: [category],
+      completedCategories: [category],
+      status: 'completed',
+    };
+  });
+  const persistence = {
+    value: { version: 1, receipts },
+    load(_key, fallback) { return this.value ?? fallback; },
+    save(_key, value) { this.value = structuredClone(value); },
+  };
+  const categories = Object.fromEntries([...LEGACY_CATEGORIES, 'routines', 'goals'].map(id => [id, {
+    label: id,
+    count: () => 0,
+    export: () => [],
+    clear: () => ({ deleted: 0 }),
+  }]));
+  return { center: new PrivacyCenter({ categories, persistence, now: () => 1_800_000_000_000 }), persistence, receipts };
+}
+
 test('encrypted privacy archives round-trip and reject a wrong passphrase', () => {
   const data = { formatVersion: 1, marker: 'private payload' };
   const archive = encryptArchive(data, PASSPHRASE);
@@ -160,4 +186,124 @@ test('concurrent retries share one deletion and cannot rebind its request id', a
   assert.equal(a.status, 'completed');
   assert.equal(b.duplicate, true);
   assert.equal(calls, 1);
+});
+
+test('legacy privacy audit below the receipt cap reconstructs revisions by unique request and category', () => {
+  const { center, persistence, receipts } = makeLegacyCenter(99);
+  const overview = center.overview();
+  const expected = Object.fromEntries(LEGACY_CATEGORIES.map(category => [
+    category,
+    receipts.filter(receipt => receipt.categories.includes(category)).length,
+  ]));
+
+  assert.equal(overview.migration.status, 'complete');
+  for (const category of LEGACY_CATEGORIES) {
+    assert.equal(overview.categories[category].revision, expected[category]);
+    assert.equal(overview.categories[category].migrationRequired, false);
+  }
+  assert.equal(overview.categories.routines.revision, 0);
+  assert.equal(overview.categories.goals.revision, 0);
+  assert.equal(overview.categories.routines.migrationRequired, false);
+  assert.equal(persistence.value.version, 2);
+});
+
+test('legacy privacy audit at the cap pauses each old category until an explicit choice', () => {
+  const { center } = makeLegacyCenter(100);
+  let overview = center.overview();
+
+  assert.equal(overview.migration.status, 'required');
+  assert.deepEqual(overview.migration.requiredCategories, LEGACY_CATEGORIES);
+  for (const category of LEGACY_CATEGORIES) assert.equal(overview.categories[category].migrationRequired, true);
+  assert.equal(overview.categories.routines.migrationRequired, false);
+
+  center.resolveMigrationCategory('progress', 'keep');
+  overview = center.overview();
+  assert.equal(overview.categories.progress.revision >= 1, true);
+  assert.equal(overview.categories.progress.migrationRequired, false);
+  assert.equal(overview.migration.status, 'required');
+  assert.throws(() => center.resolveMigrationCategory('progress', 'clear'), /decision|conflict/i);
+});
+
+test('legacy audit with more than the receipt cap is treated as ambiguous after loading', () => {
+  const { center, persistence } = makeLegacyCenter(101);
+  const overview = center.overview();
+
+  assert.equal(persistence.value.receipts.length, 100);
+  assert.equal(overview.migration.status, 'required');
+  assert.deepEqual(overview.migration.requiredCategories, LEGACY_CATEGORIES);
+});
+
+test('legacy migration decisions remain idempotent after all categories are resolved and the process restarts', () => {
+  const { center, persistence } = makeLegacyCenter(100);
+  for (const category of LEGACY_CATEGORIES) center.resolveMigrationCategory(category, 'keep');
+  const adapters = Object.fromEntries([...LEGACY_CATEGORIES, 'routines', 'goals'].map(id => [id, {
+    count: () => 0,
+    export: () => [],
+    clear: () => ({ deleted: 0 }),
+  }]));
+  const restored = new PrivacyCenter({ categories: adapters, persistence, now: () => 1_800_000_000_000 });
+
+  assert.equal(restored.overview().migration.status, 'complete');
+  assert.equal(restored.resolveMigrationCategory('progress', 'keep').duplicate, true);
+  assert.throws(() => restored.resolveMigrationCategory('progress', 'clear'), /conflict/i);
+});
+
+test('category revisions are allocated once, survive restart, and do not advance on deletion replay', async () => {
+  const { center, persistence } = makeCenter();
+  assert.equal(center.categoryRevision('memories'), 0);
+  const payload = { requestId: 'revision-delete-001', categories: ['memories'], confirmation: 'DELETE SELECTED DATA' };
+  const first = await center.delete(payload);
+  const replay = await center.delete(payload);
+  const restored = new PrivacyCenter({
+    categories: {
+      memories: { count: () => 0, export: () => [], clear: () => ({ deleted: 0 }) },
+      conversations: { count: () => 0, export: () => [], clear: () => ({ deleted: 0 }) },
+    },
+    persistence,
+    now: () => 1_800_000_000_000,
+  });
+
+  assert.equal(persistence.value.version, 2);
+  assert.equal(first.categoryRevisions.memories, 1);
+  assert.equal(replay.categoryRevisions.memories, 1);
+  assert.equal(replay.duplicate, true);
+  assert.equal(restored.categoryRevision('memories'), 1);
+});
+
+test('partial privacy deletion retry reuses its original category revisions', async () => {
+  let attempts = 0;
+  const { center } = makeCenter({ categories: {
+    conversations: {
+      label: '聊天记录', count: () => 1, export: () => [],
+      clear: () => { attempts += 1; if (attempts === 1) throw new Error('temporary persistence failure'); return { deleted: 1 }; },
+    },
+  } });
+  const payload = { requestId: 'revision-delete-002', categories: ['conversations'], confirmation: 'DELETE SELECTED DATA' };
+
+  await assert.rejects(center.delete(payload), /deletion incomplete/);
+  assert.equal(center.categoryRevision('conversations'), 1);
+  const resumed = await center.delete(payload);
+  assert.equal(resumed.categoryRevisions.conversations, 1);
+  assert.equal(center.categoryRevision('conversations'), 1);
+});
+
+test('unfinished deletion receipts survive completed-history compaction', async () => {
+  let failOnce = true;
+  const { center, persistence } = makeCenter({ categories: {
+    conversations: {
+      label: '聊天记录', count: () => 1, export: () => [],
+      clear: () => { if (failOnce) { failOnce = false; throw new Error('temporary failure'); } return { deleted: 1 }; },
+    },
+  } });
+  const pending = { requestId: 'pending-delete-001', categories: ['conversations'], confirmation: 'DELETE SELECTED DATA' };
+  await assert.rejects(center.delete(pending), /deletion incomplete/);
+  for (let index = 0; index < 105; index += 1) {
+    await center.delete({
+      requestId: `history-delete-${String(index).padStart(3, '0')}`,
+      categories: ['memories'],
+      confirmation: 'DELETE SELECTED DATA',
+    });
+  }
+  assert.ok(persistence.value.receipts.some(receipt => receipt.requestId === pending.requestId));
+  assert.equal((await center.delete(pending)).status, 'completed');
 });
