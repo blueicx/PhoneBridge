@@ -512,7 +512,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 隐私类别 checkbox 完全由服务端 overview 动态生成，默认全不选；可单独选 `routines` / `goals` 导出或删除，也保留旧类别 ID。用户口令仍仅用于当次加密导出，不持久化。
 - 新增共享 `goal-task-ref.json`，Node 与 Kotlin 读取同一 fixture；Kotlin 校验 goalId/milestoneId、忽略未知扩展字段，并将缺失 task state 兼容为 pending。现有 routine event/receipt、goal board/draft fixtures 持续由两端使用。认证 Web 页面测试会编译其内嵌脚本，并断言 draft 流不含 accept 调用。
 - 本机验证：Node **225/225**；Android JVM **165/165**；`lintDebug`、`assembleDebug`、`node --check server/index.js`、`scan_secrets.ps1`、工作区性能预算和 `git diff --check` 均通过。最终性能预算 `elapsedMs=0.735`、full snapshot `1694 bytes`、summary `48 bytes`、cache hits `10000`、burst broadcasts `1`。
-- 当前 B4 代码与文档已本地完成，尚未提交/推送；待提交 SHA 的 GitHub Actions 尚未运行。无 ADB/手机实测证据；UI 真实浏览器交互仍待后续验收。此节覆盖上文较早的“B3 后等待再进入 B4”状态。继续保持 `feature/integrated-enhancement`，不修改 `main`。
+- GitHub Actions run [36703474633](https://github.com/blueicx/PhoneBridge/actions/runs/36703474633) attempt 2 已在源码 SHA `cedb7332ac36286638cc3febd93ff55e0c03b893` 全绿。Room v5→v6 API 34 emulator instrumentation **10/10**，Node、Android JVM、Lint、Debug 构建、签名元数据、发布门禁、artifact 上传、差异空白与干净工作树检查均通过。attempt 1 只因 runner 等待 emulator 启动超时而失败，Room 测试未启动；同一 SHA attempt 2 完整通过。
+- 内部 Debug artifact `phonebridge-debug-cedb7332ac36286638cc3febd93ff55e0c03b893`（artifact ID `11093506908`，`65,468,196 bytes`；SHA-256 `4342397d4551aa44b7b9d294909a39a8cfd235ca0553efef63be17e517ab25ee`）仅保留在 GitHub Actions，未加入源码历史。
+- B4 源码已提交并推送；本机/服务端的活动与目标数据保存边界见本节实现说明。此批未运行 ADB、未安装或操作手机，也未做浏览器交互验收；UI 实际交互、真机和正式 Release 签名仍分别待验收。文档收尾提交会产生新 SHA；进入 C1 前需确认该最新 SHA 的 Actions 全绿。此节覆盖上文较早的“B3 后等待再进入 B4”状态。继续保持 `feature/integrated-enhancement`，不修改 `main`。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
 

@@ -138,7 +138,8 @@
 - [x] 通过共同 fixtures 验证 Android/Web 共用的 routine action、goal draft/accept、GoalTaskRef 字段；未知扩展字段忽略，缺省状态安全回退。
 - [x] API/Web 测试覆盖失败消息、刷新恢复、重复提交和无业务写入的 draft 请求。
 - [x] 运行 `node --test server/*.test.js`（225/225）及 `:app:testDebugUnitTest`（165/165）、`:app:lintDebug`、`:app:assembleDebug`；执行敏感字段扫描、性能预算、`node --check server/index.js` 和 `git diff --check`。
-- [ ] 更新 `README.md` 与 `HANDOFF.md`，注明本机/服务端分别保存何种记录与无需权限的限制。提交批次 B 并 push；等待最新 GitHub Actions 后进入批次 C。
+- [x] 更新 `README.md` 与 `HANDOFF.md`，注明本机/服务端分别保存何种记录与无需权限的限制；记录 B4 源码 SHA、CI 结果、artifact 和未验收边界。
+- [x] 提交并 push 批次 B；B4 源码 SHA 的 GitHub Actions 全绿（Room migration **10/10**）。文档收尾提交后的 Actions 仍须单独确认，确认前不进入批次 C。
 
 ## 批次 C：从结算收据派生探索日志
 

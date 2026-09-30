@@ -319,6 +319,8 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 隐私类别勾选项从 `/api/privacy/overview` 动态生成，默认不勾选；`routines`、`goals` 可各自选择加密导出或删除，不再要求手输类别 ID。服务端保留既有类别 ID 与旧客户端兼容。
 - Node/Kotlin 共用 routine、goal/draft 与新增 `goal-task-ref.json` fixtures，覆盖未知扩展字段忽略及缺失 task 状态安全回退。Web 脚本在认证页面测试中作语法编译检查，并验证草案调用与确认任务相互独立。
 - 本机验证：Node **225/225**；Android JVM **165/165**；Android `lintDebug` 与 `assembleDebug` 成功；`node --check server/index.js`、密钥扫描、性能预算和 `git diff --check` 通过。最终性能预算 `elapsedMs=0.735`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。
-- GitHub Actions 将在 B4 推送后对最新 SHA 验收。此批未运行 ADB、未安装/操作手机；UI 实际交互与真机仍待验收。
+- GitHub Actions run [36703474633](https://github.com/blueicx/PhoneBridge/actions/runs/36703474633) attempt 2 已在 B4 源码 SHA `cedb7332ac36286638cc3febd93ff55e0c03b893` 全绿；Room v5→v6 emulator instrumentation **10/10**，Node、Android JVM、Lint、Debug 构建、签名解析、发布门禁、artifact 上传、diff 检查和干净工作树均通过。attempt 1 仅在等待 Android emulator 启动时超时，Room 测试未开始；attempt 2 完整执行成功。
+- 内部 Debug artifact `phonebridge-debug-cedb7332ac36286638cc3febd93ff55e0c03b893`（artifact ID `11093506908`，`65,468,196 bytes`；SHA-256 `4342397d4551aa44b7b9d294909a39a8cfd235ca0553efef63be17e517ab25ee`）只保留在 GitHub Actions，未进入源码历史。
+- 此批未运行 ADB、未安装或操作手机，也未做浏览器交互验收；UI 实际交互和真机仍待验收。文档收尾提交后的最新 SHA 仍需通过 Actions 后再进入 C1。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
