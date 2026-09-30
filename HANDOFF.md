@@ -536,8 +536,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 沉浸抽屉新增“日常”和“目标”。日常包括专注计时、免位置/相机的散步观察及不写长期记忆的睡前回顾。目标流程为创建 → 用户显式调用 provider 草案 → 编辑步骤 → 逐条确认 → 建立普通任务；草案只存 UI 内存，未确认不创建任务。Room 镜像的任务状态驱动 milestone 进度。
 - `routine.event` 纳入 Android 隐私分类；带 `goalId` 的任务事件同时受 `goals` 与 `tasks` revision 栅栏保护。新增跨端 protocol fixtures、纯 JVM models 测试和 Room 迁移/事务/隐私测试。
 - 本机验收：Node **223/223**；Android JVM **164/164**；`compileDebugAndroidTestKotlin` 成功；`lintDebug` 成功且报告中 0 个 lint errors；`assembleDebug` 成功；`scan_secrets.ps1`、`test_android_ci_workflow.ps1`、`test_apk_signer_output.ps1`、Debug APK `verify_release_gates.ps1` 与 `git diff --check` 通过。性能预算 `elapsedMs=0.668`、snapshot `1694 bytes`、summary `48 bytes`、cache hits `10000`、burst broadcasts `1`。
-- Room v5→v6 instrumentation tests 只在本机编译，尚未执行；待最新 SHA 的 GitHub Actions API 34 emulator 验证后，才能将 B3 标为已交付并进入 B4。本轮没有连接 ADB、操作手机、安装 APK 或授予相机/定位权限。正式 Release 签名仍受独立加密恢复副本门禁约束。
+- Room v5→v6 instrumentation tests 在 GitHub Actions API 34 emulator **10/10** 通过。run [36688324533](https://github.com/blueicx/PhoneBridge/actions/runs/36688324533) attempt 2 对 SHA `cd4eee96b3e592d6cff662ae0f08e27348279d06` 全绿，包含 Node、Android JVM、emulator、Lint、Debug 构建、签名元数据、发布门禁、artifact 上传、diff whitespace 与干净工作树。最初 run `36685008675` 暴露 test SQL 表名拼写错误，修复提交 `cd4eee9`；同 SHA attempt 1 又遇到 runner emulator ADB 离线/启动超时，attempt 2 完整通过。本轮没有连接 ADB、操作手机、安装 APK 或授予相机/定位权限。正式 Release 签名仍受独立加密恢复副本门禁约束。
 - 收尾回归中发现并修复 `WorkspaceClient` 每次 HTTP 请求重建 OkHttp/连接池：新增客户端缓存红灯测试，随后按证书指纹复用客户端、不同指纹隔离。定向测试已通过。
-- 当前分支：`feature/integrated-enhancement`。B3 的实现与本机门禁已完成；API 34 emulator instrumentation、GitHub Actions 最新 SHA 仍待验收。保持不修改 `main`，且在最新 SHA 的 Actions 全绿前不进入批次 B4。
+- 内部 Debug artifact `phonebridge-debug-cd4eee96b3e592d6cff662ae0f08e27348279d06`（artifact ID `11086944240`，65,468,054 bytes；ZIP SHA-256 `73afd3877a2cec78591e8978459827e5eda7836aac6edd7a6f7a95cbe3265790`）仅在 Actions 留存，未进入源码历史。
+- 当前分支：`feature/integrated-enhancement`。B3 实现与 SHA `cd4eee96b3e592d6cff662ae0f08e27348279d06` 的完整 CI 已通过。此交接文档更新会产生新 SHA；在该最新 SHA 的 Actions 全绿前不进入 B4。保持不修改 `main`。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。

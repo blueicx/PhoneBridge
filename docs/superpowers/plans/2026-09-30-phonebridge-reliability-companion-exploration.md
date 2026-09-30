@@ -124,8 +124,8 @@
 - [x] 增加 HTTP 请求/响应模型和事件 fixture。routine 操作离线时先本地标注“待同步”；收到业务拒绝显示原因，不把传输成功当作业务成功。
 - [x] Android 抽屉中新增“日常”和“目标”入口，使用现有 View/XML/协调风格，不替换沉浸启动。专注计时可暂停/跳过/中断；散步观察不请求定位/相机；睡前回顾为纯文本且默认不进长期记忆。
 - [x] 目标 UI 允许建立目标、显式请求草案、编辑/删除建议步骤、逐条确认，然后显示与普通任务绑定的进度。退出草案流程不创建目标任务。
-- [x] Room 测试覆盖从 v5 迁移、goal cascade、本地 routine/goals 隐私清理和 pending 状态；测试源码已编译，模拟器执行留待本批 GitHub Actions。
-- [x] 运行 `.gradlew.bat :app:testDebugUnitTest`；扩展验收同时运行 AndroidTest 编译、Lint 和 Debug 构建。本机结果已通过，最新 SHA 的 GitHub Actions 仍待验收。
+- [x] Room 测试覆盖从 v5 迁移、goal cascade、本地 routine/goals 隐私清理和 pending 状态；GitHub Actions API 34 emulator instrumentation **10/10** 通过。
+- [x] 运行 `.gradlew.bat :app:testDebugUnitTest`；扩展验收同时运行 AndroidTest 编译、Lint 和 Debug 构建。本机结果及 GitHub Actions [run 36688324533](https://github.com/blueicx/PhoneBridge/actions/runs/36688324533) attempt 2 均通过。修正首轮 CI 暴露的 migration test table name 后，验证了 SHA `cd4eee96b3e592d6cff662ae0f08e27348279d06`。
 
 ### B4. Web 工作台与跨端协议一致性
 

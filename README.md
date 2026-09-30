@@ -307,6 +307,7 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 目标支持节点创建、显式请求当前 provider 的草案、编辑/删除步骤并逐条确认；只有确认后才创建普通 Workspace task。Room 保存 goal/milestone/task 同一确认结果，任务状态变化回写里程碑；目标任务按 `goals`+`tasks` 两类隐私 revision 分类。
 - `WorkspaceClient` 对相同 TLS 指纹复用 OkHttp 客户端和连接池，证书指纹不同则隔离客户端配置。
 - 本机验证：Node **223/223**；Android JVM **164/164**；`:app:compileDebugAndroidTestKotlin`、`:app:lintDebug`（0 lint errors）和 `:app:assembleDebug` 全部成功；秘密扫描、Android CI workflow contract、APK signer parser、Debug APK release gate、`git diff --check` 通过。性能预算：`elapsedMs=0.668`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。
-- Android Room v5→v6 instrumentation 测试已编写并在本机成功编译，但本机没有运行模拟器/ADB；由本批推送后的 GitHub Actions API 34 emulator 执行。手机未触碰、未安装、未授予权限；实机体验与正式 Release 签名仍待各自门槛。
+- GitHub Actions [run 36688324533](https://github.com/blueicx/PhoneBridge/actions/runs/36688324533) attempt 2 在 SHA `cd4eee96b3e592d6cff662ae0f08e27348279d06` 全绿：Room v5→v6 API 34 emulator instrumentation **10/10**，Node、Android JVM、Lint、Debug 构建、签名解析、发布门禁、artifact 上传、diff whitespace 与干净工作树检查均通过。首轮 CI 揭示迁移测试误用了 `workspace_routines` 名称，已在 `cd4eee9` 修正；attempt 1 遇到 GitHub runner emulator ADB 离线并超时，attempt 2 完整通过。
+- 内部 Debug artifact `phonebridge-debug-cd4eee96b3e592d6cff662ae0f08e27348279d06`（artifact ID `11086944240`，65,468,054 bytes；ZIP SHA-256 `73afd3877a2cec78591e8978459827e5eda7836aac6edd7a6f7a95cbe3265790`）仅保存在 GitHub Actions，未加入源码历史。手机未触碰、未安装、未授予权限；实机体验与正式 Release 签名仍待各自门槛。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
