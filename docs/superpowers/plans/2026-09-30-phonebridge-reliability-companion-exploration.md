@@ -139,7 +139,7 @@
 - [x] API/Web 测试覆盖失败消息、刷新恢复、重复提交和无业务写入的 draft 请求。
 - [x] 运行 `node --test server/*.test.js`（225/225）及 `:app:testDebugUnitTest`（165/165）、`:app:lintDebug`、`:app:assembleDebug`；执行敏感字段扫描、性能预算、`node --check server/index.js` 和 `git diff --check`。
 - [x] 更新 `README.md` 与 `HANDOFF.md`，注明本机/服务端分别保存何种记录与无需权限的限制；记录 B4 源码 SHA、CI 结果、artifact 和未验收边界。
-- [x] 提交并 push 批次 B；B4 源码 SHA 的 GitHub Actions 全绿（Room migration **10/10**）。文档收尾提交后的 Actions 仍须单独确认，确认前不进入批次 C。
+- [x] 提交并 push 批次 B；B4 源码 SHA 的 GitHub Actions 全绿（Room migration **10/10**）。文档收尾 SHA 的 Actions run [36710431845](https://github.com/blueicx/PhoneBridge/actions/runs/36710431845) 连续 4 次均在 runner emulator 启动/安装层失败，Room 测试断言未执行，不能记作文档 SHA 通过。停止重试后，基于已全绿的 B4 源码 SHA 继续批次 C；C1 提交会携带文档修订并重新运行完整 CI。
 
 ## 批次 C：从结算收据派生探索日志
 
@@ -149,12 +149,13 @@
 
 **接入文件：** `server/index.js`、`server/enhancement-api.test.js`、`server/privacy-center.test.js`
 
-- [ ] 先测试只返回已确认收据、按 `(occurredAt,eventId)` 稳定倒序、重复收据只一条、游标分页无重无漏、隐私删除后为空，以及输出不含图像/精确坐标/连续轨迹/自由文本。
-- [ ] 新增 `buildRealityLog({growthStore, realityEngine, moteProfiles})` 纯投影；只读取已有 Reality/MoteGrowth receipt，不写第二奖励账本、不调用领奖逻辑。条目字段限定为 `eventId,status,occurredAt,coarseRegion,clueType,moteId,observation,reward`。
-- [ ] 新增 `GET /api/reality/log?cursor=<opaque-keyset>&limit=50`，验证 limit 上限和不透明 keyset `(occurredAt,eventId)`；未知或畸形 cursor 返回 400，不退化成首屏无限读取。
-- [ ] 使用当前 Mote profile 与 clueType 生成固定观察提示；不将模型生成自由文本、原始图像或精确位置写入日志。
-- [ ] 探索日志归入 `progress`：沿用既有加密导出与删除 adapter；确保进度删除同步清理对应日志投影来源，日志不可独立发奖。
-- [ ] 运行 `node --test server/reality-log.test.js server/reality-engine.test.js server/reality-coordinator.test.js server/privacy-center.test.js server/enhancement-api.test.js`。
+- [x] 先测试只返回已确认收据、按 `(occurredAt,eventId)` 稳定倒序、重复收据只一条、游标分页无重无漏、隐私删除后为空，以及输出不含图像/精确坐标/连续轨迹/自由文本。
+- [x] 新增 `buildRealityLog({growthStore, realityEngine, moteProfiles})` 纯投影；只读取已有 Reality/MoteGrowth receipt，不写第二奖励账本、不调用领奖逻辑。条目字段限定为 `eventId,status,occurredAt,coarseRegion,clueType,moteId,observation,reward`。
+- [x] 新增 `GET /api/reality/log?cursor=<opaque-keyset>&limit=50`，验证 limit 上限和不透明 keyset `(occurredAt,eventId)`；未知或畸形 cursor 返回 400，不退化成首屏无限读取。
+- [x] 使用当前 Mote profile 与 clueType 生成固定观察提示；不将模型生成自由文本、原始图像或精确位置写入日志；安全的 v1 receipt ID 可读取，未知/自由文本 ID 拒绝投影。
+- [x] 探索日志归入 `progress`：沿用既有加密导出与删除 adapter；确保进度删除同步清理对应日志投影来源，日志不可独立发奖。
+- [x] 运行定向测试 **43/43** 与 Node 全量 **234/234**；隐私删除 API 回归、旧版 ID 分页、`node --check`、敏感扫描、性能预算和 `git diff --check` 本地通过。
+- [ ] 提交并 push C1；确认包含源码和交接文档的最新 SHA 上 GitHub Actions 全绿后，再进入 C2。
 
 ### C2. Android 确认/待同步日志合并
 

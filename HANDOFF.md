@@ -514,7 +514,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 本机验证：Node **225/225**；Android JVM **165/165**；`lintDebug`、`assembleDebug`、`node --check server/index.js`、`scan_secrets.ps1`、工作区性能预算和 `git diff --check` 均通过。最终性能预算 `elapsedMs=0.735`、full snapshot `1694 bytes`、summary `48 bytes`、cache hits `10000`、burst broadcasts `1`。
 - GitHub Actions run [36703474633](https://github.com/blueicx/PhoneBridge/actions/runs/36703474633) attempt 2 已在源码 SHA `cedb7332ac36286638cc3febd93ff55e0c03b893` 全绿。Room v5→v6 API 34 emulator instrumentation **10/10**，Node、Android JVM、Lint、Debug 构建、签名元数据、发布门禁、artifact 上传、差异空白与干净工作树检查均通过。attempt 1 只因 runner 等待 emulator 启动超时而失败，Room 测试未启动；同一 SHA attempt 2 完整通过。
 - 内部 Debug artifact `phonebridge-debug-cedb7332ac36286638cc3febd93ff55e0c03b893`（artifact ID `11093506908`，`65,468,196 bytes`；SHA-256 `4342397d4551aa44b7b9d294909a39a8cfd235ca0553efef63be17e517ab25ee`）仅保留在 GitHub Actions，未加入源码历史。
-- B4 源码已提交并推送；本机/服务端的活动与目标数据保存边界见本节实现说明。此批未运行 ADB、未安装或操作手机，也未做浏览器交互验收；UI 实际交互、真机和正式 Release 签名仍分别待验收。文档收尾提交会产生新 SHA；进入 C1 前需确认该最新 SHA 的 Actions 全绿。此节覆盖上文较早的“B3 后等待再进入 B4”状态。继续保持 `feature/integrated-enhancement`，不修改 `main`。
+- B4 源码 SHA `cedb7332ac36286638cc3febd93ff55e0c03b893` 的 GitHub Actions run [36703474633](https://github.com/blueicx/PhoneBridge/actions/runs/36703474633) attempt 2 全绿，Room migration **10/10**。文档收尾 SHA 的 run [36710431845](https://github.com/blueicx/PhoneBridge/actions/runs/36710431845) 连续 4 次都在 runner emulator 启动/安装阶段失败，未跑 Room 测试断言；停止重试后基于已全绿的 B4 源码 SHA 继续 C1。C1 提交会携带本次文档修订并重新执行完整 CI，不能把上述文档 SHA 记为通过。B4 未运行 ADB、未安装或操作手机，也未做浏览器交互验收；UI 实际交互、真机和正式 Release 签名仍分别待验收。此节覆盖上文较早的“B3 后等待再进入 B4”状态。继续保持 `feature/integrated-enhancement`，不修改 `main`。
+
+实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
+
+## 45. 2026-09-30 批次 C1：服务端探索日志投影
+
+- 新增 `GET /api/reality/log`，日志是 Reality 与 MoteGrowth 已确认奖励收据的只读投影；不新增账本、不触发领奖。按 `(occurredAt,eventId)` 稳定倒序分页，同一 `eventId` 合并为一条，cursor 仅接受当前日志中存在的 keyset。
+- 条目字段采用 allowlist：`eventId`、确认状态、时间、粗区域、线索类型、当前 Mote、固定观察语句及实际奖励。图像、经纬度、连续轨迹、事件标题和任意观察文本不会进入响应。畸形/未知 cursor 与越界 limit 返回 400。
+- 旧版 Reality/MoteGrowth 收据仅在 ID 可验证为粗区域、三类已知线索和安全字符后缀时纳入；区域/线索与收据身份不一致、时间无效、未确认或拒绝的记录会被排除。`progress` 删除清理两个原始收据来源，所以日志不会复活已删除内容。
+- 验证：C1 定向 Node 测试 **43/43**，Node 全量 **234/234**；隐私删除 API 回归、旧版分页和无效道具 ID 拒绝测试通过。`node --check`、敏感扫描、`git diff --check` 与性能预算均通过；性能脚本结果 `elapsedMs=0.860`、快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。最新 commit 的 GitHub Actions 尚待本批提交后记录。
+- 本批未运行 ADB、安装 APK 或操作手机；Android 日志 UI 与 outbox 合并留在 C2/C3。现实镜头、实机奖励和长时间运行仍待独立设备验收；正式 Release 签名继续受独立加密恢复副本门禁约束。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
 

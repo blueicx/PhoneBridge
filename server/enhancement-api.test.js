@@ -232,6 +232,20 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     });
     assert.equal(duplicate.body.duplicate, true);
 
+    const realityLog = await request('/api/reality/log?limit=10');
+    assert.equal(realityLog.response.status, 200);
+    assert.equal(realityLog.body.entries.length, 1);
+    assert.equal(realityLog.body.entries[0].eventId, event.id);
+    assert.equal(realityLog.body.entries[0].status, 'confirmed');
+    assert.equal(realityLog.body.entries[0].coarseRegion, 'cell:1:2');
+    assert.equal(realityLog.body.entries[0].clueType, event.clueType);
+    assert.deepEqual(Object.keys(realityLog.body.entries[0]).sort(), [
+      'eventId', 'status', 'occurredAt', 'coarseRegion', 'clueType', 'moteId', 'observation', 'reward',
+    ].sort());
+    const badRealityCursor = await request('/api/reality/log?cursor=not-a-valid-cursor');
+    assert.equal(badRealityCursor.response.status, 400);
+    assert.equal(badRealityCursor.body.ok, false);
+
     const simulator = await request('/api/dev/simulator');
     assert.equal(simulator.response.status, 200);
     assert.equal(simulator.body.state.seed, 'api-test');
@@ -501,6 +515,10 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     assert.equal(deletedProgress.response.status, 200);
     assert.equal(deletedProgress.body.receipt.categoryRevisions.progress, 1);
     assert.equal((await request('/api/motes/relationship')).body.relationship.xp, 0);
+    const realityLogAfterProgressDelete = await request('/api/reality/log');
+    assert.equal(realityLogAfterProgressDelete.response.status, 200);
+    assert.deepEqual(realityLogAfterProgressDelete.body.entries, []);
+    assert.equal(realityLogAfterProgressDelete.body.nextCursor, null);
     const staleProgressReplay = await request('/api/workspace/events', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ event: {

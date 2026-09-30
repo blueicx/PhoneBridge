@@ -7,6 +7,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { PrivacyCenter, decryptArchive, encryptArchive } = require('./privacy-center');
+const { MOTE_PROFILES } = require('./mote-profiles');
+const { MoteGrowthStore, buildClueEventId } = require('./mote-growth');
+const { RealityEngine } = require('./reality-engine');
+const { buildRealityLog } = require('./reality-log');
 const privacyMigrationFixture = require('../protocol-fixtures/privacy-migration.json');
 const privacyOverviewFixture = require('../protocol-fixtures/privacy-overview.json');
 
@@ -70,6 +74,41 @@ test('encrypted privacy archives round-trip and reject a wrong passphrase', () =
   assert.equal(JSON.stringify(archive).includes('private payload'), false);
   assert.deepEqual(decryptArchive(archive, PASSPHRASE), data);
   assert.throws(() => decryptArchive(archive, 'wrong passphrase value'), /decrypt|integrity|authentication/i);
+});
+
+test('deleting progress removes every receipt source used by the derived reality log', async () => {
+  const now = Date.parse('2026-09-30T03:00:00.000Z');
+  const realityEngine = new RealityEngine({ now: () => now });
+  const realityEvent = realityEngine.eventsFor('cell:1:2', now).find(item => item.clueType === 'location');
+  realityEngine.resolve({ eventId: realityEvent.id, region: 'cell:1:2', clueType: 'location', at: now });
+  const growthStore = new MoteGrowthStore({ now: () => now });
+  const growthEventId = buildClueEventId({ activityAt: now, region: 'camera', clueType: 'light', nonce: 'privacy_test' });
+  growthStore.recordClue({ eventId: growthEventId, region: 'camera', clueType: 'light', activityAt: now });
+  const moteProfiles = { activeId: 'mote', profiles: MOTE_PROFILES };
+  const buildLog = () => buildRealityLog({ growthStore, realityEngine, moteProfiles });
+  assert.equal(buildLog().entries.length, 2);
+
+  const { center } = makeCenter({ categories: {
+    progress: {
+      label: 'Mote 成长与探索',
+      count: () => growthStore.listReceipts().length + realityEngine.listReceipts().length,
+      export: () => ({ growth: growthStore.listReceipts(), reality: realityEngine.listReceipts() }),
+      clear: () => {
+        const deleted = growthStore.listReceipts().length + realityEngine.listReceipts().length;
+        growthStore.reset();
+        realityEngine.reset();
+        return { deleted };
+      },
+    },
+  } });
+  const deletion = await center.delete({
+    requestId: 'reality-log-progress-delete',
+    categories: ['progress'],
+    confirmation: 'DELETE SELECTED DATA',
+  });
+
+  assert.equal(deletion.status, 'completed');
+  assert.equal(buildLog().entries.length, 0);
 });
 
 test('encrypted runtime archive CLI round-trips bytes without exposing the passphrase', () => {

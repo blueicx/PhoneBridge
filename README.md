@@ -57,7 +57,7 @@
 
 - 开发/测试专用确定性设备模拟器：设置 `PHONEBRIDGE_ENABLE_SIMULATOR=1` 后可使用 `GET/PATCH /api/dev/simulator` 模拟粗区域、线索方向、网络、传感器、电量、温度和帧率；默认关闭。
 - AI provider 能力、流式 request、取消、每日输出预算和本地记忆存储；新增 `/api/ai/capabilities`、`POST /api/ai/requests/:id/cancel`、`/api/memories`。
-- 现实探索引擎：确定性粗区域事件、过期/跨区域校验、遭遇、库存、合成、装备、家园、任务和幂等奖励；新增 `/api/reality/catalog`、`/api/reality/events`、`/api/reality/events/:id/start|resolve`、`/api/reality/crafting`、`/api/reality/loadout`、`/api/reality/habitat`。
+- 现实探索引擎：确定性粗区域事件、过期/跨区域校验、遭遇、库存、合成、装备、家园、任务和幂等奖励；新增 `/api/reality/catalog`、`/api/reality/events`、`/api/reality/events/:id/start|resolve`、`/api/reality/crafting`、`/api/reality/loadout`、`/api/reality/habitat`，并提供只由已确认收据派生的 `/api/reality/log`。
 - 可选真实 ARCore Reality：兼容设备进入现实镜头时自动尝试标准 ARCore Session，Google 系统安装只请求一次；支持平面命中放置 Mote 和 Anchor 跟踪投影。CameraX 与 ARCore 始终互斥；不支持/安装失败回退 CameraX + Canvas，低帧率或 40°C 热保护回退无相机 Canvas。Android Session 不持久化锚点或相机图像，远程画面仍需原有显式 opt-in，默认关闭并限制为低分辨率异步帧。该能力尚未取得本轮兼容设备实机验收证据。
 - Mote 图鉴扩展为 20 个形态，新增潮獭、月鹿、岩鼹、风貂、雷雀、雪兔、花灵、晶蜥、沙狐和影蛾；Android 已加入协议解析和配置回退。
 - 安全扫码配对：认证 Web 可调用 `POST /api/pairing/start` 获取五分钟有效二维码；远程配对要求明确的手机可达地址、TLS 和 X.509 DER 证书 SHA-256 指纹。Android 用 CameraX/ZXing 本机读取二维码亮度数据，经 HTTPS 一次性领取令牌并保存到 Keystore；失败时保留原连接配置。固定环境令牌、不可轮换的 `PHONEBRIDGE_TOKEN` 与不安全远程 claim 会在配对前被拒绝。
@@ -74,6 +74,7 @@
 
 - ARCore 热保护只合并当前读数和 10 秒内的温度样本，避免陈旧遥测使保护永久锁定；解除热锁要求低于 38°C 的样本连续、间隔不超过 5 秒并持续一分钟。
 - AR Session 关闭时，即使 pause 失败也会继续 close 并进入 CLOSED；沉浸模式硬件返回键统一交给现有导航回调，确保现实镜头先执行相机释放与界面恢复。
+- 探索日志 `/api/reality/log` 从 Reality/MoteGrowth 已确认收据即时投影，合并重复 `eventId` 并按时间游标分页；只暴露粗区域、线索类型、固定观察语句和实际奖励。旧版安全线索 ID 可读；清除 `progress` 后底层收据一并删除，不能通过日志重新生成。
 
 ## 启动
 

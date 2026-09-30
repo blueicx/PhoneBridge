@@ -124,6 +124,7 @@ class RealityEngine {
     return { deleted };
   }
   getReceipt(eventId) { return clone(this.state.rewardReceipts[String(eventId || '')] || null); }
+  listReceipts() { return Object.values(this.state.rewardReceipts).map(clone); }
   catalog() { return { items: clone(ITEMS), recipes: clone(RECIPES), decorations: clone(DECORATIONS), quests: clone(QUESTS), events: clone(EVENTS), encounters: clone(ENCOUNTERS) }; }
 
   setBoosts(boosts = []) {

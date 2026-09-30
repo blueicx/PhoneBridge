@@ -222,6 +222,10 @@ class MoteGrowthStore {
     return receipt ? clone(receipt) : null;
   }
 
+  listReceipts() {
+    return this.state.processedEvents.map(clone);
+  }
+
   _result(receipt, { state = this.snapshot() } = {}) {
     return {
       duplicate: receipt.businessStatus === 'duplicate',

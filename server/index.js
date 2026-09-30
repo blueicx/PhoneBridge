@@ -6,7 +6,7 @@ const { WebSocketServer } = require('ws');
 const QRCode = require('qrcode');
 const { WorkspaceStore, createEventEnvelope, shouldApplyWorkspaceEvent, workspaceBusinessAck } = require('./workspace-core');
 const { DeviceHealthStore } = require('./device-health');
-const { MoteStore, deriveMoteBehavior } = require('./mote-profiles');
+const { MoteStore, deriveMoteBehavior, MOTE_PROFILES } = require('./mote-profiles');
 const { TaskRunner } = require('./task-runner');
 const { MoteRelationshipStore, MoteQuestStore } = require('./mote-expansion');
 const { MoteStoryStore, deriveExclusiveTriggers, claimMoteStoryWithReward } = require('./mote-story');
@@ -22,6 +22,7 @@ const { createStructuredLogger } = require('./structured-log');
 const { DeviceSimulator } = require('./device-simulator');
 const { MemoryStore } = require('./ai-memory');
 const { RealityEngine } = require('./reality-engine');
+const { buildRealityLog } = require('./reality-log');
 const { MoteGrowthStore } = require('./mote-growth');
 const { DailyRoutinesStore } = require('./daily-routines');
 const { GoalBoardService, GoalBoardError } = require('./goal-board');
@@ -2882,6 +2883,23 @@ const handleHttpRequest = async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/reality/catalog' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, catalog: realityEngine.catalog() });
+    }
+    if (parsedUrl.pathname === '/api/reality/log' && req.method === 'GET') {
+      try {
+        const moteProfiles = { activeId: moteStore.getState().activeId, profiles: MOTE_PROFILES };
+        const result = buildRealityLog({
+          growthStore: moteGrowthStore,
+          realityEngine,
+          moteProfiles,
+          cursor: parsedUrl.searchParams.has('cursor') ? parsedUrl.searchParams.get('cursor') : null,
+          limit: parsedUrl.searchParams.has('limit') ? parsedUrl.searchParams.get('limit') : undefined,
+        });
+        return sendJson(res, 200, { ok: true, ...result });
+      } catch (error) {
+        if (error.code === 'invalid_cursor') return sendJson(res, 400, { ok: false, code: error.code, error: 'invalid reality log cursor' });
+        if (error.code === 'invalid_limit') return sendJson(res, 400, { ok: false, code: error.code, error: 'invalid reality log limit' });
+        return sendJson(res, 500, { ok: false, code: 'reality_log_unavailable', error: 'reality log is temporarily unavailable' });
+      }
     }
     if (parsedUrl.pathname === '/api/reality/state' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, state: realityEngine.snapshot() });
