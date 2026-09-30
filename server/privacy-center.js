@@ -210,6 +210,20 @@ class PrivacyCenter {
     return this.categoryRevisions[category] || 0;
   }
 
+  advanceCategoryRevision(category) {
+    if (!this.categories.has(category)) throw new Error(`unknown privacy category: ${category}`);
+    if (this.isMigrationRequired(category)) throw new Error(`privacy migration is required: ${category}`);
+    const previous = this.categoryRevisions[category] || 0;
+    if (previous >= Number.MAX_SAFE_INTEGER) throw new Error(`privacy revision is exhausted: ${category}`);
+    this.categoryRevisions[category] = previous + 1;
+    try { this._save(); }
+    catch (error) {
+      this.categoryRevisions[category] = previous;
+      throw error;
+    }
+    return this.categoryRevisions[category];
+  }
+
   observeCategoryRevision(category, revision) {
     return this.observeCategoryRevisions({ [category]: revision });
   }

@@ -541,3 +541,202 @@ test('privacy cleanup clears task records but preserves autonomy settings', () =
   assert.deepEqual(store.getAutonomyPolicy(), beforePolicy);
   assert.equal(JSON.stringify(store.events()).includes('task to erase'), false);
 });
+
+test('accepts goal steps as one workspace snapshot and replays the same receipt', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phonebridge-goal-atomic-'));
+  const snapshotPath = path.join(runtimeDir, 'workspace-state.json');
+  try {
+    const store = new WorkspaceStore({ now: () => Date.parse('2026-09-30T12:00:00.000Z'), snapshotPath });
+    const goal = store.createGoal({ id: 'goal-atomic', title: '完成一项计划', description: '拆成可执行步骤' });
+    const accepted = store.acceptGoalSteps(goal.id, {
+      eventId: 'goal-accept-atomic-001',
+      steps: [
+        { title: '准备', description: '整理材料' },
+        { title: '执行', description: '完成第一轮' },
+      ],
+    });
+
+    assert.equal(accepted.milestones.length, 2);
+    assert.equal(accepted.tasks.length, 2);
+    assert.ok(accepted.tasks.every(task => task.source === 'goal'));
+    assert.deepEqual(accepted.tasks.map(task => task.metadata.goalId), [goal.id, goal.id]);
+    assert.deepEqual(accepted.tasks.map(task => task.metadata.milestoneId), accepted.milestones.map(item => item.id));
+    assert.deepEqual(store.acceptGoalSteps(goal.id, {
+      eventId: 'goal-accept-atomic-001',
+      steps: [
+        { title: '准备', description: '整理材料' },
+        { title: '执行', description: '完成第一轮' },
+      ],
+    }), { ...accepted, duplicate: true });
+    assert.equal(store.listTasks().length, 2);
+
+    const restored = new WorkspaceStore({ snapshotPath });
+    assert.equal(restored.getGoal(goal.id).milestones.length, 2);
+    assert.equal(restored.listTasks().length, 2);
+    assert.equal(restored.acceptGoalSteps(goal.id, {
+      eventId: 'goal-accept-atomic-001',
+      steps: [
+        { title: '准备', description: '整理材料' },
+        { title: '执行', description: '完成第一轮' },
+      ],
+    }).duplicate, true);
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('rolls back every goal milestone and task when the workspace snapshot commit fails', () => {
+  const values = new Map();
+  let failSave = false;
+  const persistence = {
+    load(key, fallback) { return values.has(key) ? structuredClone(values.get(key)) : fallback; },
+    save(key, value) {
+      if (failSave && key === 'workspace-state') throw new Error('disk unavailable');
+      values.set(key, structuredClone(value));
+    },
+  };
+  const store = new WorkspaceStore({ persistence });
+  const goal = store.createGoal({ id: 'goal-rollback', title: '原子计划' });
+  const before = structuredClone(values.get('workspace-state'));
+
+  failSave = true;
+  assert.throws(() => store.acceptGoalSteps(goal.id, {
+    eventId: 'goal-accept-rollback-001',
+    steps: [{ title: '不得留下半组任务' }, { title: '也不得留下里程碑' }],
+  }), /disk unavailable/);
+
+  assert.deepEqual(store.getGoal(goal.id).milestones, []);
+  assert.equal(store.listTasks().length, 0);
+  assert.deepEqual(values.get('workspace-state'), before);
+});
+
+test('clearing task history unbinds goal milestones but preserves goal text', () => {
+  const store = new WorkspaceStore({ now: () => Date.parse('2026-09-30T12:00:00.000Z') });
+  const goal = store.createGoal({ id: 'goal-task-privacy', title: '保留目标文字', description: '但清理任务镜像' });
+  const accepted = store.acceptGoalSteps(goal.id, {
+    eventId: 'goal-accept-task-privacy-001',
+    steps: [{ title: '关联任务', description: '删除任务后解绑' }],
+  });
+
+  store.clearTaskHistory();
+
+  const restoredGoal = store.getGoal(goal.id);
+  assert.equal(restoredGoal.title, '保留目标文字');
+  assert.equal(restoredGoal.description, '但清理任务镜像');
+  assert.equal(restoredGoal.milestones[0].id, accepted.milestones[0].id);
+  assert.equal(restoredGoal.milestones[0].taskId, null);
+  assert.equal(restoredGoal.milestones[0].status, 'pending');
+  assert.equal(store.listTasks().length, 0);
+});
+
+test('goal milestones follow their ordinary task lifecycle without a second task state', () => {
+  const store = new WorkspaceStore({ now: () => Date.parse('2026-09-30T12:00:00.000Z') });
+  const goal = store.createGoal({ id: 'goal-progress', title: '里程碑进度' });
+  const accepted = store.acceptGoalSteps(goal.id, {
+    eventId: 'goal-progress-accept-001',
+    steps: [{ title: '唯一事实任务' }],
+  });
+  const task = accepted.tasks[0];
+  assert.equal(store.getGoal(goal.id).milestones[0].status, 'pending');
+
+  assert.throws(() => store.updateTask(task.id, { metadata: {} }), /goal task linkage is immutable/);
+  assert.equal(store.getTask(task.id).metadata.goalId, goal.id);
+  store.updateTask(task.id, { state: 'running' });
+  assert.equal(store.getGoal(goal.id).milestones[0].status, 'in_progress');
+  store.updateTask(task.id, { state: 'paused' });
+  assert.equal(store.getGoal(goal.id).milestones[0].status, 'in_progress');
+  store.updateTask(task.id, { state: 'running' });
+  store.updateTask(task.id, { state: 'needs_confirmation' });
+  assert.equal(store.getGoal(goal.id).milestones[0].status, 'in_progress');
+  store.updateTask(task.id, { state: 'running' });
+  store.updateTask(task.id, { state: 'succeeded', progress: 100 });
+  const milestone = store.getGoal(goal.id).milestones[0];
+  assert.equal(milestone.status, 'completed');
+  assert.ok(milestone.completedAt);
+  store.updateTask(task.id, { state: 'archived' });
+  assert.equal(store.getGoal(goal.id).milestones[0].status, 'completed');
+  assert.equal(store.getGoal(goal.id).milestones[0].completedAt, milestone.completedAt);
+  assert.equal(store.listTasks().length, 1);
+});
+
+test('goal task enumeration is not truncated by the 200-item task-list projection', () => {
+  let now = Date.parse('2026-09-30T12:00:00.000Z');
+  const store = new WorkspaceStore({ now: () => now++ });
+  const goal = store.createGoal({ id: 'goal-unbounded-task-enumeration', title: '清理完整目标关联' });
+  const accepted = store.acceptGoalSteps(goal.id, {
+    eventId: 'goal-unbounded-task-enumeration-001',
+    steps: [{ title: '较早的目标任务' }],
+  });
+  for (let index = 0; index < 205; index += 1) {
+    store.createTask({ id: `ordinary-task-${String(index).padStart(3, '0')}`, title: `普通任务 ${index}` });
+  }
+
+  assert.equal(store.listTasks({ limit: 200 }).some(task => task.id === accepted.tasks[0].id), false);
+  assert.deepEqual(store.listGoalTaskIds(goal.id), [accepted.tasks[0].id]);
+  assert.deepEqual(store.listGoalTaskIds(), [accepted.tasks[0].id]);
+});
+
+test('goal deletion refuses running work and cascades terminal task-linked records', () => {
+  const store = new WorkspaceStore({ now: () => Date.parse('2026-09-30T12:00:00.000Z') });
+  const goal = store.createGoal({ id: 'goal-cascade', title: '级联目标' });
+  const accepted = store.acceptGoalSteps(goal.id, {
+    eventId: 'goal-cascade-accept-001',
+    steps: [{ title: '专属任务' }],
+  });
+  const task = accepted.tasks[0];
+  const removedEvent = store.acceptEvent({
+    eventId: 'goal-cascade-task-event', origin: 'phone', sequence: 71,
+    type: 'workspace.task.progress', payload: { taskId: task.id, goalId: goal.id },
+  }).event;
+  store.updateTask(task.id, { state: 'running' });
+  assert.throws(() => store.deleteGoal(goal.id), /running goal tasks/);
+  assert.ok(store.getGoal(goal.id));
+  assert.ok(store.getTask(task.id));
+
+  store.updateTask(task.id, { state: 'succeeded', progress: 100 });
+  const actionRun = store._createActionRun({ origin: 'direct', taskId: task.id, toolId: 'safe.inspect' });
+  store._writeAudit({ actor: 'test', toolId: 'safe.inspect', args: {}, status: 'succeeded', actionRunId: actionRun.id });
+  const taskAuditIds = store.listTaskAudit(task.id).map(item => item.id);
+  assert.ok(store.listAttentionItems({ relatedTaskId: task.id }).length > 0);
+
+  const deleted = store.deleteGoal(goal.id);
+  assert.equal(deleted.deleted, true);
+  assert.deepEqual(deleted.taskIds, [task.id]);
+  assert.equal(store.getGoal(goal.id), null);
+  assert.equal(store.getTask(task.id), null);
+  assert.equal(store.listAttentionItems({ relatedTaskId: task.id }).length, 0);
+  assert.equal(store.listActionRuns().some(item => item.id === actionRun.id), false);
+  assert.equal(store.auditLog().some(item => item.actionRunId === actionRun.id), false);
+  assert.equal(store.taskAudit.some(item => taskAuditIds.includes(item.id)), false);
+  assert.equal(store.events().some(item => item.eventId === removedEvent.eventId), false);
+  assert.equal(store.eventKeys.has(`event:${removedEvent.eventId}`), false);
+  assert.throws(() => store.acceptGoalSteps(goal.id, {
+    eventId: 'goal-cascade-accept-001', steps: [{ title: '专属任务' }],
+  }), /goal not found/);
+});
+
+test('goal cascade restores goals and linked entities if its snapshot commit fails', () => {
+  const values = new Map();
+  let failSave = false;
+  const persistence = {
+    load(key, fallback) { return values.has(key) ? structuredClone(values.get(key)) : fallback; },
+    save(key, value) {
+      if (failSave && key === 'workspace-state') throw new Error('disk unavailable');
+      values.set(key, structuredClone(value));
+    },
+  };
+  const store = new WorkspaceStore({ persistence });
+  const goal = store.createGoal({ id: 'goal-delete-rollback', title: '保留完整目标' });
+  const accepted = store.acceptGoalSteps(goal.id, {
+    eventId: 'goal-delete-rollback-001', steps: [{ title: '保留完整任务' }],
+  });
+  const before = structuredClone(values.get('workspace-state'));
+
+  failSave = true;
+  assert.throws(() => store.deleteGoal(goal.id), /disk unavailable/);
+
+  assert.equal(store.getGoal(goal.id).title, '保留完整目标');
+  assert.equal(store.getTask(accepted.tasks[0].id).title, '保留完整任务');
+  assert.equal(store.goalAcceptReceipts.has('goal-delete-rollback-001'), true);
+  assert.deepEqual(values.get('workspace-state'), before);
+});

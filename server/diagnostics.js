@@ -18,7 +18,8 @@ class DiagnosticsCollector {
       activeProviderId: 'codex',
       lastLatencyMs: 0,
       degradationCount: 0,
-      fallbackProvider: 'local'
+      fallbackProvider: 'local',
+      goalDraftAudit: [],
     };
     this.performance = {
       fpsTarget: 30,
@@ -53,6 +54,20 @@ class DiagnosticsCollector {
     this.provider.degradationCount++;
   }
 
+  recordGoalDraftAudit(entry = {}) {
+    const allowedReasons = new Set(['provider_unavailable', 'provider_output_invalid', 'request_cancelled', 'local_provider_selected']);
+    const providerId = String(entry.providerId || 'local').trim();
+    const audit = {
+      providerId: /^[a-z0-9._-]{1,64}$/i.test(providerId) ? providerId : 'unknown',
+      elapsedMs: Math.max(0, Math.min(120_000, Math.round(Number(entry.elapsedMs) || 0))),
+      fallbackReason: allowedReasons.has(entry.fallbackReason) ? entry.fallbackReason : null,
+      resultStatus: entry.resultStatus === 'failed' ? 'failed' : 'ready',
+    };
+    this.provider.goalDraftAudit.push(audit);
+    if (this.provider.goalDraftAudit.length > 100) this.provider.goalDraftAudit.splice(0, this.provider.goalDraftAudit.length - 100);
+    return { ...audit };
+  }
+
   setForeground(isForeground) {
     this.performance.foreground = Boolean(isForeground);
     this.performance.throttled = !this.performance.foreground;
@@ -67,7 +82,10 @@ class DiagnosticsCollector {
       syncLatencyMs: this.syncLatencyMs,
       eventBacklog: this.eventBacklog,
       telemetry: { ...this.telemetry },
-      provider: { ...this.provider },
+      provider: {
+        ...this.provider,
+        goalDraftAudit: this.provider.goalDraftAudit.map(item => ({ ...item })),
+      },
       performance: { ...this.performance }
     };
   }

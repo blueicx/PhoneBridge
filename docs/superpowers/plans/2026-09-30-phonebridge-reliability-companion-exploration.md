@@ -103,14 +103,14 @@
 
 **接入文件：** `server/index.js`、`server/workspace-core.js`、`server/workspace-core.test.js`、`server/enhancement-api.test.js`
 
-- [ ] 先测试目标的创建、编辑、里程碑进度、事件重放、删除级联、任务删除解绑，以及 AI 草案不写持久状态、不创建任务。
-- [ ] `WorkspaceStore` 是目标、里程碑、eventId receipt 与关联普通任务的唯一持久化权威；扩展其现有 workspace snapshot，而不另造一份会与 task state 分叉的 goal 存储。`goal-board.js` 作为领域/API service。目标与里程碑有稳定 ID/时间/状态；目标数据注册为 `goals` 隐私类别，参加加密导出、全类删除与 revision 保护。
-- [ ] 增加 `GET /api/goals`、`POST /api/goals`、`PATCH /api/goals/:id`、`DELETE /api/goals/:id`；删除目标时拒绝其关联任务仍在运行的情况，事务级联删除其专属里程碑、普通任务、Attention、ActionRun/audit 关联记录，并更新 `goals` 类别 revision。
-- [ ] 增加 `POST /api/goals/:id/draft`：只在用户显式请求时调用当前选定 provider；输入长度与输出步数设上限，schema 校验失败视为 provider 失败。失败只回退本地规则，不选择其它联网 provider。草案只在响应中返回，不保存、不创建任务。
-- [ ] 增加 `POST /api/goals/:id/accept`，请求含 `eventId` 和用户编辑后的 steps。先校验目标与全部 steps，再由 `WorkspaceStore` 在同一持久化提交中保存里程碑并创建普通 Workspace tasks；提交失败回滚内存变更，不留半组任务。每个任务增加可选 `metadata.goalId` 与 `metadata.milestoneId`。重复 eventId 返回同一结果，不生成重复任务。
-- [ ] 删除 `tasks` 隐私类别时保留目标与里程碑文本，把受影响里程碑的 `taskId` 清空并复位为未关联；删除 `goals` 时才级联删目标专属任务。不得扩展任何自动工具调用或自治权限。
-- [ ] 测试当前 provider 失败时不会调用备用联网 provider；确认前任务数为 0，确认后任务数与步骤数一致；拒绝非法/过量/空步骤；持久化失败时不得留下半组任务。provider 审计只记录 provider ID、耗时、降级原因和结果状态，不记录目标正文、草案或密钥。
-- [ ] 运行 `node --test server/goal-board.test.js server/workspace-core.test.js server/privacy-center.test.js server/enhancement-api.test.js`。
+- [x] 先测试目标的创建、编辑、里程碑进度、事件重放、删除级联、任务删除解绑，以及 AI 草案不写持久状态、不创建任务。
+- [x] `WorkspaceStore` 是目标、里程碑、eventId receipt 与关联普通任务的唯一持久化权威；扩展其现有 workspace snapshot，而不另造一份会与 task state 分叉的 goal 存储。`goal-board.js` 作为领域/API service。目标与里程碑有稳定 ID/时间/状态；目标数据注册为 `goals` 隐私类别，参加加密导出、全类删除与 revision 保护。
+- [x] 增加 `GET /api/goals`、`POST /api/goals`、`PATCH /api/goals/:id`、`DELETE /api/goals/:id`；删除目标时拒绝其关联任务仍在运行的情况，事务级联删除其专属里程碑、普通任务、Attention、ActionRun/audit 关联记录，并更新 `goals` 类别 revision。完整目标任务 ID 枚举不受普通任务列表 200 条投影上限影响。
+- [x] 增加 `POST /api/goals/:id/draft`：只在用户显式请求时调用当前选定 provider；输入长度与输出步数设上限，schema 校验失败视为 provider 失败。失败只回退本地规则，不选择其它联网 provider。草案只在响应中返回，不保存、不创建任务。
+- [x] 增加 `POST /api/goals/:id/accept`，请求含 `eventId` 和用户编辑后的 steps。先校验目标与全部 steps，再由 `WorkspaceStore` 在同一持久化提交中保存里程碑并创建普通 Workspace tasks；提交失败回滚内存变更，不留半组任务。每个任务增加可选 `metadata.goalId` 与 `metadata.milestoneId`。重复 eventId 返回同一结果，不生成重复任务。
+- [x] 删除 `tasks` 隐私类别时保留目标与里程碑文本，把受影响里程碑的 `taskId` 清空并复位为未关联；删除 `goals` 时才级联删目标专属任务。不得扩展任何自动工具调用或自治权限。
+- [x] 测试当前 provider 失败时不会调用备用联网 provider；确认前任务数为 0，确认后任务数与步骤数一致；拒绝非法/过量/空步骤；持久化失败时不得留下半组任务。provider 审计只记录 provider ID、耗时、降级原因和结果状态，不记录目标正文、草案或密钥。
+- [x] 运行 `node --test server/goal-board.test.js server/workspace-core.test.js server/privacy-center.test.js server/enhancement-api.test.js`（65/65）；Node 全量 221/221、性能预算、相关语法检查、敏感扫描与 `git diff --check` 通过。
 
 ### B3. Android 数据镜像与操作状态
 

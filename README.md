@@ -289,3 +289,12 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 首次 overview 不会把旧 outbox 事件重盖成较新的删除 revision；用户选择后新建的事件预附将确认的 revision，但仍等服务端确认后才恢复发送。隔离数据只读，可由用户主动口令加密导出。
 - Node 与 Kotlin 共用 `privacy-overview.json`、`privacy-event-revision.json` fixtures，覆盖旧字段兼容、缺失/过期 revision 和关联任务双类别校验。Room v4→v5 SQLite migration 与本地恢复由 Android emulator CI 实际运行；JVM 单测或仪器测试编译不替代该验证。
 - 本机自动验证：Node **195/195**；Android JVM **149/149**，Lint 0 issues，Debug 构建成功，Android instrumentation 测试源码编译成功。GitHub Actions [run 36648683178](https://github.com/blueicx/PhoneBridge/actions/runs/36648683178) 在最新代码 SHA `6a84cbc67930a95bfb504adcfcccdf18a8b30ddb` 的第 3 次尝试全绿：Room v4→v5 emulator migration **7/7**，并通过 Node、Android JVM、Lint、Debug 构建、签名解析、发布门禁、artifact 上传和工作树检查。内部 Debug artifact `phonebridge-debug-6a84cbc67930a95bfb504adcfcccdf18a8b30ddb`（65,370,382 bytes；artifact ZIP SHA-256 `0a5c3fe0f54e2d0fa154499d2f93ea4f989fa4e431877ba935c55ec6f2402950`）。本轮验证未运行本地 ADB、未安装或操作手机；正式 Release 签名与真实设备迁移/扫码仍按交接待验收。
+
+## 2026-09-30 批次 B2：个人目标、AI 草案与确认任务
+
+- `WorkspaceStore` 是目标、里程碑、接受收据和关联普通任务的唯一持久化来源。用户编辑并显式确认步骤后，目标里程碑与普通 Workspace tasks 在同一快照提交；失败回滚，`eventId` 重放返回原收据，不重复建任务。里程碑进度跟随既有任务状态，不维护第二套任务状态机。
+- 里程碑将运行、暂停、待确认统一投影为进行中；成功/失败结果在任务归档后仍保留，不会因归档而回退。
+- 新增 `/api/goals` CRUD、`POST /api/goals/:id/draft` 和 `/accept`。AI 仅在用户点击请求时调用当前选中的 provider；失败/输出不合规时仅回退本地规则，不切换其他联网 provider。草案不持久化、不创建任务；provider 诊断审计限制为 provider ID、耗时、降级原因、结果状态，不记录目标正文、草案或密钥。
+- 删除目标会拒绝活跃任务并事务级联清除目标任务与关联 Attention、ActionRun、审计和时间线；删除 `tasks` 隐私类别则保留目标/里程碑文字并解绑任务。目标任务 ID 使用完整领域索引枚举，不受常规任务列表 200 条投影上限限制；接受接口同时校验 `goals` 与 `tasks` revision，阻止旧 outbox 在任务清理后重建任务。
+- 验证：目标/工作区/隐私/API 定向 Node **65/65**，Node 全量 **221/221**；相关 `node --check`、工作区性能预算、`scan_secrets.ps1` 与 `git diff --check` 通过。最终性能预算输出 `elapsedMs=2.203`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。
+- 当前仅完成服务端 B2。Android Room 镜像和沉浸抽屉在 B3，Web 目标工作台在 B4；未运行 ADB、未操作手机。GitHub Actions 将在本批推送后对最新 SHA 验收。

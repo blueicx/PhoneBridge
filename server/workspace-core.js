@@ -185,6 +185,60 @@ function normalizeIsoOrNull(value) {
   return parsed == null ? null : iso(parsed);
 }
 
+const GOAL_MILESTONE_STATES = new Set(['pending', 'in_progress', 'completed', 'failed']);
+
+function normalizeStoredGoal(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const goalId = String(value.id || '').trim();
+  const title = String(value.title || '').trim();
+  if (!goalId || !title || title.length > 120) return null;
+  const timestamp = iso(Date.now());
+  const milestones = (Array.isArray(value.milestones) ? value.milestones : []).map(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    const milestoneId = String(item.id || '').trim();
+    const milestoneTitle = String(item.title || '').trim();
+    if (!milestoneId || !milestoneTitle || milestoneTitle.length > 120) return null;
+    const status = GOAL_MILESTONE_STATES.has(item.status) ? item.status : 'pending';
+    return {
+      id: milestoneId,
+      goalId,
+      title: milestoneTitle,
+      description: String(item.description || '').slice(0, 500),
+      status,
+      taskId: item.taskId == null ? null : String(item.taskId),
+      createdAt: normalizeIsoOrNull(item.createdAt) || timestamp,
+      updatedAt: normalizeIsoOrNull(item.updatedAt) || timestamp,
+      completedAt: normalizeIsoOrNull(item.completedAt),
+    };
+  }).filter(Boolean);
+  return {
+    id: goalId,
+    title,
+    description: String(value.description || '').slice(0, 2000),
+    status: 'active',
+    createdAt: normalizeIsoOrNull(value.createdAt) || timestamp,
+    updatedAt: normalizeIsoOrNull(value.updatedAt) || timestamp,
+    milestones,
+  };
+}
+
+function normalizeGoalAcceptReceipt(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const eventId = String(value.eventId || '').trim();
+  const goalId = String(value.goalId || '').trim();
+  const requestHash = String(value.requestHash || '').trim();
+  if (!/^[A-Za-z0-9_-]{8,96}$/.test(eventId) || !goalId || !/^[a-f0-9]{64}$/i.test(requestHash)) return null;
+  const stringIds = input => [...new Set((Array.isArray(input) ? input : []).map(String).filter(item => item.length > 0 && item.length <= 160))];
+  return {
+    eventId,
+    goalId,
+    requestHash: requestHash.toLowerCase(),
+    milestoneIds: stringIds(value.milestoneIds),
+    taskIds: stringIds(value.taskIds),
+    createdAt: normalizeIsoOrNull(value.createdAt) || iso(Date.now()),
+  };
+}
+
 function isHardDeniedToolId(toolId) {
   return HARD_DENIED_TOOL_PATTERN.test(String(toolId || ''));
 }
@@ -212,6 +266,8 @@ class WorkspaceStore {
     this.sessions = new Map();
     this.tools = new Map();
     this.tasks = new Map();
+    this.goals = new Map();
+    this.goalAcceptReceipts = new Map();
     this.automations = new Map();
     this.runs = [];
     this.attention = new Map();
@@ -244,6 +300,14 @@ class WorkspaceStore {
         : JSON.parse(fs.readFileSync(this.snapshotPath, 'utf8'));
       for (const session of data.sessions || []) this.sessions.set(session.id, session);
       for (const task of data.tasks || []) this.tasks.set(task.id, task);
+      for (const item of data.goals || []) {
+        const goal = normalizeStoredGoal(item);
+        if (goal) this.goals.set(goal.id, goal);
+      }
+      for (const item of data.goalAcceptReceipts || []) {
+        const receipt = normalizeGoalAcceptReceipt(item);
+        if (receipt && this.goals.has(receipt.goalId)) this.goalAcceptReceipts.set(receipt.eventId, receipt);
+      }
       for (const automation of data.automations || []) this.automations.set(automation.id, automation);
       this.runs = data.runs || [];
       for (const item of data.attention || data.attentionItems || []) this.attention.set(item.id, item);
@@ -282,6 +346,8 @@ class WorkspaceStore {
     const payload = {
       sessions: [...this.sessions.values()],
       tasks: [...this.tasks.values()],
+      goals: [...this.goals.values()],
+      goalAcceptReceipts: [...this.goalAcceptReceipts.values()],
       automations: [...this.automations.values()],
       runs: this.runs,
       attention: [...this.attention.values()],
@@ -660,6 +726,8 @@ class WorkspaceStore {
 
   clearTaskHistory() {
     const deleted = this.tasks.size;
+    const taskIds = new Set(this.tasks.keys());
+    if (taskIds.size) this._unbindGoalMilestones(taskIds);
     this.tasks.clear();
     this.attention.clear();
     this.actionRuns.clear();
@@ -1135,6 +1203,301 @@ class WorkspaceStore {
 
   getTask(taskId) { return clone(this.tasks.get(taskId) || null); }
 
+  createGoal({ id: goalId = id('goal'), title = '', description = '' } = {}) {
+    const normalizedId = String(goalId || '').trim();
+    const normalizedTitle = String(title || '').trim();
+    const normalizedDescription = String(description || '').trim();
+    if (!normalizedId || normalizedId.length > 160) throw new Error('goal id is invalid');
+    if (!normalizedTitle || normalizedTitle.length > 120) throw new Error('goal title must be 1-120 characters');
+    if (normalizedDescription.length > 2000) throw new Error('goal description is too long');
+    if (this.goals.has(normalizedId)) throw new Error('goal already exists');
+    const timestamp = iso(this.now());
+    const goal = {
+      id: normalizedId,
+      title: normalizedTitle,
+      description: normalizedDescription,
+      status: 'active',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      milestones: [],
+    };
+    this.goals.set(goal.id, goal);
+    try { this._persistNow(); }
+    catch (error) { this.goals.delete(goal.id); throw error; }
+    return clone(goal);
+  }
+
+  getGoal(goalId) { return clone(this.goals.get(String(goalId || '')) || null); }
+
+  listGoals() {
+    return [...this.goals.values()]
+      .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))
+      .map(clone);
+  }
+
+  updateGoal(goalId, patch = {}) {
+    const current = this.goals.get(String(goalId || ''));
+    if (!current) throw new Error('goal not found');
+    const next = clone(current);
+    if (patch.title !== undefined) {
+      next.title = String(patch.title || '').trim();
+      if (!next.title || next.title.length > 120) throw new Error('goal title must be 1-120 characters');
+    }
+    if (patch.description !== undefined) {
+      next.description = String(patch.description || '').trim();
+      if (next.description.length > 2000) throw new Error('goal description is too long');
+    }
+    next.updatedAt = iso(this.now());
+    this.goals.set(next.id, next);
+    try { this._persistNow(); }
+    catch (error) { this.goals.set(current.id, current); throw error; }
+    return clone(next);
+  }
+
+  acceptGoalSteps(goalId, { eventId, steps } = {}) {
+    const normalizedGoalId = String(goalId || '').trim();
+    const normalizedEventId = String(eventId || '').trim();
+    if (!/^[A-Za-z0-9_-]{8,96}$/.test(normalizedEventId)) throw new Error('goal acceptance eventId is invalid');
+    if (!Array.isArray(steps) || steps.length < 1 || steps.length > 8) throw new Error('goal steps must contain 1-8 items');
+    const normalizedSteps = steps.map(step => {
+      if (!step || typeof step !== 'object' || Array.isArray(step)) throw new Error('goal step must be an object');
+      const title = String(step.title || '').trim();
+      const description = String(step.description || '').trim();
+      if (!title || title.length > 120) throw new Error('goal step title must be 1-120 characters');
+      if (description.length > 500) throw new Error('goal step description is too long');
+      return { title, description };
+    });
+    const requestHash = crypto.createHash('sha256').update(JSON.stringify({ goalId: normalizedGoalId, steps: normalizedSteps })).digest('hex');
+    const prior = this.goalAcceptReceipts.get(normalizedEventId);
+    if (prior) {
+      if (prior.goalId !== normalizedGoalId || prior.requestHash !== requestHash) throw new Error('goal acceptance eventId is already bound to different input');
+      const goal = this.goals.get(prior.goalId);
+      return {
+        goal: clone(goal || null),
+        milestones: clone((goal?.milestones || []).filter(item => prior.milestoneIds.includes(item.id))),
+        tasks: clone(prior.taskIds.map(taskId => this.tasks.get(taskId)).filter(Boolean)),
+        duplicate: true,
+      };
+    }
+    const current = this.goals.get(normalizedGoalId);
+    if (!current) throw new Error('goal not found');
+
+    const timestamp = iso(this.now());
+    const nextGoal = clone(current);
+    const milestones = [];
+    const tasks = [];
+    for (const step of normalizedSteps) {
+      const milestoneId = id('milestone');
+      const taskId = id('task');
+      const milestone = {
+        id: milestoneId,
+        goalId: current.id,
+        title: step.title,
+        description: step.description,
+        status: 'pending',
+        taskId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        completedAt: null,
+      };
+      const task = {
+        id: taskId,
+        source: 'goal',
+        title: step.title,
+        detail: step.description,
+        metadata: { goalId: current.id, milestoneId },
+        state: 'pending',
+        progress: 0,
+        logs: [],
+        error: null,
+        retryCount: 0,
+        runner: null,
+        artifactRefs: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      nextGoal.milestones.push(milestone);
+      milestones.push(milestone);
+      tasks.push(task);
+    }
+    nextGoal.updatedAt = timestamp;
+    const receipt = {
+      eventId: normalizedEventId,
+      goalId: current.id,
+      requestHash,
+      milestoneIds: milestones.map(item => item.id),
+      taskIds: tasks.map(item => item.id),
+      createdAt: timestamp,
+    };
+    this.goals.set(current.id, nextGoal);
+    for (const task of tasks) this.tasks.set(task.id, task);
+    this.goalAcceptReceipts.set(normalizedEventId, receipt);
+    try { this._persistNow(); }
+    catch (error) {
+      this.goals.set(current.id, current);
+      for (const task of tasks) this.tasks.delete(task.id);
+      this.goalAcceptReceipts.delete(normalizedEventId);
+      throw error;
+    }
+    return { goal: clone(nextGoal), milestones: clone(milestones), tasks: clone(tasks), duplicate: false };
+  }
+
+  _unbindGoalMilestones(taskIds) {
+    const ids = taskIds instanceof Set ? taskIds : new Set((Array.isArray(taskIds) ? taskIds : [taskIds]).map(String));
+    const timestamp = iso(this.now());
+    for (const [goalId, goal] of this.goals) {
+      let changed = false;
+      const milestones = goal.milestones.map(item => {
+        if (!item.taskId || !ids.has(String(item.taskId))) return item;
+        changed = true;
+        return { ...item, taskId: null, status: 'pending', completedAt: null, updatedAt: timestamp };
+      });
+      if (changed) this.goals.set(goalId, { ...goal, milestones, updatedAt: timestamp });
+    }
+  }
+
+  _syncGoalMilestoneForTask(task) {
+    const goalId = String(task.metadata?.goalId || '');
+    const milestoneId = String(task.metadata?.milestoneId || '');
+    const goal = this.goals.get(goalId);
+    if (!goal || !milestoneId) return;
+    let changed = false;
+    const milestones = goal.milestones.map(item => {
+      if (item.id !== milestoneId || item.taskId !== task.id) return item;
+      changed = true;
+      const nextStatus = task.state === 'succeeded'
+        ? 'completed'
+        : task.state === 'failed'
+          ? 'failed'
+          : ['running', 'paused', 'needs_confirmation'].includes(task.state)
+            ? 'in_progress'
+            : task.state === 'archived' && ['completed', 'failed'].includes(item.status)
+              ? item.status
+              : 'pending';
+      return {
+        ...item,
+        status: nextStatus,
+        completedAt: nextStatus === 'completed' ? (item.completedAt || task.updatedAt) : null,
+        updatedAt: task.updatedAt,
+      };
+    });
+    if (changed) this.goals.set(goalId, { ...goal, milestones, updatedAt: task.updatedAt });
+  }
+
+  _goalTaskIds(goal) {
+    return new Set([
+      ...goal.milestones.map(item => item.taskId).filter(Boolean).map(String),
+      ...[...this.tasks.values()].filter(task => String(task.metadata?.goalId || '') === goal.id).map(task => String(task.id)),
+    ]);
+  }
+
+  listGoalTaskIds(goalId = null) {
+    const targetId = goalId == null ? null : String(goalId);
+    const ids = new Set();
+    for (const goal of this.goals.values()) {
+      if (targetId !== null && goal.id !== targetId) continue;
+      for (const milestone of goal.milestones) if (milestone.taskId) ids.add(String(milestone.taskId));
+    }
+    for (const task of this.tasks.values()) {
+      const linkedGoalId = String(task.metadata?.goalId || '');
+      if (linkedGoalId && (targetId === null || linkedGoalId === targetId)) ids.add(String(task.id));
+    }
+    return [...ids].sort();
+  }
+
+  _removeGoalTaskRecords(taskIds) {
+    const ids = taskIds instanceof Set ? taskIds : new Set(taskIds.map(String));
+    const actionRunIds = new Set([...this.actionRuns.values()]
+      .filter(run => ids.has(String(run.taskId || '')))
+      .map(run => String(run.id)));
+    for (const taskId of ids) this.tasks.delete(taskId);
+    this.attention.forEach((item, attentionId) => { if (ids.has(String(item.relatedTaskId || ''))) this.attention.delete(attentionId); });
+    this.actionRuns.forEach((run, runId) => { if (ids.has(String(run.taskId || ''))) this.actionRuns.delete(runId); });
+    this.approvals.forEach((approval, approvalId) => { if (ids.has(String(approval.taskId || ''))) this.approvals.delete(approvalId); });
+    this.audit = this.audit.filter(item => !ids.has(String(item.taskId || '')) && !actionRunIds.has(String(item.actionRunId || '')));
+    this.taskAudit = this.taskAudit.filter(item => !ids.has(String(item.taskId || '')));
+    for (const key of [...this.taskActionKeys.keys()]) {
+      const separator = key.indexOf(':');
+      if (separator > 0 && ids.has(key.slice(0, separator))) this.taskActionKeys.delete(key);
+    }
+    this.eventLog = this.eventLog.filter(event => {
+      const type = String(event.type || '').toLowerCase();
+      const payload = event.payload?.task || event.payload?.attention || event.payload?.actionRun || event.payload || {};
+      const relatedTaskId = payload.id || payload.taskId || payload.relatedTaskId || payload.metadata?.goalTaskId;
+      const linked = ids.has(String(relatedTaskId || '')) || ids.has(String(payload.relatedTaskId || ''));
+      return !(linked && (type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run')));
+    });
+    this.eventKeys = new Set();
+    for (const event of this.eventLog) {
+      this.eventKeys.add(`${event.origin}:${event.sequence}`);
+      if (event.eventId) this.eventKeys.add(`event:${event.eventId}`);
+    }
+  }
+
+  _captureGoalMutationState() {
+    return {
+      goals: new Map([...this.goals].map(([key, value]) => [key, clone(value)])),
+      goalAcceptReceipts: new Map([...this.goalAcceptReceipts].map(([key, value]) => [key, clone(value)])),
+      tasks: new Map([...this.tasks].map(([key, value]) => [key, clone(value)])),
+      attention: new Map([...this.attention].map(([key, value]) => [key, clone(value)])),
+      actionRuns: new Map([...this.actionRuns].map(([key, value]) => [key, clone(value)])),
+      approvals: new Map([...this.approvals].map(([key, value]) => [key, clone(value)])),
+      audit: clone(this.audit),
+      taskAudit: clone(this.taskAudit),
+      taskActionKeys: new Map(this.taskActionKeys),
+      eventLog: clone(this.eventLog),
+      eventKeys: new Set(this.eventKeys),
+    };
+  }
+
+  _restoreGoalMutationState(state) {
+    this.goals = state.goals;
+    this.goalAcceptReceipts = state.goalAcceptReceipts;
+    this.tasks = state.tasks;
+    this.attention = state.attention;
+    this.actionRuns = state.actionRuns;
+    this.approvals = state.approvals;
+    this.audit = state.audit;
+    this.taskAudit = state.taskAudit;
+    this.taskActionKeys = state.taskActionKeys;
+    this.eventLog = state.eventLog;
+    this.eventKeys = state.eventKeys;
+  }
+
+  deleteGoal(goalId) {
+    const goal = this.goals.get(String(goalId || ''));
+    if (!goal) return { deleted: false, goalId: String(goalId || ''), taskIds: [] };
+    const taskIds = this._goalTaskIds(goal);
+    if ([...taskIds].some(taskId => this.tasks.get(taskId)?.state === 'running')) throw new Error('finish or cancel running goal tasks before deleting the goal');
+    const before = this._captureGoalMutationState();
+    const deletedMilestones = goal.milestones.length;
+    this.goals.delete(goal.id);
+    this._removeGoalTaskRecords(taskIds);
+    for (const [eventId, receipt] of this.goalAcceptReceipts) if (receipt.goalId === goal.id) this.goalAcceptReceipts.delete(eventId);
+    try { this._persistNow(); }
+    catch (error) { this._restoreGoalMutationState(before); throw error; }
+    return { deleted: true, goalId: goal.id, deletedMilestones, taskIds: [...taskIds] };
+  }
+
+  clearGoals() {
+    const taskIds = new Set([...this.goals.values()].flatMap(goal => [...this._goalTaskIds(goal)]));
+    if ([...taskIds].some(taskId => this.tasks.get(taskId)?.state === 'running')) throw new Error('finish or cancel running goal tasks before deleting goals');
+    const before = this._captureGoalMutationState();
+    const deleted = { goals: this.goals.size, milestones: [...this.goals.values()].reduce((sum, goal) => sum + goal.milestones.length, 0), tasks: taskIds.size };
+    this.goals.clear();
+    this.goalAcceptReceipts.clear();
+    this._removeGoalTaskRecords(taskIds);
+    try { this._persistNow(); }
+    catch (error) { this._restoreGoalMutationState(before); throw error; }
+    return { deleted: deleted.goals + deleted.milestones, taskIds: [...taskIds], ...deleted };
+  }
+
+  countGoals() { return this.goals.size; }
+
+  exportGoals() {
+    return { goals: this.listGoals(), acceptReceipts: [...this.goalAcceptReceipts.values()].map(clone) };
+  }
+
   listTasks(filters = {}) {
     return [...this.tasks.values()]
       .filter((task) => !filters.state || task.state === String(filters.state))
@@ -1188,6 +1551,12 @@ class WorkspaceStore {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error('task not found');
     if (patch.state !== undefined && !TASK_STATES.has(patch.state)) throw new Error(`invalid task state: ${patch.state}`);
+    if (patch.metadata !== undefined && task.metadata?.goalId) {
+      const nextMetadata = patch.metadata && typeof patch.metadata === 'object' && !Array.isArray(patch.metadata) ? patch.metadata : {};
+      if (String(nextMetadata.goalId || '') !== String(task.metadata.goalId) || String(nextMetadata.milestoneId || '') !== String(task.metadata.milestoneId || '')) {
+        throw new Error('goal task linkage is immutable');
+      }
+    }
     const fromState = task.state;
     const requestedState = patch.retry === true ? 'pending' : patch.state;
     if (requestedState !== undefined && !TASK_TRANSITIONS.get(task.state)?.has(requestedState)) throw new Error(`cannot transition task from ${task.state} to ${requestedState}`);
@@ -1197,6 +1566,7 @@ class WorkspaceStore {
     if (patch.log) task.logs.push({ id: id('log'), text: String(patch.log), createdAt: iso(this.now()) });
     if (patch.retry === true) { task.retryCount += 1; task.state = 'pending'; task.error = null; }
     task.updatedAt = iso(this.now());
+    this._syncGoalMilestoneForTask(task);
     const audit = this._recordTaskAudit(task, { action: patch.action || (patch.retry ? 'retry' : 'update'), actor: patch.actor || 'system', idempotencyKey: patch.idempotencyKey || null, fromState, toState: task.state });
     this._persist();
     this._attentionForTask(task);

@@ -515,3 +515,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 此为服务端 B1；Android 本地镜像/outbox/沉浸抽屉尚未做（B3），Web UI 尚未做（B4）。本轮未运行 ADB、未安装 APK、未申请手机权限；实机状态不作完成声明。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
+
+## 42. 2026-09-30 批次 B2：目标草案、用户确认与关联任务
+
+- 服务端 `WorkspaceStore` 统一持久化目标、里程碑、接受收据和普通 Workspace task 关联；用户确认的多步计划以单一 workspace snapshot 提交。持久化失败回滚整组变更；接受 `eventId` 幂等，冲突复用拒绝。任务状态仍由既有 task 状态机持有，里程碑只投影其状态。
+- 里程碑将运行、暂停、待确认统一显示为进行中；成功或失败任务归档后保留其终态，不因归档回退为待处理。
+- 新增 `server/goal-board.js` 领域服务及目标 CRUD、显式草案、确认接口。草案只调用当前 provider，失败或输出不合 schema 仅回退本地规则；不会自动换联网 provider、创建任务或写 WorkspaceStore。输入、步骤数和输出有界，provider 审计只保留 provider ID、耗时、降级原因和结果状态。
+- `goals` 加入加密导出、PrivacyCenter 全类清理和 revision 栅栏。删除目标拒绝活跃关联任务，并事务级联清理专属任务、Attention、ActionRun、审批、审计、任务操作幂等键和工作区事件。删除 `tasks` 类别保留目标/里程碑文本，解绑任务引用并复位为 pending；目标接受需同时提交 goals/tasks revision，旧任务 outbox 无法在清理后重建任务。
+- 额外修复目标任务清理受 `listTasks(limit=200)` 影响的边界：`WorkspaceStore.listGoalTaskIds()` 从完整领域状态枚举所有目标任务 ID，供活跃任务检查和隐私时间线清理使用；回归测试确认第 201 条以后的旧目标任务不会被漏掉。
+- 验证：定向命令 `node --test server/goal-board.test.js server/workspace-core.test.js server/privacy-center.test.js server/enhancement-api.test.js` **65/65**；Node 全量 **221/221**；`node --check` 相关服务端模块、`scripts/bench_workspace.ps1`（最终 `elapsedMs=2.203`、快照 1694/48 bytes、10000 次缓存命中、突发广播 1 次）、`scripts/scan_secrets.ps1` 与 `git diff --check` 通过。
+- B2 仅为服务端批次。Android Room/离线镜像和沉浸抽屉留 B3，Web 工作台留 B4；本批未运行 ADB、未安装或操作手机。推送和 GitHub Actions 验收待本批提交后补记。
+
+实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。

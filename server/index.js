@@ -24,6 +24,7 @@ const { MemoryStore } = require('./ai-memory');
 const { RealityEngine } = require('./reality-engine');
 const { MoteGrowthStore } = require('./mote-growth');
 const { DailyRoutinesStore } = require('./daily-routines');
+const { GoalBoardService, GoalBoardError } = require('./goal-board');
 const { createRealityCoordinator } = require('./reality-coordinator');
 const { ProactivePolicy } = require('./proactive-policy');
 const { PairingManager } = require('./pairing');
@@ -443,9 +444,16 @@ const privacyCenter = new PrivacyCenter({
     },
     goals: {
       label: '个人目标',
-      count: () => 0,
-      export: () => [],
-      clear: () => ({ deleted: 0 }),
+      count: () => goalBoard.countGoals(),
+      export: () => goalBoard.exportGoals(),
+      validateClear: () => goalBoard.validateClear(),
+      clear: async () => {
+        const goalTaskIds = workspaceStore.listGoalTaskIds();
+        purgeGoalTaskTimeline(goalTaskIds);
+        const result = goalBoard.clearGoals();
+        await workspaceStore.flushPersistence();
+        return { deleted: result.deleted + result.tasks };
+      },
     },
   },
 });
@@ -469,6 +477,16 @@ function privacyCenterProgressCount() {
 function handoffHasContent(handoff) {
   return ['goal', 'currentTask', 'nextSteps', 'keyConstraints', 'recentDecisions', 'notes']
     .some(key => String(handoff?.[key] || '').trim().length > 0);
+}
+
+function purgeGoalTaskTimeline(taskIds) {
+  const ids = [...new Set((Array.isArray(taskIds) ? taskIds : []).map(String).filter(Boolean))];
+  if (!ids.length) return;
+  const selected = new Set(ids);
+  const attentionIds = workspaceTimeline.getSnapshot().attention
+    .filter(item => selected.has(String(item.relatedTaskId || '')))
+    .map(item => String(item.id));
+  workspaceTimeline.purgePersonalData(['task', 'attention'], { task: ids, attention: attentionIds });
 }
 
 let snapshotRevision = 0;
@@ -1050,6 +1068,16 @@ function applyWorkspaceEvent(event) {
 }
 
 const taskRunner = new TaskRunner({ maxConcurrency: 1, maxRetries: 1, retryDelayMs: 250 });
+const goalBoard = new GoalBoardService({
+  workspaceStore,
+  providerManager: aiProviderManager,
+  isTaskActive: taskId => {
+    const record = taskRunner.get(taskId);
+    return taskRunner.active.has(String(taskId)) || Boolean(record && !['succeeded', 'failed', 'cancelled'].includes(record.state));
+  },
+  onTasksDeleted: taskIds => { if (taskIds?.length) taskRunner.forget(taskIds); },
+  recordProviderAudit: entry => diagnosticsCollector.recordGoalDraftAudit(entry),
+});
 
 function publishRunnerState(update) {
   const current = workspaceStore.getTask(update.id);
@@ -1577,6 +1605,37 @@ function denyAccess(res) {
 function sendJson(res, status, payload) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(payload));
+}
+
+function goalCategoryRevisionError(category, revision) {
+  const requiredRevision = privacyCenter.categoryRevision(category);
+  if (privacyCenter.isMigrationRequired(category)) {
+    return { status: 409, body: { ok: false, code: `privacy_migration_required:${category}`, error: 'goal data migration requires a user decision', retryable: true, requiredPrivacyRevision: requiredRevision } };
+  }
+  if (revision === undefined && requiredRevision > 0) {
+    return { status: 409, body: { ok: false, code: `privacy_revision_required:${category}`, error: 'privacy revision is required', retryable: true, requiredPrivacyRevision: requiredRevision } };
+  }
+  if (revision !== undefined && (!Number.isSafeInteger(revision) || revision !== requiredRevision)) {
+    const code = Number.isSafeInteger(revision) && revision < requiredRevision
+      ? `privacy_revision_stale:${category}`
+      : `privacy_revision_mismatch:${category}`;
+    return { status: 409, body: { ok: false, code, error: 'privacy revision does not match the current category revision', retryable: true, requiredPrivacyRevision: requiredRevision } };
+  }
+  return null;
+}
+
+function sendGoalError(res, error) {
+  const message = String(error?.message || '');
+  const status = Number(error?.statusCode) ||
+    (/not found/i.test(message) ? 404 :
+      (/active goal task|running goal task|already bound to different input/i.test(message) ? 409 : 500));
+  const code = String(error?.code || (status === 404 ? 'goal_not_found' : status === 409 ? 'goal_conflict' : status >= 500 ? 'goal_internal_error' : 'invalid_goal'));
+  return sendJson(res, status, {
+    ok: false,
+    code,
+    error: status >= 500 ? 'goal operation failed' : message,
+    ...(status >= 500 ? { retryable: true } : {}),
+  });
 }
 
 async function readJson(req) {
@@ -2269,6 +2328,110 @@ const handleHttpRequest = async (req, res) => {
       } catch (error) {
         return sendJson(res, error.statusCode || 400, { ok: false, code: error.code || 'invalid_event', error: error.message });
       }
+    }
+    if (parsedUrl.pathname === '/api/goals' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        ok: true,
+        goals: goalBoard.listGoals(),
+        privacyRevision: privacyCenter.categoryRevision('goals'),
+        taskPrivacyRevision: privacyCenter.categoryRevision('tasks'),
+        migrationRequired: privacyCenter.isMigrationRequired('goals') || privacyCenter.isMigrationRequired('tasks'),
+      });
+    }
+    if (parsedUrl.pathname === '/api/goals' && req.method === 'POST') {
+      try {
+        const payload = await readJson(req);
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new GoalBoardError('goal body must be an object');
+        const revisionError = goalCategoryRevisionError('goals', payload.privacyRevision);
+        if (revisionError) return sendJson(res, revisionError.status, revisionError.body);
+        const { privacyRevision: _privacyRevision, ...goalPayload } = payload;
+        const goal = goalBoard.createGoal(goalPayload);
+        broadcast({ type: 'workspace.goal', operation: 'upsert', goal });
+        return sendJson(res, 201, { ok: true, goal, privacyRevision: privacyCenter.categoryRevision('goals') });
+      } catch (error) { return sendGoalError(res, error); }
+    }
+    const goalDraftMatch = parsedUrl.pathname.match(/^\/api\/goals\/([^/]+)\/draft$/);
+    if (goalDraftMatch && req.method === 'POST') {
+      try {
+        const goalId = decodeURIComponent(goalDraftMatch[1]);
+        const payload = await readJson(req);
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new GoalBoardError('goal draft body must be an object');
+        const revisionError = goalCategoryRevisionError('goals', payload.privacyRevision);
+        if (revisionError) return sendJson(res, revisionError.status, revisionError.body);
+        const extraFields = Object.keys(payload).filter(key => !['context', 'privacyRevision'].includes(key));
+        if (extraFields.length) throw new GoalBoardError(`unsupported goal draft field: ${extraFields[0]}`);
+        const draft = await goalBoard.draftGoal(goalId, { context: payload.context });
+        return sendJson(res, 200, { ok: true, ...draft, privacyRevision: privacyCenter.categoryRevision('goals') });
+      } catch (error) { return sendGoalError(res, error); }
+    }
+    const goalAcceptMatch = parsedUrl.pathname.match(/^\/api\/goals\/([^/]+)\/accept$/);
+    if (goalAcceptMatch && req.method === 'POST') {
+      try {
+        const goalId = decodeURIComponent(goalAcceptMatch[1]);
+        const payload = await readJson(req);
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new GoalBoardError('goal acceptance body must be an object');
+        const goalRevisionError = goalCategoryRevisionError('goals', payload.privacyRevision);
+        if (goalRevisionError) return sendJson(res, goalRevisionError.status, goalRevisionError.body);
+        const taskRevisionError = goalCategoryRevisionError('tasks', payload.taskPrivacyRevision);
+        if (taskRevisionError) return sendJson(res, taskRevisionError.status, taskRevisionError.body);
+        const extraFields = Object.keys(payload).filter(key => !['eventId', 'steps', 'privacyRevision', 'taskPrivacyRevision'].includes(key));
+        if (extraFields.length) throw new GoalBoardError(`unsupported goal acceptance field: ${extraFields[0]}`);
+        const result = goalBoard.acceptDraft(goalId, { eventId: payload.eventId, steps: payload.steps });
+        if (!result.duplicate) {
+          broadcast({ type: 'workspace.goal', operation: 'upsert', goal: result.goal, milestones: result.milestones });
+          for (const task of result.tasks) broadcast({ type: 'workspace.task', task });
+        }
+        return sendJson(res, result.duplicate ? 200 : 201, {
+          ok: true,
+          ...result,
+          privacyRevision: privacyCenter.categoryRevision('goals'),
+          taskPrivacyRevision: privacyCenter.categoryRevision('tasks'),
+        });
+      } catch (error) { return sendGoalError(res, error); }
+    }
+    const goalMatch = parsedUrl.pathname.match(/^\/api\/goals\/([^/]+)$/);
+    if (goalMatch && req.method === 'GET') {
+      const goal = goalBoard.getGoal(decodeURIComponent(goalMatch[1]));
+      return sendJson(res, goal ? 200 : 404, {
+        ok: Boolean(goal),
+        goal,
+        privacyRevision: privacyCenter.categoryRevision('goals'),
+        taskPrivacyRevision: privacyCenter.categoryRevision('tasks'),
+      });
+    }
+    if (goalMatch && req.method === 'PATCH') {
+      try {
+        const goalId = decodeURIComponent(goalMatch[1]);
+        const payload = await readJson(req);
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new GoalBoardError('goal patch must be an object');
+        const revisionError = goalCategoryRevisionError('goals', payload.privacyRevision);
+        if (revisionError) return sendJson(res, revisionError.status, revisionError.body);
+        const { privacyRevision: _privacyRevision, ...patch } = payload;
+        const goal = goalBoard.updateGoal(goalId, patch);
+        broadcast({ type: 'workspace.goal', operation: 'upsert', goal });
+        return sendJson(res, 200, { ok: true, goal, privacyRevision: privacyCenter.categoryRevision('goals') });
+      } catch (error) { return sendGoalError(res, error); }
+    }
+    if (goalMatch && req.method === 'DELETE') {
+      try {
+        const goalId = decodeURIComponent(goalMatch[1]);
+        const payload = await readJson(req);
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new GoalBoardError('goal deletion body must be an object');
+        const extraFields = Object.keys(payload).filter(key => key !== 'privacyRevision');
+        if (extraFields.length) throw new GoalBoardError(`unsupported goal deletion field: ${extraFields[0]}`);
+        const revisionError = goalCategoryRevisionError('goals', payload.privacyRevision);
+        if (revisionError) return sendJson(res, revisionError.status, revisionError.body);
+        const goal = goalBoard.assertGoalIdle(goalId);
+        if (!goal) return sendJson(res, 404, { ok: false, code: 'goal_not_found', error: 'goal not found' });
+        let privacyRevision = privacyCenter.categoryRevision('goals');
+        const result = goalBoard.deleteGoal(goalId, {
+          beforeDelete: () => { privacyRevision = privacyCenter.advanceCategoryRevision('goals'); },
+        });
+        purgeGoalTaskTimeline(result.taskIds);
+        for (const taskId of result.taskIds) broadcast({ type: 'workspace.task', task: { id: taskId, deleted: true } });
+        broadcast({ type: 'workspace.goal', operation: 'delete', id: goalId, privacyRevision });
+        return sendJson(res, 200, { ok: true, ...result, privacyRevision });
+      } catch (error) { return sendGoalError(res, error); }
     }
     if (parsedUrl.pathname === '/api/privacy/migration/resolve' && req.method === 'POST') {
       try {

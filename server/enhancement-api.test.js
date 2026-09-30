@@ -520,6 +520,161 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     });
     assert.equal(staleProgressWithRevision.body.reason, 'privacy_data_deleted:progress');
 
+    const initialGoals = await request('/api/goals');
+    assert.equal(initialGoals.response.status, 200);
+    assert.equal(initialGoals.body.goals.length, 0);
+    assert.equal(initialGoals.body.privacyRevision, 0);
+    assert.equal(initialGoals.body.taskPrivacyRevision, 1);
+    const goalCreated = await request('/api/goals', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '完成个人作品集', description: '按自己的节奏推进', privacyRevision: 0 })
+    });
+    assert.equal(goalCreated.response.status, 201, JSON.stringify(goalCreated.body));
+    const goalId = goalCreated.body.goal.id;
+    const goalEdited = await request(`/api/goals/${encodeURIComponent(goalId)}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '完成一个小型作品集', privacyRevision: 0 })
+    });
+    assert.equal(goalEdited.body.goal.title, '完成一个小型作品集');
+    assert.equal(goalEdited.body.goal.status, 'active');
+
+    const localGoalProvider = await request('/api/ai/settings', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ activeProviderId: 'local' })
+    });
+    assert.equal(localGoalProvider.body.settings.activeProviderId, 'local');
+    const goalsBeforeDraft = await request('/api/goals');
+    const draft = await request(`/api/goals/${encodeURIComponent(goalId)}/draft`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ context: '拆分成轻量步骤', privacyRevision: 0 })
+    });
+    assert.equal(draft.response.status, 200, JSON.stringify(draft.body));
+    assert.ok(draft.body.steps.length > 0 && draft.body.steps.length <= 8);
+    assert.equal(draft.body.providerAudit.providerId, 'local');
+    assert.deepEqual((await request('/api/tasks?source=goal')).body.tasks, []);
+    assert.deepEqual((await request('/api/goals')).body.goals, goalsBeforeDraft.body.goals);
+    const rejectedDraft = await request(`/api/goals/${encodeURIComponent(goalId)}/draft`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ context: 'x'.repeat(1001), privacyRevision: 0 })
+    });
+    assert.equal(rejectedDraft.response.status, 400);
+
+    const goalArchiveResponse = await request('/api/privacy/export', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ categories: ['goals'], passphrase: 'phonebridge test passphrase' })
+    });
+    assert.equal(goalArchiveResponse.response.status, 200);
+    const goalArchive = decryptArchive(goalArchiveResponse.body.archive, 'phonebridge test passphrase');
+    assert.equal(goalArchive.data.goals.goals[0].title, '完成一个小型作品集');
+    assert.equal(JSON.stringify(goalArchiveResponse.body).includes('完成一个小型作品集'), false);
+
+    const invalidGoalAccept = await request(`/api/goals/${encodeURIComponent(goalId)}/accept`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ eventId: 'goal-api-empty-steps', steps: [], privacyRevision: 0, taskPrivacyRevision: 1 })
+    });
+    assert.equal(invalidGoalAccept.response.status, 400);
+    assert.deepEqual((await request('/api/tasks?source=goal')).body.tasks, []);
+    const acceptedGoalSteps = {
+      eventId: 'goal-api-accept-001', privacyRevision: 0, taskPrivacyRevision: 1,
+      steps: [
+        { title: '完成首页草图', description: '先确认需要展示的内容' },
+        { title: '完成可浏览版本', description: '保持范围足够小' },
+      ],
+    };
+    const acceptedGoal = await request(`/api/goals/${encodeURIComponent(goalId)}/accept`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(acceptedGoalSteps)
+    });
+    assert.equal(acceptedGoal.response.status, 201, JSON.stringify(acceptedGoal.body));
+    assert.equal(acceptedGoal.body.tasks.length, 2);
+    assert.ok(acceptedGoal.body.tasks.every(task => task.source === 'goal'));
+    const acceptedGoalReplay = await request(`/api/goals/${encodeURIComponent(goalId)}/accept`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(acceptedGoalSteps)
+    });
+    assert.equal(acceptedGoalReplay.body.duplicate, true);
+    assert.deepEqual(acceptedGoalReplay.body.tasks.map(task => task.id), acceptedGoal.body.tasks.map(task => task.id));
+    const conflictingGoalReplay = await request(`/api/goals/${encodeURIComponent(goalId)}/accept`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...acceptedGoalSteps, steps: [{ title: 'different content' }] })
+    });
+    assert.equal(conflictingGoalReplay.response.status, 409);
+    assert.equal((await request('/api/tasks?source=goal')).body.tasks.length, 2);
+
+    const firstGoalTask = acceptedGoal.body.tasks[0];
+    const runningGoalTask = await request(`/api/tasks/${encodeURIComponent(firstGoalTask.id)}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ state: 'running' })
+    });
+    assert.equal(runningGoalTask.response.status, 200);
+    const blockedGoalDelete = await request(`/api/goals/${encodeURIComponent(goalId)}`, {
+      method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ privacyRevision: 0 })
+    });
+    assert.equal(blockedGoalDelete.response.status, 409);
+    assert.ok((await request(`/api/goals/${encodeURIComponent(goalId)}`)).body.goal);
+    const completedGoalTask = await request(`/api/tasks/${encodeURIComponent(firstGoalTask.id)}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ state: 'succeeded', progress: 100 })
+    });
+    assert.equal(completedGoalTask.response.status, 200);
+    assert.equal((await request('/api/goals')).body.goals[0].milestones[0].status, 'completed');
+    const goalDeleted = await request(`/api/goals/${encodeURIComponent(goalId)}`, {
+      method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ privacyRevision: 0 })
+    });
+    assert.equal(goalDeleted.response.status, 200, JSON.stringify(goalDeleted.body));
+    assert.equal(goalDeleted.body.privacyRevision, 1);
+    assert.equal((await request('/api/goals')).body.goals.length, 0);
+    assert.deepEqual((await request('/api/tasks?source=goal')).body.tasks, []);
+
+    const retainedGoalCreated = await request('/api/goals', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '任务删除后保留目标', description: '里程碑文本保留', privacyRevision: 1 })
+    });
+    assert.equal(retainedGoalCreated.response.status, 201);
+    const retainedGoalId = retainedGoalCreated.body.goal.id;
+    const retainedGoalSteps = {
+      eventId: 'goal-api-task-privacy-001', privacyRevision: 1, taskPrivacyRevision: 1,
+      steps: [{ title: '被任务隐私删除解绑', description: '目标内容继续保留' }],
+    };
+    const retainedGoalAccept = await request(`/api/goals/${encodeURIComponent(retainedGoalId)}/accept`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(retainedGoalSteps)
+    });
+    assert.equal(retainedGoalAccept.response.status, 201);
+    const taskPrivacyDelete = await request('/api/privacy/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: 'tasks-delete-goal-unbind', categories: ['tasks'], confirmation: 'DELETE SELECTED DATA' })
+    });
+    assert.equal(taskPrivacyDelete.response.status, 200);
+    assert.equal(taskPrivacyDelete.body.receipt.categoryRevisions.tasks, 2);
+    const goalAfterTaskDelete = (await request('/api/goals')).body.goals.find(item => item.id === retainedGoalId);
+    assert.equal(goalAfterTaskDelete.title, '任务删除后保留目标');
+    assert.equal(goalAfterTaskDelete.milestones[0].title, '被任务隐私删除解绑');
+    assert.equal(goalAfterTaskDelete.milestones[0].taskId, null);
+    assert.equal(goalAfterTaskDelete.milestones[0].status, 'pending');
+    const staleGoalTaskReplay = await request(`/api/goals/${encodeURIComponent(retainedGoalId)}/accept`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(retainedGoalSteps)
+    });
+    assert.equal(staleGoalTaskReplay.response.status, 409);
+    assert.equal(staleGoalTaskReplay.body.code, 'privacy_revision_stale:tasks');
+    const currentGoalTaskReplay = await request(`/api/goals/${encodeURIComponent(retainedGoalId)}/accept`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...retainedGoalSteps, taskPrivacyRevision: 2 })
+    });
+    assert.equal(currentGoalTaskReplay.body.duplicate, true);
+    assert.deepEqual(currentGoalTaskReplay.body.tasks, []);
+    assert.deepEqual((await request('/api/tasks?source=goal')).body.tasks, []);
+
+    const deletedGoals = await request('/api/privacy/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: 'goals-privacy-delete-001', categories: ['goals'], confirmation: 'DELETE SELECTED DATA' })
+    });
+    assert.equal(deletedGoals.response.status, 200);
+    assert.equal(deletedGoals.body.receipt.categoryRevisions.goals, 2);
+    assert.equal((await request('/api/goals')).body.goals.length, 0);
+    assert.equal((await request('/api/privacy/overview')).body.categories.goals.count, 0);
+    const staleGoalCreate = await request('/api/goals', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '陈旧客户端不得重建', privacyRevision: 1 })
+    });
+    assert.equal(staleGoalCreate.response.status, 409);
+    assert.equal(staleGoalCreate.body.code, 'privacy_revision_stale:goals');
+
   } finally {
     child.kill('SIGTERM');
     try { fs.rmSync(runtimeDir, { recursive: true, force: true }); } catch (_) {}

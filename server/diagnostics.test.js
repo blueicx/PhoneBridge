@@ -48,6 +48,33 @@ test('DiagnosticsCollector tracks provider latency and degradation counts', () =
   assert.equal(snapshot.provider.degradationCount, 2);
 });
 
+test('DiagnosticsCollector retains only bounded, content-free goal draft provider audits', () => {
+  const collector = new DiagnosticsCollector();
+  collector.recordGoalDraftAudit({
+    providerId: 'openai',
+    elapsedMs: 27,
+    fallbackReason: 'provider_output_invalid',
+    resultStatus: 'ready',
+    goalText: 'private goal',
+    secret: 'sk-private',
+  });
+
+  const entry = collector.snapshot().provider.goalDraftAudit[0];
+  assert.deepEqual(entry, {
+    providerId: 'openai', elapsedMs: 27, fallbackReason: 'provider_output_invalid', resultStatus: 'ready',
+  });
+  assert.equal(JSON.stringify(collector.snapshot()).includes('private goal'), false);
+  assert.equal(JSON.stringify(collector.snapshot()).includes('sk-private'), false);
+
+  for (let index = 0; index < 105; index += 1) {
+    collector.recordGoalDraftAudit({ providerId: 'local', elapsedMs: index, resultStatus: 'ready' });
+  }
+  const audits = collector.snapshot().provider.goalDraftAudit;
+  assert.equal(audits.length, 100);
+  assert.equal(audits[0].elapsedMs, 5);
+  assert.equal(audits.every(item => Object.keys(item).sort().join(',') === 'elapsedMs,fallbackReason,providerId,resultStatus'), true);
+});
+
 test('DiagnosticsCollector toggles foreground/background performance policy', () => {
   const collector = new DiagnosticsCollector();
 

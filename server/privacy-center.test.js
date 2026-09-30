@@ -409,6 +409,30 @@ test('observed client privacy revisions only advance monotonically and survive r
   persistence.save = save;
 });
 
+test('direct category deletion advances its revision atomically and survives restart', () => {
+  const { center, persistence } = makeCenter({ categories: {
+    goals: { label: '个人目标', count: () => 1, export: () => [], clear: () => ({ deleted: 1 }) },
+  } });
+  assert.equal(center.advanceCategoryRevision('goals'), 1);
+  assert.equal(center.categoryRevision('goals'), 1);
+  const restored = new PrivacyCenter({
+    categories: {
+      memories: { count: () => 0, export: () => [], clear: () => ({ deleted: 0 }) },
+      conversations: { count: () => 0, export: () => [], clear: () => ({ deleted: 0 }) },
+      goals: { count: () => 0, export: () => [], clear: () => ({ deleted: 0 }) },
+    },
+    persistence,
+    now: () => 1_800_000_000_000,
+  });
+  assert.equal(restored.categoryRevision('goals'), 1);
+
+  const save = persistence.save;
+  persistence.save = () => { throw new Error('disk unavailable'); };
+  assert.throws(() => center.advanceCategoryRevision('goals'), /disk unavailable/);
+  assert.equal(center.categoryRevision('goals'), 1);
+  persistence.save = save;
+});
+
 test('unfinished deletion receipts survive completed-history compaction', async () => {
   let failOnce = true;
   const { center, persistence } = makeCenter({ categories: {
