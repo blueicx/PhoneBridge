@@ -56,6 +56,25 @@ data class ExplorationLogSnapshot(
     val requiresRefreshFromStart: Boolean = false
 )
 
+class ExplorationLogRequestGate {
+    private var generation = 0L
+
+    @Synchronized
+    fun begin(cursor: String?): Long {
+        if (cursor == null) generation += 1L
+        return generation
+    }
+
+    @Synchronized
+    fun reset(): Long {
+        generation += 1L
+        return generation
+    }
+
+    @Synchronized
+    fun isCurrent(requestGeneration: Long): Boolean = requestGeneration == generation
+}
+
 object ExplorationLogParser {
     private const val MAX_PAGE_SIZE = 100
     private const val MAX_EVENT_ID_LENGTH = 180

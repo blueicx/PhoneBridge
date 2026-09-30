@@ -2,12 +2,16 @@
 
 ## 当前交接覆盖（2026-10-01）
 
-- 当前目标分支：`feature/integrated-enhancement`；工作树 `F:\CodexApps\PhoneBridge-worktrees\integrated-enhancement`；不改 `main`。C2 Android 探索日志数据层已完成本地验证，推送后的 SHA/CI 状态以 GitHub Actions 最新运行记录为准。
-- C1 的交接证据提交 `9a1009f74a3c8477499e04426caa9bacf6ebba70` 已由 GitHub Actions run `36740504032` 全绿验证；包含 Node、Android 单测、Room migration、Lint、Debug 构建和发布门禁。
-- C2 已新增严格的 confirmed/pending/rejected 投影；ACK 不伪造奖励，confirmed 服务端收据优先，同一 `eventId` 去重。Android 从 progress 分类 outbox 读取有限日志、使用受限 base64url 游标请求服务端分页，并在 privacy revision 变化时丢弃旧页；陈旧 revision 的迟到响应不能恢复已清除缓存。
-- C2 本地验证：Node **235/235**；Android 定向 `ExplorationLogTest`、全量 `:app:testDebugUnitTest`、`:app:lintDebug`、`:app:assembleDebug` 通过；`scan_secrets.ps1`、`bench_workspace.ps1`、`git diff --check` 通过。正式批次还须 push 后确认最新 SHA Actions 全绿。
-- 当前未运行 ADB、未安装 APK、未做实机线索/网络恢复验收。探索日志抽屉、收据详情和 Reality 深链留给 C3；ARCore 真平面、GPS 与语音实机状态仍按已留存证据逐项核对，不以本地测试替代。
-- 下一步：提交并推送 C2；最新 SHA CI 全绿后才进入 C3 的 Web/Android 日志入口与隐私回归。
+- 当前目标分支：`feature/integrated-enhancement`；工作树 `F:\CodexApps\PhoneBridge-worktrees\integrated-enhancement`；不改 `main`。C2 源码提交 `b136adf55aca98c156b3dcca1eb019c04e880ff2` 的 GitHub Actions [run 36750431937](https://github.com/blueicx/PhoneBridge/actions/runs/36750431937) attempt 2 已全绿，耗时 **41 分 37 秒**；attempt 1 是模拟器启动超时，不是代码测试失败，也不是运行了一整天。
+- C3 已接入 Web 分页探索记录、receipt 详情与只读 Reality 历史卡片，以及 Android 抽屉日志、确认记录详情和只读 Reality 入口。真实奖励仅来自确认收据；待同步、已 ACK 未结算和拒绝项不会伪装成奖励；镜头记录不伪造区域/位置。
+- `progress` 删除现在清除服务端探索收据投影与本机日志镜像/outbox；客户端请求代次门禁阻止清除前发出的迟到页恢复旧记录。`routines`、`goals` 单独删除仍保留探索日志。
+- C3 本机验证：`node --check server/index.js` 与 Node 全量 **236/236**；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 全部通过，新增“首屏刷新/隐私清理使在途页失效”测试经过红灯后通过；浏览器交互覆盖确认收据 eventId/Mote/奖励、只读 Reality 跳转和 `progress` 删除刷新。`scan_secrets.ps1`、`git diff --check` 通过；性能预算结果 `elapsedMs=0.649`、snapshot `1694/48 bytes`、缓存命中 `10000`、突发广播 `1`。
+- Debug APK `com.phonebridge` `2.2.0` / code `4`，`93,857,764` bytes，SHA-256 `7EBF312DFF7E80B1DE856A68D2DE6546782F089CC7F5D9249DF63BAA10AE188F`；`verify_release_gates.ps1 -Channel internal-debug` 与 `apksigner verify` 通过，签名为 Android Debug / v2。APK 仅为本机构建产物，未加入源码历史；不代表正式签名发布。
+- C3 实机部分验收：无线 ADB 身份为 Xperia XZ2 / Android 15；电量 **76%**、温度 **34.2°C**。`adb install -r` 安装本批 Debug APK 成功并保留应用数据；`am start -W` 返回 `Status: ok`，启动后采集日志未发现 `FATAL EXCEPTION`。但设备当前处于锁屏，界面树仅包含系统锁屏，未绕过锁屏；因此不宣称已看到主界面、打开探索记录、点击历史 Reality 或完成线索/权限验收。没有授予相机或定位权限。
+- 复现本机自动检查：仓库根目录运行 `node --check server/index.js`、`node --test server/*.test.js`、`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/scan_secrets.ps1`、`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bench_workspace.ps1`、`git diff --check`；Android 在 `android` 目录运行 `.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`。浏览器真实交互由临时测试脚本完成，脚本已清除，没有作为依赖提交。
+- C3 远端验收入口：[`feature/integrated-enhancement` 最新 Actions](https://github.com/blueicx/PhoneBridge/actions?query=branch%3Afeature%2Fintegrated-enhancement)。每次 push 后只认该批实际最新 SHA 的全绿记录；C3 的精确提交与对应 run URL 在交付时一并报告。此前 C2 的 41 分 37 秒是已结束的独立 run，不是运行一整天。
+- 本批已连接 ADB 并安装/启动 Debug 包，但因锁屏未完成手机日志抽屉 UI 验收；真实线索/网络恢复、相机/位置权限、ARCore 平面和长时间运行不由浏览器或 CI 结果代替。正式签名仍需经验证的独立加密恢复副本。
+- 设备与发布边界：实机验收、ARCore 真平面及正式签名仍为独立待办；不得用 Debug APK、浏览器验收或 CI 模拟器替代。
 
 更新时间：2026-10-01（以本节覆盖的当前工作树与自动验证记录为准）
 

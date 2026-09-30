@@ -529,6 +529,32 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     } finally {
       privacySocket.close();
     }
+
+    const historyBeforeIndependentDeletes = await request('/api/reality/log?limit=50');
+    assert.equal(historyBeforeIndependentDeletes.response.status, 200);
+    assert.ok(historyBeforeIndependentDeletes.body.entries.some(entry => entry.eventId === realityEvent.id));
+    for (const category of ['routines', 'goals']) {
+      const deletion = await request('/api/privacy/delete', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          requestId: `reality-log-delete-${category}`,
+          categories: [category],
+          confirmation: 'DELETE SELECTED DATA',
+        }),
+      });
+      assert.equal(deletion.response.status, 200);
+      const stillPresent = await request('/api/reality/log?limit=50');
+      assert.ok(stillPresent.body.entries.some(entry => entry.eventId === realityEvent.id), `${category} deletion must not clear exploration history`);
+    }
+    const progressDeletion = await request('/api/privacy/delete', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: 'reality-log-delete-progress', categories: ['progress'], confirmation: 'DELETE SELECTED DATA' }),
+    });
+    assert.equal(progressDeletion.response.status, 200);
+    const historyAfterProgressDelete = await request('/api/reality/log?limit=50');
+    assert.deepEqual(historyAfterProgressDelete.body.entries, []);
+    const deletedReceipt = await request(`/api/reality/receipts/${encodeURIComponent(realityEvent.id)}`);
+    assert.equal(deletedReceipt.response.status, 404);
   } finally {
     child.kill();
     if (child.exitCode === null) {

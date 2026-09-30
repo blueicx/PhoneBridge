@@ -99,6 +99,30 @@ test('PhoneBridge Authentication Flow', async (t) => {
     assert.match(appScript, /setInterval\(refreshDailyWorkspace,10000\)/);
   });
 
+  await t.test('workspace exposes paginated, receipt-backed exploration history and clears it after progress deletion', async () => {
+    const res = await makeRequest('/', 'GET', { 'Cookie': 'phonebridge_token=' + token });
+    assert.strictEqual(res.status, 200);
+    for (const id of ['realityLogList', 'realityLogDetail', 'realityLogMore', 'realityLogStatus']) {
+      assert.match(res.body, new RegExp(`id="${id}"`), `missing ${id} in exploration history`);
+    }
+    const scripts = [...res.body.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    const appScript = scripts[scripts.length - 1][1];
+    const realityFixture = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'protocol-fixtures', 'reality-log.json'), 'utf8'));
+    assert.match(appScript, /async function refreshRealityLog/);
+    assert.match(appScript, /\/api\/reality\/log\?limit=50/);
+    assert.match(appScript, /entry\.status==='confirmed'/);
+    assert.match(appScript, /async function openRealityLogRecord/);
+    for (const field of realityFixture.allowedServerEntryFields) {
+      assert.ok(appScript.includes(`entry.${field}`), `Web exploration history must consume fixture field ${field}`);
+    }
+    assert.match(appScript, /receiptId\.textContent=entry\.eventId/);
+    assert.match(appScript, /moteLine\.textContent='Mote '/);
+    const deletionFlow = appScript.slice(appScript.indexOf('async function deletePrivacy'), appScript.indexOf('function workspaceStatus'));
+    assert.match(deletionFlow, /categories\.includes\('progress'\)/);
+    assert.match(deletionFlow, /refreshRealityLog/);
+    for (const [, source] of scripts) assert.doesNotThrow(() => new vm.Script(source));
+  });
+
   await t.test('logout clears cookie and returns 200', async () => {
     const res = await makeRequest('/logout', 'POST', { 'Cookie': 'phonebridge_token=' + token });
     assert.strictEqual(res.status, 200);

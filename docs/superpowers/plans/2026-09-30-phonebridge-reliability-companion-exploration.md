@@ -166,7 +166,7 @@
 
 - [x] 先写测试：离线 outbox 线索显示为待同步且不显示已领奖；ACK accepted/duplicate 后用服务端 receipt 替换同 `eventId` 待同步项；business rejection 显示原因且不创建已确认奖励；分页重叠按 eventId 去重；progress revision 变化清页并忽略旧 outbox/迟到旧页。
 - [x] Android 日志投影合并两种来源：服务端分页已确认 log 与本地 exploration outbox。服务端 receipt 优先；待同步项只保留线索类型、粗区域、时间与 ACK 状态，不推算奖励；拒绝原因仅接受安全代码。
-- [ ] 日志详情、Reality 深链及过期遭遇只读 UI 由 C3 接入；C2 数据投影不提供任何重新遭遇或领奖入口。
+- [x] 日志详情、Reality 深链及过期遭遇只读 UI 由 C3 接入；C2 数据投影不提供任何重新遭遇或领奖入口。
 - [x] 网络恢复沿用唯一 Workspace outbox worker；无新增同步 worker。游标限制 base64url 且页面缓存最多 500 条；progress revision 变化清缓存并要求从第一页重取。
 - [x] 添加共享 `protocol-fixtures/reality-log.json`，覆盖 confirmed/pending/rejected、粗区域和奖励 receipt 稳定字段；Node/Kotlin 均验证 privacy allowlist。
 - [x] 运行定向探索日志测试、全量 Android 单测/Lint/Debug 构建；Node 全量与本地扫描通过，实际 emulator SQLite migration 仍以推送后的 CI 为验收门。
@@ -175,21 +175,24 @@
 
 **接入文件：** `server/index.js` 内嵌 Web UI、`MainActivity.kt` 抽屉 UI、共享 fixtures 与相关测试。
 
-- [ ] Web 工作台提供按时间分页的探索记录和 receipt 详情；仅确认收据显示真实奖励，日志行可跳至相关 Reality 记录；删除 `progress` 后刷新结果为空。
-- [ ] Android 抽屉提供同一日志字段与状态文案：已确认、待同步、被拒绝；详情显示已有 receipt、跳转 Reality，已过期遭遇仅可查看。无网/权限拒绝不隐藏日志入口，也不伪造粗区域或实地验证。
-- [ ] 回归隐私删除顺序：清除 `progress` 后服务端 Reality、growth、Mote 成长原始 receipt 同时不可被日志接口重新投影；客户端对应缓存/outbox 按 revision 清理或隔离；`routines`、`goals` 独立删除不影响 exploration log。
-- [ ] 回归目标删除、任务类别删除、routine 中断、provider 本地降级、旧客户端 revision 缺失、重复线索 eventId；确保无重复奖励、无静默重放。
-- [ ] 更新 `README.md` 与 `HANDOFF.md`，分栏报告自动验证、当前实机证据、未验收设备项、签名发布阻塞及复现命令。提交批次 C 并 push；不把 CI 结果写成实机结果。
+- [x] Web 工作台提供按时间分页的探索记录和 receipt 详情；仅确认收据显示真实奖励，日志行可跳至相关 Reality 记录；删除 `progress` 后刷新结果为空。
+- [x] Android 抽屉提供同一日志字段与状态文案：已确认、待同步、被拒绝；详情显示已有 receipt、跳转 Reality，已过期遭遇仅可查看。无网/权限拒绝不隐藏日志入口，也不伪造粗区域或实地验证。
+- [x] 回归隐私删除顺序：清除 `progress` 后服务端 Reality、growth、Mote 成长原始 receipt 同时不可被日志接口重新投影；客户端对应缓存/outbox 按 revision 清理或隔离，并忽略清除前的迟到页；`routines`、`goals` 独立删除不影响 exploration log。
+- [x] 回归目标删除、任务类别删除、routine 中断、provider 本地降级、旧客户端 revision 缺失、重复线索 eventId；全量 Node 与 Android 单测覆盖，C3 新增服务端 API 与客户端请求代次回归。
+- [x] 更新 `README.md` 与 `HANDOFF.md`，分栏报告自动验证、当前实机证据、未验收设备项和签名发布阻塞；没有把 CI/浏览器结果写成实机结果。
+- [ ] 提交批次 C 并 push；确认 C3 最新提交 GitHub Actions 全绿后，补录实际 commit 与 run URL；不把旧 run 的绿灯算作最新提交验收。
 
 ## 最终验收清单
 
-- [ ] 服务端：`node --test server/*.test.js` 全量通过；特别确认隐私 99/100/101 迁移、revision 重启、并发删除、旧客户端/陈旧 outbox 拒绝、目标任务事务、草案无副作用、活动 eventId 幂等、探索日志 receipt 幂等/分页。
-- [ ] Android：在 `android` 目录运行 `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 全部通过；CI emulator 上 `:app:connectedDebugAndroidTest` 的 Room v4→v5→v6 升级测试通过；不得使用 destructive fallback。
-- [ ] 协议：Node、Kotlin、Web 都读取同一 privacy/routine/goal/reality-log fixtures；`git diff --check` 通过。
-- [ ] 隐私/供应链：扫描源码、文档和变更文件，确认无 token、provider key、个人备份、日志、原图、精确位置；APK 不纳入源码提交。
-- [ ] 性能/兼容：运行仓库 CI 已有性能预算和发布门禁，不新增未经测量的性能声明；GitHub Actions 在批次 C 最新 commit 上成功。
-- [ ] 实机：重新检查无线 ADB 身份、电量、温度和相机/位置权限状态。授权后按顺序验收：沉浸启动、旧存档逐类迁移/恢复、专注暂停中断、无权限散步/回顾、目标草案确认后才建任务、三类线索与离线恢复、日志 receipt、隐私分类删除。未执行/设备不满足条件的项标为“待验收”。不得静默授予权限。
-- [ ] 发布：Debug APK 仅作为构建产物校验；正式签名在独立加密恢复副本实际验证前维持阻塞。最终交接分别记录源码 commit、Actions URL/状态、APK SHA-256（若构建）与实机证据位置。
+- [x] 服务端：`node --test server/*.test.js` 全量 **236/236** 通过；覆盖隐私 revision、迁移、并发删除、旧客户端/陈旧 outbox 拒绝、目标任务事务、草案无副作用、eventId 幂等和探索日志 receipt 分页。
+- [x] Android：在 `android` 目录运行 `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 全部通过，新增探索日志迟到请求门禁单测也通过；CI emulator 上 `:app:connectedDebugAndroidTest` 的 Room v4→v5→v6 升级仍待 C3 最新 Actions 验收，不使用 destructive fallback。
+- [x] 协议：Node、Kotlin、Web 都验证同一 `reality-log.json` fixture；`git diff --check` 通过。
+- [x] 隐私/供应链：`scripts/scan_secrets.ps1` 通过，变更中无 APK、密钥或个人数据；原图和精确位置不进入日志/投影。
+- [x] 性能/兼容：`scripts/bench_workspace.ps1` 通过（`elapsedMs=0.649`、snapshot 1694/48 bytes、10000 次缓存命中、突发广播 1 次）；未新增未经测量的性能声明。
+- [ ] GitHub Actions：提交并 push 后，确认批次 C 最新 commit 对应的 Actions 全绿；旧 SHA 的成功记录不能替代。
+- [ ] 实机：C3 已确认 Xperia XZ2 / Android 15 无线 ADB 身份、电量 76%、温度 34.2°C；`adb install -r` 保留数据安装成功，启动命令返回 `Status: ok` 且采集日志未见 `FATAL EXCEPTION`。设备处于锁屏，本批未绕过锁屏，日志抽屉 UI 和其余场景仍待用户解锁后验收。继续按顺序验收沉浸启动、旧存档迁移/恢复、日常活动、目标草案确认、三类线索与离线恢复、日志 receipt 和隐私删除；不得静默授予权限。
+- [x] 发布产物：Debug APK 仅作为构建产物校验；`com.phonebridge` `2.2.0` / code `4`、93,857,764 bytes、SHA-256 `7EBF312DFF7E80B1DE856A68D2DE6546782F089CC7F5D9249DF63BAA10AE188F`，内部 Debug v2 签名门禁通过，APK 未加入 Git。
+- [ ] 正式发布：正式签名在独立加密恢复副本实际验证前维持阻塞；提交并 push 后，还须核对最新 SHA Actions 全绿，并在交付记录源码 commit、Actions URL/状态与实机证据位置。
 
 ## 建议执行命令
 

@@ -65,7 +65,7 @@
 - 批次 A 新增统一脱敏伴侣摘要：`GET /api/companion/summary`，支持 ETag/304；Web 工作台展示 Mote、任务、提醒、现实探索、Provider、记忆和自治状态，现实事件可直接发起遭遇或收集。
 - Android 新增 `CompanionSummary` 协议模型，主界面和 Mote 小组件读取同一份摘要字段，断线时继续使用本地镜像。
 - Android 当前版本为 `2.2.0`（`versionCode 4`，内部 Debug 候选）；已加入可选 HTTPS/WSS、版本化二维码配对载荷、证书指纹 pin、实际 APK 版本/签名门禁和脱敏诊断导出，正式签名仍需外部 keystore 与离线恢复介质。
-- Android 探索日志底座合并 `/api/reality/log` 分页收据与本机 `mote.exploration` outbox：accepted/duplicate ACK 仍显示“待确认奖励”，只有服务端 confirmed receipt 才显示经验/道具；拒绝原因只保留安全错误码。缓存最多 500 条，游标仅接受 base64url，`progress` 隐私 revision 变化会清缓存并从第一页重取；离线恢复继续使用唯一 Workspace outbox worker。日志抽屉详情与 Reality 跳转仍待 C3 接入，本轮未做手机验收。
+- Android 探索日志底座合并 `/api/reality/log` 分页收据与本机 `mote.exploration` outbox：accepted/duplicate ACK 仍显示“待确认奖励”，只有服务端 confirmed receipt 才显示经验/道具；拒绝原因只保留安全错误码。缓存最多 500 条，游标仅接受 base64url，`progress` 隐私 revision 变化会清缓存并从第一页重取；离线恢复继续使用唯一 Workspace outbox worker。C3 已接入 Web 分页详情、Android 抽屉详情与只读 Reality 历史入口；仅确认收据展示真实奖励，清除 `progress` 会清理服务端收据投影和客户端缓存，迟到请求不能恢复旧页。浏览器交互与本地自动测试已覆盖；本批未做手机验收。
 
 上述 2.0 能力已加入统一双端摘要入口；Wi-Fi TLS 配对与正式签名发布仍需外部证书/keystore，实机结果按能力逐项记录，不把 Canvas 回退扩大为 ARCore 真平面证据。
 

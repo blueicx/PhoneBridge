@@ -156,6 +156,23 @@ class ExplorationLogTest {
     }
 
     @Test
+    fun freshPageAndPrivacyResetInvalidateInFlightExplorationRequests() {
+        val gate = ExplorationLogRequestGate()
+        val initialRequest = gate.begin(cursor = null)
+        val inFlightNextPage = gate.begin(cursor = "cursor-a")
+        assertEquals(initialRequest, inFlightNextPage)
+        assertTrue(gate.isCurrent(inFlightNextPage))
+
+        val refreshed = gate.begin(cursor = null)
+        assertFalse(gate.isCurrent(inFlightNextPage))
+        assertTrue(gate.isCurrent(refreshed))
+
+        val inFlightRefresh = gate.begin(cursor = "cursor-b")
+        gate.reset()
+        assertFalse(gate.isCurrent(inFlightRefresh))
+    }
+
+    @Test
     fun sharedFixtureMatchesAndroidParserAndServerFieldAllowlist() {
         val fixture = loadFixture()
         assertEquals("progress", fixture.getString("privacyCategory"))

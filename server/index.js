@@ -1767,7 +1767,8 @@ const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name
 <div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div>
 <div id="dailyWorkspace" class="routine-goal-grid"><section class="workspace-card"><h3>日常与习惯</h3><div id="routineStatus" class="status-note" role="status" aria-live="polite">日常记录加载中…</div><div id="routineList"></div></section><section class="workspace-card"><h3>个人目标</h3><label class="sub" for="goalTitle">写下一个想推进的目标</label><div class="row"><input id="goalTitle" maxlength="120" placeholder="例如：完成一个小型作品" style="flex:1;min-width:0"></div><textarea id="goalDescription" maxlength="2000" placeholder="可选说明；仅在点击生成草案时发给当前 provider"></textarea><div class="goal-actions"><button id="goalCreateButton" class="primary" onclick="createGoalFromWeb()">创建目标</button><button onclick="refreshDailyWorkspace()">刷新日常与目标</button></div><div id="goalStatus" class="status-note" role="status" aria-live="polite">目标加载中…</div><div id="goalList"></div></section></div><div id="goalDraftPanel" class="workspace-card" style="margin-top:12px" hidden></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>手机安全配对</h2><div class="row"><button onclick="startPairing()">生成五分钟二维码</button><span id="pairingStatus" class="sub" aria-live="polite">在手机“节点”中选择“扫码配对”</span></div><img id="pairingQr" alt="手机配对二维码" style="display:none;width:min(300px,100%);margin-top:12px;background:white;border-radius:12px;padding:8px"></div>
-<div class="panel" style="grid-column:1/-1"><h2>现实探索</h2><div class="sub">只输入粗区域 ID，不上传精确位置；例如 <code>cell:1561:6073</code>。</div><div class="row"><input id="realityRegion" placeholder="粗区域 ID" style="flex:1"><button class="primary" onclick="refreshReality()">刷新事件</button></div><div id="realitySummary" class="sub" style="margin-top:8px">尚未加载现实事件</div></div>
+<div class="panel" id="realityPanel" style="grid-column:1/-1"><h2>现实探索</h2><div class="sub">只输入粗区域 ID，不上传精确位置；例如 <code>cell:1561:6073</code>。</div><div class="row"><input id="realityRegion" placeholder="粗区域 ID" style="flex:1"><button class="primary" onclick="refreshReality()">刷新事件</button></div><div id="realitySummary" class="sub" style="margin-top:8px">尚未加载现实事件</div></div>
+<div class="panel" style="grid-column:1/-1"><h2>探索记录</h2><div id="realityLogStatus" class="status-note" role="status" aria-live="polite">探索记录加载中…</div><div id="realityLogList" aria-label="分页探索记录"></div><div class="row"><button id="realityLogMore" onclick="refreshRealityLog({cursor:realityLogCursor})" hidden>加载更早记录</button></div><div id="realityLogDetail" class="workspace-card" style="margin-top:10px" aria-live="polite">选择一条记录查看安全收据详情。</div></div>
 <div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div id="privacyCategories" class="privacy-checklist" aria-label="选择要处理的数据类别"></div><div id="privacyMigration" class="sub" role="status" style="margin-top:8px"></div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。请在上方逐项勾选类别；日常与个人目标可单独导出或删除。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出选定类别</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
 <script>
 let selected='';
@@ -1780,6 +1781,10 @@ let routineRenderSignature = '';
 let goalRenderSignature = '';
 let dailyRefreshPromise = null;
 let activeGoalDraft = null;
+let realityLogEntries = [];
+let realityLogCursor = null;
+let realityLogSelectedId = '';
+let realityLogGeneration = 0;
 const routineRetryPayloads = new Map();
 const routineInFlight = new Set();
 const goalDraftInFlight = new Set();
@@ -1978,6 +1983,13 @@ async function deletePrivacy(){
     if(phrase===null)return;
     const result=await api('/api/privacy/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:webEventId('web'),categories,confirmation:phrase})});
     privacyResult.textContent='删除已完成：'+result.receipt.categories.join('、')+'。收据 '+result.receipt.requestId;
+    if(result.receipt.categories.includes('progress')){
+      for(const key of [...etags.keys()])if(key.startsWith('/api/reality/log?'))etags.delete(key);
+      realityLogEntries=[];realityLogCursor=null;realityLogSelectedId='';renderRealityLog();
+      const region=document.getElementById('realityRegion');if(region)region.value='';
+      const summary=document.getElementById('realitySummary');if(summary)summary.textContent='成长与探索数据已清除。';
+      await refreshRealityLog({reset:true});
+    }
     await refreshPrivacy();
   }catch(error){privacyResult.textContent='删除未完成：'+error.message}
 }
@@ -2153,6 +2165,79 @@ async function realityAction(id, action, clueType){
   }catch(error){ realitySummary.textContent='现实动作失败：'+error.message; }
 }
 
+function realityLogClueLabel(type){return ({location:'地点',object:'物体',light:'光线'})[String(type||'').toLowerCase()]||'线索'}
+function realityLogRegionLabel(region){return region==='camera'?'仅镜头，未使用位置':'粗区域 '+String(region||'未知')}
+function realityLogRewardLabel(entry){
+  if(entry.status!=='confirmed')return '';
+  const reward=entry.reward||{};const parts=[];
+  const xp=Math.max(0,Math.trunc(Number(reward.xp)||0));if(xp>0)parts.push('经验 +'+xp);
+  for(const item of Array.isArray(reward.items)?reward.items:[]){const amount=Math.max(0,Math.trunc(Number(item.amount)||0));if(amount>0)parts.push(String(item.id||'道具')+' ×'+amount)}
+  if(reward.boost?.id==='field-focus')parts.push('专注增益 ×'+Number(reward.boost.multiplier||1));
+  return parts.join(' · ')||'已确认 · 无经验或道具奖励';
+}
+function realityLogStatusLabel(entry){return entry.status==='confirmed'?'已确认':entry.status==='rejected'?'已拒绝 · 仅查看':'待同步 · 不显示奖励'}
+function renderRealityLogDetail(entry){
+  const root=document.getElementById('realityLogDetail');if(!root)return;root.replaceChildren();
+  if(!entry){root.textContent='选择一条记录查看安全收据详情。';return}
+  const title=document.createElement('h3');title.textContent=realityLogClueLabel(entry.clueType)+'线索 · '+realityLogStatusLabel(entry);root.appendChild(title);
+  const metadata=document.createElement('div');metadata.className='sub';metadata.textContent=realityLogRegionLabel(entry.coarseRegion)+' · '+new Date(Number(entry.occurredAt)||0).toLocaleString();root.appendChild(metadata);
+  const receiptId=document.createElement('div');receiptId.className='sub';receiptId.style.wordBreak='break-all';receiptId.textContent=entry.eventId;root.appendChild(receiptId);
+  if(entry.moteId){const moteLine=document.createElement('div');moteLine.className='sub';moteLine.textContent='Mote '+String(entry.moteId);root.appendChild(moteLine)}
+  if(entry.status==='confirmed'){
+    const reward=document.createElement('div');reward.className='sub';reward.style.marginTop='8px';reward.textContent=realityLogRewardLabel(entry);root.appendChild(reward);
+    const observation=document.createElement('div');observation.className='sub';observation.style.marginTop='6px';observation.textContent=String(entry.observation||'');root.appendChild(observation);
+    const jump=makeWorkspaceButton('在 Reality 中只读查看',()=>openRealityLogRecord(entry.eventId),true);jump.style.marginTop='8px';root.appendChild(jump);
+  }else{
+    const note=document.createElement('div');note.className='sub';note.style.marginTop='8px';note.textContent='这条记录没有服务端确认收据；不会显示奖励，也不能再次提交。';root.appendChild(note);
+  }
+}
+function renderRealityLog(){
+  const root=document.getElementById('realityLogList');if(!root)return;root.replaceChildren();
+  const status=document.getElementById('realityLogStatus');
+  if(status)status.textContent=realityLogEntries.length?realityLogEntries.length+' 条 · 仅服务端确认收据显示真实奖励':'暂无探索记录；离线或权限关闭不会伪造区域与实地验证。';
+  for(const entry of realityLogEntries){
+    const row=document.createElement('button');row.type='button';row.className='item reality-log-row';row.style.width='100%';row.style.textAlign='left';row.style.marginTop='6px';
+    const title=document.createElement('b');title.textContent=realityLogClueLabel(entry.clueType)+'线索 · '+realityLogStatusLabel(entry);row.appendChild(title);
+    const metadata=document.createElement('div');metadata.className='sub';metadata.textContent=realityLogRegionLabel(entry.coarseRegion)+' · '+new Date(Number(entry.occurredAt)||0).toLocaleString();row.appendChild(metadata);
+    row.setAttribute('aria-label',title.textContent+'，'+metadata.textContent);
+    row.addEventListener('click',()=>{realityLogSelectedId=entry.eventId;renderRealityLogDetail(entry)});
+    root.appendChild(row);
+  }
+  const more=document.getElementById('realityLogMore');if(more)more.hidden=!realityLogCursor;
+  if(!realityLogEntries.some(entry=>entry.eventId===realityLogSelectedId)){realityLogSelectedId='';renderRealityLogDetail(null)}
+}
+async function refreshRealityLog({cursor=null,reset=false}={}){
+  if(reset||!cursor)realityLogGeneration++;
+  const generation=realityLogGeneration;
+  const status=document.getElementById('realityLogStatus');if(status)status.textContent='正在同步探索记录…';
+  try{
+    const path='/api/reality/log?limit=50'+(cursor?'&cursor='+encodeURIComponent(cursor):'');
+    const result=await api(path);
+    if(generation!==realityLogGeneration)return;
+    if(result._status===304){renderRealityLog();return}
+    const received=Array.isArray(result.entries)?result.entries:[];
+    if(reset||!cursor)realityLogEntries=[];
+    const byId=new Map(realityLogEntries.map(entry=>[entry.eventId,entry]));
+    for(const entry of received)if(entry&&typeof entry.eventId==='string'&&entry.status==='confirmed')byId.set(entry.eventId,entry);
+    realityLogEntries=[...byId.values()].sort((a,b)=>(Number(b.occurredAt)||0)-(Number(a.occurredAt)||0)||String(b.eventId).localeCompare(String(a.eventId)));
+    realityLogCursor=typeof result.nextCursor==='string'?result.nextCursor:null;
+    renderRealityLog();
+  }catch(error){if(generation===realityLogGeneration&&status)status.textContent='探索记录暂不可用：'+error.message}
+}
+async function openRealityLogRecord(eventId){
+  const entry=realityLogEntries.find(item=>item.eventId===eventId);
+  if(!entry||entry.status!=='confirmed')return;
+  const panel=document.getElementById('realityPanel');
+  const regionInput=document.getElementById('realityRegion');
+  if(regionInput)regionInput.value=entry.coarseRegion;
+  const summary=document.getElementById('realitySummary');summary.replaceChildren();
+  const record=document.createElement('div');record.className='workspace-card';
+  const title=document.createElement('h3');title.textContent='历史 Reality 收据 · '+realityLogClueLabel(entry.clueType)+' · 只读';record.appendChild(title);
+  const details=document.createElement('div');details.className='sub';details.textContent=realityLogRegionLabel(entry.coarseRegion)+' · '+new Date(Number(entry.occurredAt)||0).toLocaleString()+' · '+realityLogRewardLabel(entry)+' · '+entry.eventId+(entry.moteId?' · Mote '+entry.moteId:'');record.appendChild(details);
+  const note=document.createElement('div');note.className='sub';note.style.marginTop='6px';note.textContent='这是已确认的历史记录，不会重放遭遇或重复发放奖励。';record.appendChild(note);
+  summary.appendChild(record);panel?.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
 async function refreshWorkspaceNow(){try{
   let s=await api('/api/state?view=summary');
   if(s._status===304) return;
@@ -2260,6 +2345,7 @@ async function approveApproval(id){await api('/api/autonomy/approvals/'+encodeUR
 let workspaceRefreshFrame=0;
 function refreshWorkspace(){if(workspaceRefreshFrame)return;workspaceRefreshFrame=requestAnimationFrame(()=>{workspaceRefreshFrame=0;refreshWorkspaceNow()})}
 refreshWorkspace();
+refreshRealityLog();
 </script>`;
 
 const handleHttpRequest = async (req, res) => {

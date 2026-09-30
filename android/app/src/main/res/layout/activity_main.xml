@@ -366,6 +366,7 @@
                     <Button android:id="@+id/focusMemoryButton" style="@style/PetAction" android:minWidth="0dp" android:text="记忆"/>
                     <Button android:id="@+id/focusGameButton" style="@style/PetAction" android:minWidth="0dp" android:text="游戏"/>
                     <Button android:id="@+id/focusRealityButton" style="@style/PetAction" android:minWidth="0dp" android:text="现实"/>
+                    <Button android:id="@+id/focusExploreLogButton" style="@style/PetAction" android:minWidth="0dp" android:text="探索记录" android:contentDescription="查看已确认、待同步和被拒绝的现实探索记录"/>
                     <Button android:id="@+id/focusCommandButton" style="@style/PetAction" android:minWidth="0dp" android:layout_marginEnd="0dp" android:text="指令"/>
                     <Button android:id="@+id/focusStageButton" style="@style/PetAction" android:minWidth="0dp" android:layout_marginEnd="0dp" android:text="舞台" android:contentDescription="打开舞台、家园和安静模式设置"/>
                     <Button android:id="@+id/focusRoutinesButton" style="@style/PetAction" android:minWidth="0dp" android:layout_marginEnd="0dp" android:text="日常" android:contentDescription="打开专注计时、散步观察和睡前回顾"/>

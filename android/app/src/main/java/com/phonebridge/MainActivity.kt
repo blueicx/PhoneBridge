@@ -184,6 +184,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var focusMemoryButton: Button
     private lateinit var focusGameButton: Button
     private lateinit var focusRealityButton: Button
+    private lateinit var focusExploreLogButton: Button
     private lateinit var focusCommandButton: Button
     private lateinit var focusStageButton: Button
     private lateinit var focusRoutinesButton: Button
@@ -294,7 +295,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private val workspaceClient = WorkspaceClient()
     private val workspaceRepository by lazy { WorkspaceRepository.get(this) }
     private val explorationLogStore = ExplorationLogStore()
+    private val explorationLogRequestGate = ExplorationLogRequestGate()
     @Volatile private var explorationLogSnapshot = ExplorationLogSnapshot()
+    private var explorationLogDialogRenderer: ((ExplorationLogSnapshot) -> Unit)? = null
+    private var explorationLogDialog: AlertDialog? = null
+    private var explorationLogDetailDialog: AlertDialog? = null
     private val appearanceButtons = mutableMapOf<PetAppearance, Button>()
     private val themeButtons = mutableMapOf<UiTheme, Button>()
     private lateinit var themeApplier: ThemeApplier
@@ -332,6 +337,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     @Volatile private var speaking = false
     @Volatile private var immersiveMode = false
     private var realityLensActive = false
+    private var realityHistoryReadOnly = false
     private lateinit var arCoreRenderView: ArCoreRealityRenderView
     private var realityArEntryId: Long? = null
     private var arCoreInstallFlow: ArCoreInstallFlow? = null
@@ -632,10 +638,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 handleRealityNode(node)
             }
             override fun onPetTapped(pet: PetState) {
-                handleRealityPetTapped()
+                if (realityHistoryReadOnly) setStatus("历史记录只读，不能重复互动或领奖") else handleRealityPetTapped()
             }
             override fun onBlankAreaTapped(x: Float, y: Float) {
-                arCoreRenderView.requestMotePlacement(x, y, replaceExisting = realityAnchorRepositioning)
+                if (realityHistoryReadOnly) setStatus("历史 Reality 记录仅供查看")
+                else arCoreRenderView.requestMotePlacement(x, y, replaceExisting = realityAnchorRepositioning)
             }
         })
         normalPreviewParams = findViewById<View>(R.id.previewFrame).layoutParams as?
@@ -664,12 +671,17 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusMemoryButton = findViewById(R.id.focusMemoryButton)
         focusGameButton = findViewById(R.id.focusGameButton)
         focusRealityButton = findViewById(R.id.focusRealityButton)
+        focusExploreLogButton = findViewById(R.id.focusExploreLogButton)
         focusCommandButton = findViewById(R.id.focusCommandButton)
         focusStageButton = findViewById(R.id.focusStageButton)
         focusRoutinesButton = findViewById(R.id.focusRoutinesButton)
         focusGoalsButton = findViewById(R.id.focusGoalsButton)
         realityRepositionButton.setOnClickListener {
             if (!realityLensActive) return@setOnClickListener
+            if (realityHistoryReadOnly) {
+                setStatus("历史 Reality 记录仅供查看")
+                return@setOnClickListener
+            }
             if (realityCaptureController.snapshot().owner == RealityCameraOwner.ARCORE) {
                 realityAnchorRepositioning = !realityAnchorRepositioning
                 realityLensView.setAnchorRepositioning(realityAnchorRepositioning)
@@ -1706,6 +1718,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusMemoryButton.setOnClickListener { showMemoryDialog() }
         focusGameButton.setOnClickListener { showSignalGameDialog() }
         focusRealityButton.setOnClickListener { enterRealityLens() }
+        focusExploreLogButton.setOnClickListener { showExplorationLogDialog() }
         focusCommandButton.setOnClickListener {
             exitFocusMode()
             commandInput.requestFocus()
@@ -2643,8 +2656,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         say(if (useFrontCamera) "换成前眼了。" else "换成后眼了。")
     }
 
-    private fun enterRealityLens() {
-        if (!immersiveMode || realityLensActive) return
+    private fun enterRealityLens(readOnlyHistory: ExplorationLogEntry? = null) {
+        if (!immersiveMode) return
+        if (realityLensActive) {
+            readOnlyHistory?.let(::showRealityHistory)
+            return
+        }
+        realityHistoryReadOnly = readOnlyHistory != null
         val restoreCameraOnExit = cameraRunning
         cameraSession.incrementAndGet()
         cameraStartPending = false
@@ -2688,13 +2706,16 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             R.id.focusInputRow
         ).forEach { id -> findViewById<View>(id)?.visibility = View.GONE }
         realityLensView.setPetState(pet)
+        realityLensView.setHistoricalRecord(readOnlyHistory?.let { ExplorationLogPresentation.from(it) }?.let {
+            "历史${it.clueLabel}线索 · ${it.statusLabel} · ${it.regionLabel} · 只读"
+        })
         realityLensView.setRealityTrackingSnapshot(RealityTrackingSnapshot(RealityTrackingStatus.CHECKING))
         realityLensView.visibility = View.VISIBLE
         realityAnchorRepositioning = false
         realityLensView.setAnchorRepositioning(false)
         realityRepositionButton.text = "重新校准"
-        realityRepositionButton.visibility = View.VISIBLE
-        requestRealityLocationIfNeeded()
+        realityRepositionButton.visibility = if (realityHistoryReadOnly) View.GONE else View.VISIBLE
+        if (!realityHistoryReadOnly) requestRealityLocationIfNeeded()
         realityThermalHandler.removeCallbacks(realityThermalMonitor)
         realityThermalHandler.post(realityThermalMonitor)
         renderCameraHeroState()
@@ -2729,6 +2750,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             RealityCameraOwner.NONE -> arCoreRenderView.closeSession()
         }
         realityLensActive = false
+        realityHistoryReadOnly = false
+        realityLensView.setHistoricalRecord(null)
         val captureState = realityCaptureController.exitReality()
         realityArEntryId = null
         arCoreInstallFlow = null
@@ -2770,6 +2793,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     private fun handleRealityNode(node: RealityLensView.LensNode) {
+        if (realityHistoryReadOnly) {
+            setStatus("正在只读查看历史记录；不会重复提交线索或发放奖励")
+            return
+        }
         val discovered = loadDiscoveredRealityNodes()
         if (node.id in discovered) {
             say("今天已经收集过${node.title}。${node.detail}")
@@ -2817,6 +2844,143 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             )
         }
     }
+
+    private fun showRealityHistory(entry: ExplorationLogEntry) {
+        val presentation = ExplorationLogPresentation.from(entry)
+        if (!presentation.canOpenReality || explorationLogSnapshot.entries.none {
+                it.eventId == entry.eventId && it.status == ExplorationLogStatus.CONFIRMED
+            }) {
+            Toast.makeText(this, "这条记录已不可用或尚未确认奖励", Toast.LENGTH_SHORT).show()
+            return
+        }
+        explorationLogDialog?.dismiss()
+        realityHistoryReadOnly = true
+        val label = "历史${presentation.clueLabel}线索 · ${presentation.statusLabel} · ${presentation.regionLabel} · 只读"
+        if (realityLensActive) {
+            realityLensView.setHistoricalRecord(label)
+            realityRepositionButton.visibility = View.GONE
+            setStatus("只读查看历史收据 · 不会再次提交或领奖")
+        } else {
+            enterRealityLens(entry)
+            setStatus("只读查看历史收据 · 不会再次提交或领奖")
+        }
+    }
+
+    private fun showExplorationLogDialog() {
+        explorationLogDialog?.dismiss()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(4))
+        }
+        val status = TextView(this).apply {
+            setTextColor(Color.parseColor("#A5F3CB"))
+            textSize = 12f
+            setPadding(0, 0, 0, dp(8))
+        }
+        val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = android.widget.ScrollView(this).apply {
+            addView(rows, android.view.ViewGroup.LayoutParams(-1, -2))
+            layoutParams = LinearLayout.LayoutParams(-1, dp(360))
+        }
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.END
+        }
+        val refresh = Button(this).apply { text = "刷新" }
+        val more = Button(this).apply { text = "加载更多" }
+        controls.addView(refresh, LinearLayout.LayoutParams(0, dp(44), 1f))
+        controls.addView(more, LinearLayout.LayoutParams(0, dp(44), 1f))
+        content.addView(status)
+        content.addView(scroll)
+        content.addView(controls)
+
+        val renderer: (ExplorationLogSnapshot) -> Unit = { snapshot ->
+            status.text = when {
+                snapshot.entries.isEmpty() && !BridgeLink.isOnline -> "离线 · 暂无本机待同步记录；连接恢复后会继续同步"
+                snapshot.entries.isEmpty() -> "暂无探索记录 · 相机或位置权限不会影响查看"
+                else -> "${snapshot.entries.size} 条 · 已确认收据显示实际奖励；待同步与拒绝记录不发奖"
+            }
+            rows.removeAllViews()
+            snapshot.entries.forEach { entry ->
+                val presentation = ExplorationLogPresentation.from(entry)
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(12), dp(9), dp(12), dp(9))
+                    setBackgroundColor(Color.parseColor("#10201A"))
+                    isClickable = true
+                    isFocusable = true
+                }
+                val heading = TextView(this).apply {
+                    text = "${presentation.clueLabel}线索 · ${presentation.statusLabel}"
+                    setTextColor(Color.parseColor(if (entry.status == ExplorationLogStatus.CONFIRMED) "#8FF0C4" else "#FFC86B"))
+                    textSize = 14f
+                }
+                val summary = TextView(this).apply {
+                    text = "${presentation.regionLabel} · ${formatExplorationTime(entry.occurredAt)}"
+                    setTextColor(Color.parseColor("#A9BEB3"))
+                    textSize = 11f
+                }
+                row.addView(heading)
+                row.addView(summary)
+                row.setOnClickListener { showExplorationLogDetail(entry) }
+                rows.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+            }
+            more.visibility = if (snapshot.nextCursor != null) View.VISIBLE else View.GONE
+            more.isEnabled = snapshot.nextCursor != null
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("探索记录")
+            .setView(content)
+            .setNegativeButton("关闭", null)
+            .create()
+        explorationLogDialog = dialog
+        explorationLogDialogRenderer = renderer
+        dialog.setOnDismissListener {
+            if (explorationLogDialogRenderer === renderer) explorationLogDialogRenderer = null
+            if (explorationLogDialog === dialog) explorationLogDialog = null
+        }
+        refresh.setOnClickListener {
+            explorationLogStore.reset()
+            explorationLogSnapshot = ExplorationLogSnapshot()
+            renderer(explorationLogSnapshot)
+            refreshExplorationLog()
+        }
+        more.setOnClickListener {
+            val cursor = explorationLogSnapshot.nextCursor ?: return@setOnClickListener
+            more.isEnabled = false
+            refreshExplorationLog(cursor = cursor)
+        }
+        dialog.show()
+        renderer(explorationLogSnapshot)
+        refreshExplorationLog()
+    }
+
+    private fun showExplorationLogDetail(entry: ExplorationLogEntry) {
+        explorationLogDetailDialog?.dismiss()
+        val presentation = ExplorationLogPresentation.from(entry)
+        val message = buildString {
+            append(presentation.detailText)
+            append("\n")
+            append(formatExplorationTime(entry.occurredAt))
+            if (!presentation.canOpenReality) append("\n\n此记录仅供查看；不会重新提交线索或发放奖励。")
+        }
+        val builder = AlertDialog.Builder(this)
+            .setTitle("${presentation.clueLabel}线索详情")
+            .setMessage(message)
+        if (presentation.canOpenReality) {
+            builder.setPositiveButton("在 Reality 中只读查看") { _, _ -> showRealityHistory(entry) }
+                .setNegativeButton("关闭", null)
+        } else {
+            builder.setPositiveButton("知道了", null)
+        }
+        val dialog = builder.create()
+        explorationLogDetailDialog = dialog
+        dialog.setOnDismissListener { if (explorationLogDetailDialog === dialog) explorationLogDetailDialog = null }
+        dialog.show()
+    }
+
+    private fun formatExplorationTime(timestamp: Long): String =
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(timestamp))
 
     private fun showRealityEncounterChoices(
         node: RealityLensView.LensNode,
@@ -3317,24 +3481,29 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         cursor: String? = null,
         restartAfterRevisionChange: Boolean = true
     ) {
+        val requestGeneration = explorationLogRequestGate.begin(cursor)
         appScope.launch(Dispatchers.IO) {
             val revision = workspaceRepository.privacyRevision("progress")
             if (revision == null) {
                 withContext(Dispatchers.Main) {
+                    if (!explorationLogRequestGate.isCurrent(requestGeneration)) return@withContext
+                    explorationLogRequestGate.reset()
                     explorationLogStore.reset()
                     explorationLogSnapshot = ExplorationLogSnapshot()
+                    explorationLogDialogRenderer?.invoke(explorationLogSnapshot)
                 }
                 return@launch
             }
             val outbox = workspaceRepository.explorationLogOutbox()
             withContext(Dispatchers.Main) {
-                if (destroyed) return@withContext
+                if (destroyed || !explorationLogRequestGate.isCurrent(requestGeneration)) return@withContext
                 fun applyLocalOnly() {
                     explorationLogSnapshot = explorationLogStore.applyPage(
                         ExplorationLogPage(emptyList(), null),
                         outbox,
                         revision
                     )
+                    explorationLogDialogRenderer?.invoke(explorationLogSnapshot)
                 }
 
                 if (!BridgeLink.isOnline) {
@@ -3344,20 +3513,25 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 workspaceRequest(
                     path = workspaceClient.realityLogPath(cursor = cursor, limit = 50),
                     onSuccess = { json ->
-                        val snapshot = explorationLogStore.applyPage(
-                            ExplorationLogParser.parsePage(json),
-                            outbox,
-                            revision
-                        )
-                        explorationLogSnapshot = snapshot
-                        if (snapshot.requiresRefreshFromStart && restartAfterRevisionChange) {
-                            refreshExplorationLog(cursor = null, restartAfterRevisionChange = false)
+                        if (explorationLogRequestGate.isCurrent(requestGeneration)) {
+                            val snapshot = explorationLogStore.applyPage(
+                                ExplorationLogParser.parsePage(json),
+                                outbox,
+                                revision
+                            )
+                            explorationLogSnapshot = snapshot
+                            explorationLogDialogRenderer?.invoke(snapshot)
+                            if (snapshot.requiresRefreshFromStart && restartAfterRevisionChange) {
+                                refreshExplorationLog(cursor = null, restartAfterRevisionChange = false)
+                            }
                         }
                     },
                     onError = {
-                        applyLocalOnly()
-                        if (cursor != null && restartAfterRevisionChange) {
-                            refreshExplorationLog(cursor = null, restartAfterRevisionChange = false)
+                        if (explorationLogRequestGate.isCurrent(requestGeneration)) {
+                            applyLocalOnly()
+                            if (cursor != null && restartAfterRevisionChange) {
+                                refreshExplorationLog(cursor = null, restartAfterRevisionChange = false)
+                            }
                         }
                     }
                 )
@@ -5032,8 +5206,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     focusSpeechStack.removeAllViews()
                 }
                 if ("progress" in categories) {
+                    explorationLogDetailDialog?.dismiss()
+                    explorationLogRequestGate.reset()
                     explorationLogStore.reset()
                     explorationLogSnapshot = ExplorationLogSnapshot()
+                    explorationLogDialogRenderer?.invoke(explorationLogSnapshot)
+                    realityHistoryReadOnly = false
+                    realityLensView.setHistoricalRecord(null)
                     getSharedPreferences("mote_roster", Context.MODE_PRIVATE).edit().clear().apply()
                     getSharedPreferences("mote_pet", Context.MODE_PRIVATE).edit().clear().apply()
                     moteRosterJson = JSONArray()
@@ -7336,7 +7515,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             focusToolsToggle.minimumHeight = dp(if (stagePreferences.oneHanded) 52 else 36)
             listOf(
                 focusCameraButton, focusLensButton, focusListenButton, focusVoiceButton,
-                focusMemoryButton, focusGameButton, focusRealityButton, focusCommandButton, focusStageButton,
+                focusMemoryButton, focusGameButton, focusRealityButton, focusExploreLogButton, focusCommandButton, focusStageButton,
                 focusRoutinesButton, focusGoalsButton
             ).forEach { it.minimumHeight = dp(if (stagePreferences.oneHanded) 52 else 36) }
             if (stagePreferences.oneHanded && immersiveMode) {

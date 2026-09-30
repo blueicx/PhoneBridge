@@ -113,6 +113,7 @@ class RealityLensView @JvmOverloads constructor(
     private var petSpeechTimer = 0f
     private var encounterRewardLabel: String? = null
     private var encounterRewardTimer = 0f
+    private var historicalRecordLabel: String? = null
     private var frameFps = 30f
     private var frameTemperatureCelsius = 25f
     private var coarseRegion: String? = null
@@ -205,6 +206,11 @@ class RealityLensView @JvmOverloads constructor(
         petSpeechBubble = "${title}已暂存，等待节点确认。"
         petSpeechTimer = 2.8f
         petJoyTimer = .55f
+        invalidate()
+    }
+
+    fun setHistoricalRecord(label: String?) {
+        historicalRecordLabel = label?.filterNot(Char::isISOControl)?.take(36)
         invalidate()
     }
 
@@ -372,8 +378,11 @@ class RealityLensView @JvmOverloads constructor(
         coarseRegion?.let { region ->
             drawChip(canvas, "粗区域 · $region", width * .5f, margin + 34f, 0xCC081410.toInt(), 0xFFB8D9FF.toInt())
         }
+        historicalRecordLabel?.let { label ->
+            drawChip(canvas, label, width * .5f, margin + 76f, 0xEE392C18.toInt(), 0xFFFFD879.toInt())
+        }
         if (localCueHints.isNotEmpty()) {
-            drawChip(canvas, "本地观察 · ${localCueHints.joinToString("/")}", width * .5f, margin + 76f, 0xCC081410.toInt(), 0xFF8FF0C4.toInt())
+            drawChip(canvas, "本地观察 · ${localCueHints.joinToString("/")}", width * .5f, margin + if (historicalRecordLabel == null) 76f else 118f, 0xCC081410.toInt(), 0xFF8FF0C4.toInt())
         }
         val realityStatus = RealityEncounterPolicy.trackingHint(realityTrackingSnapshot, anchorRepositioning)
         realityStatus.takeIf { it.isNotBlank() && realityTrackingSnapshot.status != RealityTrackingStatus.STOPPED }?.let {
