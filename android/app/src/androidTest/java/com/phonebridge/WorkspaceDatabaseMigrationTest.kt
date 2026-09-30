@@ -29,7 +29,7 @@ class WorkspaceDatabaseMigrationTest {
 
     @Test
     fun sharedPrivacyMigrationFixtureMapsToAndroidSyncGate() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val context = InstrumentationRegistry.getInstrumentation().context
         val fixture = context.assets.open("privacy-overview.json").use {
             JSONObject(BufferedReader(InputStreamReader(it)).readText())
         }
@@ -73,7 +73,7 @@ class WorkspaceDatabaseMigrationTest {
 
     @Test
     fun androidDecryptsTheSharedCrossRuntimeLocalArchiveFixture() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val context = InstrumentationRegistry.getInstrumentation().context
         val fixture = context.assets.open("privacy-local-archive.json").use {
             JSONObject(BufferedReader(InputStreamReader(it)).readText())
         }
