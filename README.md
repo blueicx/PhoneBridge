@@ -297,4 +297,5 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 新增 `/api/goals` CRUD、`POST /api/goals/:id/draft` 和 `/accept`。AI 仅在用户点击请求时调用当前选中的 provider；失败/输出不合规时仅回退本地规则，不切换其他联网 provider。草案不持久化、不创建任务；provider 诊断审计限制为 provider ID、耗时、降级原因、结果状态，不记录目标正文、草案或密钥。
 - 删除目标会拒绝活跃任务并事务级联清除目标任务与关联 Attention、ActionRun、审计和时间线；删除 `tasks` 隐私类别则保留目标/里程碑文字并解绑任务。目标任务 ID 使用完整领域索引枚举，不受常规任务列表 200 条投影上限限制；接受接口同时校验 `goals` 与 `tasks` revision，阻止旧 outbox 在任务清理后重建任务。
 - 验证：目标/工作区/隐私/API 定向 Node **65/65**，Node 全量 **221/221**；相关 `node --check`、工作区性能预算、`scan_secrets.ps1` 与 `git diff --check` 通过。最终性能预算输出 `elapsedMs=2.203`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。
-- 当前仅完成服务端 B2。Android Room 镜像和沉浸抽屉在 B3，Web 目标工作台在 B4；未运行 ADB、未操作手机。GitHub Actions 将在本批推送后对最新 SHA 验收。
+- B2 源码提交 `32a052d6e3a57a5061e9307ee03307f74c882ead` 的 GitHub Actions [run 36667677629](https://github.com/blueicx/PhoneBridge/actions/runs/36667677629) 全部成功（23m40s），包含 Room emulator migration **7/7**、Lint、Debug 构建、签名解析、发布门禁、artifact 上传及干净工作树检查。内部 Debug artifact `phonebridge-debug-32a052d6e3a57a5061e9307ee03307f74c882ead` 为 **65,370,820 bytes**，ZIP SHA-256 `459dd29e8e9918da3bd1cb9c07f9af7f273e71333ff271fe768313df699a1279`；APK 未进入源码历史。
+- 当前仅完成服务端 B2。Android Room 镜像和沉浸抽屉在 B3，Web 目标工作台在 B4；未运行 ADB、未操作手机。后续文档收尾提交的 Actions 状态另行确认。
