@@ -498,8 +498,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 回归额外覆盖旧 outbox revision 不因首次 overview 被改写、用户选择后的新事件附未来 revision、overview 类别不完整时同步仍关闭；共享 `privacy-overview.json` 和 `privacy-event-revision.json` 由 Node/Kotlin 读取。
 - 节点与本机迁移选择不一致时，客户端在清理任何本机偏好/缓存前先拒绝该决策；冲突保持 fail-closed，不静默替用户清除数据，需显式排查后才能恢复同步。
 - 本机自动验收：Node `node --test` **195/195**；Android `:app:testDebugUnitTest` **149/149**、`:app:compileDebugAndroidTestKotlin`、`:app:lintDebug`（0 issues）和 `:app:assembleDebug` 全部成功；`node --check`、`scan_secrets.ps1`、`bench_workspace.ps1`、`git diff --check` 通过。性能预算输出 `elapsedMs=0.746`、完整快照 `1694 bytes`、摘要 `48 bytes`、快照缓存命中 `10000`、突发广播 `1`。
-- Android emulator 上的实际 Room v4→v5 SQLite migration / 仪器测试尚未在本机运行，`.github/workflows/ci.yml` 已配置在 API 34 emulator 执行；推送后须确认最新 Actions 成功才进入 Batch B。没有用本机仪器测试编译结果冒充模拟器执行通过。
+- Android emulator 上的实际 Room v4→v5 SQLite migration 已由 GitHub Actions API 34 emulator 执行通过：最新代码 SHA `6a84cbc67930a95bfb504adcfcccdf18a8b30ddb` 的第 3 次尝试完成 **7/7** instrumentation tests。没有用仪器测试编译结果冒充模拟器执行通过。
 - 本轮没有运行 ADB、连接手机、安装 APK、触碰或授予权限；二维码/真实连接与迁移确认操作仍待设备验收。当前正式 Release signing 仍无已验证的独立加密密钥恢复副本，故未生成正式签名 APK。
-- Batch A 本地验收已完成；源码提交/ref 与推送后的 Actions run 结果由随后的交付记录补齐（当前尚未触发 CI）。
+- Batch A 源码提交 `4d5b6dfaff963e7c0f4fcbba385f231db8e2241f` 已推送；随后 CI wrapper 修复 `f80dea0c2dcec1ec9d819f69295fa4628eb2dee6` 和 AndroidTest fixture/schema assets 修复 `6a84cbc67930a95bfb504adcfcccdf18a8b30ddb` 也已推送。GitHub Actions [run 36648683178](https://github.com/blueicx/PhoneBridge/actions/runs/36648683178) attempt 3 在最新代码 SHA 上全绿（27m15s）：Node 全量测试、Android JVM、workflow shell contract、Room emulator migration **7/7**、Lint、Debug 构建、签名解析、发布门禁、artifact 上传、`git diff --check` 和干净工作树检查全部通过。attempt 1/2 曾因 runner ADB 离线、模拟器图形缓冲错误及 APK 安装失败而未启动测试；这两次没有测试断言失败，attempt 3 已通过。
+- 内部 Debug artifact `phonebridge-debug-6a84cbc67930a95bfb504adcfcccdf18a8b30ddb` 已上传，大小 `65,370,382 bytes`；artifact ZIP SHA-256 为 `0a5c3fe0f54e2d0fa154499d2f93ea4f989fa4e431877ba935c55ec6f2402950`，可从上述 Actions run 下载，未进入源码历史。本轮没有运行 ADB、安装 APK 或操作手机；真实设备迁移确认、扫码/连接及正式签名仍待验收。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。

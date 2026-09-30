@@ -79,7 +79,8 @@
 - [x] 新增共享 fixture `protocol-fixtures/privacy-overview.json` 与 `protocol-fixtures/privacy-event-revision.json`；Node 和 Kotlin 两端读取同一 fixture 验证字段与旧字段兼容。
 - [x] 增加 `POST /api/privacy/migration/resolve`，只接受旧类别和 `clear|keep`；Android 先将本机清理/隔离与选择持久化，再幂等确认服务端迁移选择。进程在两步之间退出后，重连可安全重试；不同决策重放返回冲突。接口不替代本机数据处理。
 - [x] 运行 `node --test server/*.test.js` 与 `.gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`。检查 `git diff --check` 和密钥/Token 扫描。
-- [x] `README.md` 与 `HANDOFF.md` 已记录 revision 语义、迁移确认、加密隔离、验证结果和实机待验收项；批次 A commit/push 及最新 Actions emulator migration 验收待完成，之后再进入批次 B。
+- [x] `README.md` 与 `HANDOFF.md` 已记录 revision 语义、迁移确认、加密隔离、验证结果和实机待验收项；Batch A 源码 `4d5b6df`、CI wrapper 修复 `f80dea0` 与 AndroidTest assets 修复 `6a84cbc` 均已推送。最新代码 SHA `6a84cbc67930a95bfb504adcfcccdf18a8b30ddb` 的 GitHub Actions [run 36648683178](https://github.com/blueicx/PhoneBridge/actions/runs/36648683178) attempt 3 全绿，Room emulator migration 7/7。
+- [ ] 本次交接证据补录提交并推送后，确认新 HEAD 的 Actions 全绿，再开始批次 B。
 
 ## 批次 B：可选日常活动与用户确认目标板
 
