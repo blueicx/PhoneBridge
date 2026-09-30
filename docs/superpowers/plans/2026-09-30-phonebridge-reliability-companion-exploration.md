@@ -80,7 +80,7 @@
 - [x] 增加 `POST /api/privacy/migration/resolve`，只接受旧类别和 `clear|keep`；Android 先将本机清理/隔离与选择持久化，再幂等确认服务端迁移选择。进程在两步之间退出后，重连可安全重试；不同决策重放返回冲突。接口不替代本机数据处理。
 - [x] 运行 `node --test server/*.test.js` 与 `.gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`。检查 `git diff --check` 和密钥/Token 扫描。
 - [x] `README.md` 与 `HANDOFF.md` 已记录 revision 语义、迁移确认、加密隔离、验证结果和实机待验收项；Batch A 源码 `4d5b6df`、CI wrapper 修复 `f80dea0` 与 AndroidTest assets 修复 `6a84cbc` 均已推送。最新代码 SHA `6a84cbc67930a95bfb504adcfcccdf18a8b30ddb` 的 GitHub Actions [run 36648683178](https://github.com/blueicx/PhoneBridge/actions/runs/36648683178) attempt 3 全绿，Room emulator migration 7/7。
-- [ ] 本次交接证据补录提交并推送后，确认新 HEAD 的 Actions 全绿，再开始批次 B。
+- [x] 交接证据补录提交并推送后，最新 HEAD 的 Actions 全绿（run `36655906304`），再开始批次 B。
 
 ## 批次 B：可选日常活动与用户确认目标板
 
@@ -90,12 +90,12 @@
 
 **接入文件：** `server/index.js`、`server/enhancement-api.test.js`
 
-- [ ] 先写测试定义三种固定活动：专注计时、无需权限的散步观察、文本睡前回顾。覆盖创建、暂停/继续、跳过、完成、中断、进程重启、重复 `eventId`、非法状态转换和文本长度上限。
-- [ ] 实现持久化 `DailyRoutinesStore`，仅保存活动记录和用户主动输入；不创建连续签到、逾期惩罚、强制打卡或默认主动提醒，不自动写入长期记忆。
-- [ ] 增加接口：`GET /api/routines` 返回活动目录、当前未结束条目及历史分页；`POST /api/routines/:id/events` 接收 `{eventId, action, occurredAt, elapsedSeconds?, reflection?}`。允许动作仅为 `start|pause|resume|skip|finish|interrupt`，每个 eventId 幂等；服务器校验时序和转换。
-- [ ] 给 `PrivacyCenter` 注册 `routines` 类别 adapter，准确计数、加密导出、删除及类别 revision；本批次新增的日常活动数据在客户端也归入同一隐私类别。
-- [ ] 将实时写请求包入既有 `beginMutation()` 隐私删除互斥门，删除过程中返回可重试 409，不允许删除与创建竞态。
-- [ ] 运行 `node --test server/daily-routines.test.js server/privacy-center.test.js server/enhancement-api.test.js`。
+- [x] 先写测试定义三种固定活动：专注计时、无需权限的散步观察、文本睡前回顾。覆盖创建、暂停/继续、跳过、完成、中断、重启恢复、重复 `eventId`、非法状态转换和文本长度上限。
+- [x] 实现持久化 `DailyRoutinesStore`，只保存白名单活动记录、事件去重收据和用户主动输入；不创建连续签到、逾期惩罚、强制打卡或默认主动提醒，不自动写入长期记忆。
+- [x] 增加接口：`GET /api/routines` 返回活动目录、当前未结束条目及历史分页；`POST /api/routines/:id/events` 接收 `{eventId, action, occurredAt, elapsedSeconds?, reflection?}`，并回传 `privacyRevision`。允许动作仅为 `start|pause|resume|skip|finish|interrupt`，eventId 幂等，校验时序和状态转换。
+- [x] 给服务端 `PrivacyCenter` 注册 `routines` 类别 adapter，准确计数、加密导出、删除及类别 revision。Android Room/outbox 镜像归类与本机清理在 B3 实施，不属于本批服务端范围。
+- [x] 日常活动 POST 复用 HTTP 入口的 `beginMutation()` 隐私删除互斥门；删除进行中返回可重试 409，revision 栅栏阻止旧事件在删除后重放。集成测试验证在途写、删除等待和新写拒绝。
+- [x] 运行 `node --test server/daily-routines.test.js server/privacy-center.test.js server/enhancement-api.test.js`（27/27），并运行 Node 全量测试（202/202）、相关 `node --check` 与 `git diff --check`。
 
 ### B2. 目标草案、确认与关联任务
 

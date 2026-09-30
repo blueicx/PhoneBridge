@@ -504,3 +504,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 内部 Debug artifact `phonebridge-debug-6a84cbc67930a95bfb504adcfcccdf18a8b30ddb` 已上传，大小 `65,370,382 bytes`；artifact ZIP SHA-256 为 `0a5c3fe0f54e2d0fa154499d2f93ea4f989fa4e431877ba935c55ec6f2402950`，可从上述 Actions run 下载，未进入源码历史。本轮没有运行 ADB、安装 APK 或操作手机；真实设备迁移确认、扫码/连接及正式签名仍待验收。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
+
+## 41. 2026-09-30 批次 B1：服务端日常活动领域与 API
+
+- 新增 `server/daily-routines.js` / `.test.js`。`DailyRoutinesStore` 使用运行时持久化键 `daily-routines`，目录仅含专注计时、无需位置/相机权限的散步观察、纯文本睡前回顾；状态为 active/paused/finished/skipped/interrupted。活动时间必须递增，累计 elapsed 不回退，回顾仅限 bedtime finish 且最多 1000 个 Unicode 字符。
+- `GET /api/routines?cursor=N&limit=N` 返回 catalog、current、history、nextCursor、revision、privacyRevision 与迁移状态。`POST /api/routines/:id/events` 支持 `start|pause|resume|skip|finish|interrupt`；eventId 重放幂等，复用 ID 但内容不同会 409。删除 `routines` 后，旧或缺失 revision 的直连请求分别返回 `privacy_revision_stale:routines` / `privacy_revision_required:routines`，同步当前 revision 后才能新建。
+- PrivacyCenter 的 routines adapter 现按活动条目准确计数、导出可恢复记录/去重收据并清除数据；保留现有 encrypted export 与类别 revision 语义。所有写请求经 HTTP 全局 `beginMutation()`，API 集成测试覆盖在途 body、隐私删除等待、删除期间新写 409、删除后旧事件拒绝。
+- 领域单测覆盖全部动作、非法转换、事件重放与真实运行时文件重启恢复、保存失败回滚、历史分页、字段白名单恢复、elapsed/time 约束和文本上限；API 测试验证加密导出不泄漏明文、回顾不进入长期记忆、类别删除与 revision 栅栏。
+- 验证：`node --test server/daily-routines.test.js server/privacy-center.test.js server/enhancement-api.test.js` **28/28**；`node --test server/*.test.js` **203/203**；`node --check server/daily-routines.js`、`node --check server/index.js`、`git diff --check` 通过。推送后的 GitHub Actions 状态须以该批最新 SHA 另行确认。
+- 此为服务端 B1；Android 本地镜像/outbox/沉浸抽屉尚未做（B3），Web UI 尚未做（B4）。本轮未运行 ADB、未安装 APK、未申请手机权限；实机状态不作完成声明。
+
+实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。

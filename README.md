@@ -274,6 +274,14 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - Android 本机删除未成功时会暂停 outbox 恢复发送，待下次成功对账服务端删除收据后再同步，避免被删数据重新上传。
 - 批次验证见 [`docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md`](docs/superpowers/plans/2026-09-29-phonebridge-privacy-and-recovery.md)；本批 CI [run 36599821041](https://github.com/blueicx/PhoneBridge/actions/runs/36599821041) 已通过并上传内部 Debug artifact。手机上的隐私对话框与系统文件选择器尚待点击验收。
 
+## 2026-09-30 批次 B1：可选日常活动
+
+- 新增持久化服务端 `DailyRoutinesStore` 和三种固定活动：专注计时、无需定位/相机权限的散步观察、纯文本睡前回顾。支持开始、暂停、继续、跳过、完成和中断；活动记录可分页恢复，不含签到连胜、逾期惩罚或默认主动提醒。
+- `GET /api/routines?cursor=0&limit=20` 返回目录、未结束条目、历史和 `privacyRevision`；`POST /api/routines/:id/events` 按 `eventId` 幂等，校验动作、时间顺序、elapsed 值及状态转换。睡前回顾文本上限 1000 个 Unicode 字符，只在用户完成活动时保存，不写入长期记忆。
+- routines 隐私类别现提供准确活动数、加密导出和删除；删除提升类别 revision，缺失/过期 revision 的旧请求会收到可重试 409。写操作复用全局 `beginMutation()`，隐私删除等待已入场请求并拒绝后续写入。
+- 当前 B1 只接服务端；Android Room 镜像、离线 outbox 和抽屉入口留在 B3，Web 卡片留在 B4。未请求位置/相机权限，也未运行手机验收。
+- 验证：B1 定向 Node **28/28**，服务端全量 Node **203/203**，`node --check` 与 `git diff --check` 通过。GitHub Actions 将在本批推送后对最新 SHA 独立验收。
+
 ## 2026-09-30 隐私 revision 与旧客户端迁移
 
 - 服务端按六个隐私类别维护单调 revision；旧审计无法无歧义迁移时，按旧类别逐项保留或清除确认。已确认选择可幂等重试，冲突选择明确拒绝。

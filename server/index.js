@@ -23,6 +23,7 @@ const { DeviceSimulator } = require('./device-simulator');
 const { MemoryStore } = require('./ai-memory');
 const { RealityEngine } = require('./reality-engine');
 const { MoteGrowthStore } = require('./mote-growth');
+const { DailyRoutinesStore } = require('./daily-routines');
 const { createRealityCoordinator } = require('./reality-coordinator');
 const { ProactivePolicy } = require('./proactive-policy');
 const { PairingManager } = require('./pairing');
@@ -311,6 +312,7 @@ const healthChecks = new HealthChecks({
 });
 const memoryStore = new MemoryStore({ persistence: runtimePersistence });
 const realityEngine = new RealityEngine({ persistence: runtimePersistence });
+const dailyRoutinesStore = new DailyRoutinesStore({ persistence: runtimePersistence });
 const moteGrowthStore = new MoteGrowthStore({ persistence: runtimePersistence });
 const moteStoryStore = new MoteStoryStore({ persistence: runtimePersistence });
 const realityCoordinator = createRealityCoordinator({
@@ -435,9 +437,9 @@ const privacyCenter = new PrivacyCenter({
     },
     routines: {
       label: '日常与习惯',
-      count: () => 0,
-      export: () => [],
-      clear: () => ({ deleted: 0 }),
+      count: () => dailyRoutinesStore.count(),
+      export: () => dailyRoutinesStore.export(),
+      clear: () => dailyRoutinesStore.clear(),
     },
     goals: {
       label: '个人目标',
@@ -2223,6 +2225,50 @@ const handleHttpRequest = async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/privacy/overview' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, ...privacyCenter.overview() });
+    }
+    if (parsedUrl.pathname === '/api/routines' && req.method === 'GET') {
+      try {
+        const result = dailyRoutinesStore.list({
+          cursor: parsedUrl.searchParams.get('cursor') ?? 0,
+          limit: parsedUrl.searchParams.get('limit') ?? 20,
+        });
+        return sendJson(res, 200, {
+          ok: true,
+          ...result,
+          privacyRevision: privacyCenter.categoryRevision('routines'),
+          migrationRequired: privacyCenter.isMigrationRequired('routines'),
+        });
+      } catch (error) {
+        return sendJson(res, error.statusCode || 400, { ok: false, code: error.code || 'invalid_query', error: error.message });
+      }
+    }
+    const routineEventsMatch = parsedUrl.pathname.match(/^\/api\/routines\/([^/]+)\/events$/);
+    if (routineEventsMatch && req.method === 'POST') {
+      try {
+        const routineId = decodeURIComponent(routineEventsMatch[1]);
+        const payload = await readJson(req);
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+          return sendJson(res, 400, { ok: false, code: 'invalid_event', error: 'event body must be an object' });
+        }
+        const categoryRevision = privacyCenter.categoryRevision('routines');
+        if (privacyCenter.isMigrationRequired('routines')) {
+          return sendJson(res, 409, { ok: false, code: 'privacy_migration_required:routines', error: 'routine data migration requires a user decision', retryable: true, requiredPrivacyRevision: categoryRevision });
+        }
+        if (payload.privacyRevision === undefined && categoryRevision > 0) {
+          return sendJson(res, 409, { ok: false, code: 'privacy_revision_required:routines', error: 'privacyRevision is required for routine events', retryable: true, requiredPrivacyRevision: categoryRevision });
+        }
+        if (payload.privacyRevision !== undefined && (!Number.isSafeInteger(payload.privacyRevision) || payload.privacyRevision !== categoryRevision)) {
+          const code = Number.isSafeInteger(payload.privacyRevision) && payload.privacyRevision < categoryRevision
+            ? 'privacy_revision_stale:routines'
+            : 'privacy_revision_mismatch:routines';
+          return sendJson(res, 409, { ok: false, code, error: 'routine event privacy revision does not match the current category revision', retryable: true, requiredPrivacyRevision: categoryRevision });
+        }
+        const result = dailyRoutinesStore.recordEvent(routineId, payload);
+        const status = result.duplicate ? 200 : result.action === 'start' ? 201 : 200;
+        return sendJson(res, status, { ok: true, ...result });
+      } catch (error) {
+        return sendJson(res, error.statusCode || 400, { ok: false, code: error.code || 'invalid_event', error: error.message });
+      }
     }
     if (parsedUrl.pathname === '/api/privacy/migration/resolve' && req.method === 'POST') {
       try {

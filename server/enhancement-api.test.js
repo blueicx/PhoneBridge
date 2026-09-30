@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -34,6 +35,62 @@ async function waitForServer(child) {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   throw new Error('server did not start');
+}
+
+function beginPartialRoutineRequest(pathname, payload) {
+  const body = Buffer.from(JSON.stringify(payload));
+  let resolveResponse;
+  const response = new Promise(resolve => { resolveResponse = resolve; });
+  const req = http.request(`${BASE}${pathname}`, {
+    method: 'POST',
+    headers: {
+      'x-phonebridge-token': TOKEN,
+      'content-type': 'application/json',
+      'content-length': body.length,
+    },
+  }, res => {
+    let text = '';
+    res.setEncoding('utf8');
+    res.on('data', chunk => { text += chunk; });
+    res.on('end', () => {
+      let parsed;
+      try { parsed = JSON.parse(text); } catch (_) { parsed = text; }
+      resolveResponse({ status: res.statusCode, body: parsed });
+    });
+  });
+  req.on('error', error => resolveResponse({ transportError: error }));
+  req.flushHeaders();
+  const splitAt = Math.max(1, Math.floor(body.length / 2));
+  const bodyFlushed = new Promise((resolve, reject) => {
+    req.write(body.subarray(0, splitAt), error => error ? reject(error) : resolve());
+  });
+  let finished = false;
+  return {
+    response,
+    bodyFlushed,
+    finish() {
+      if (finished) return;
+      finished = true;
+      req.end(body.subarray(splitAt));
+    },
+  };
+}
+
+async function waitForPendingPrivacyDelete(runtimeDir, requestId) {
+  const deadline = Date.now() + 5000;
+  const file = path.join(runtimeDir, 'privacy-audit.json');
+  while (Date.now() < deadline) {
+    try {
+      const envelope = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const receipt = envelope.state?.receipts?.find(item => item.requestId === requestId);
+      if (receipt?.status === 'pending') return;
+      if (receipt?.status === 'completed') throw new Error('privacy deletion completed before the held routine write finished');
+    } catch (error) {
+      if (error.message.includes('completed before')) throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('privacy deletion did not enter its pending state');
 }
 
 test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { timeout: 25_000 }, async () => {
@@ -183,7 +240,133 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     assert.equal(privacyBefore.response.status, 200);
     assert.equal(privacyBefore.body.categories.memories.count, 1);
     assert.equal(privacyBefore.body.categories.conversations.count, 0);
+    assert.equal(privacyBefore.body.categories.routines.count, 0);
     assert.ok(privacyBefore.body.excluded.includes('Provider 密钥'));
+
+    const routineCatalog = await request('/api/routines');
+    assert.equal(routineCatalog.response.status, 200);
+    assert.deepEqual(routineCatalog.body.catalog.map(item => item.id), ['focus-timer', 'walk-observation', 'bedtime-review']);
+    assert.ok(routineCatalog.body.catalog.every(item => item.permissionRequired === false));
+    const routineAt = Date.now();
+    const routineEvent = (eventId, action, offsetSeconds, extra = {}) => ({
+      eventId, action, occurredAt: new Date(routineAt + offsetSeconds * 1000).toISOString(), ...extra
+    });
+    const focusStart = routineEvent('api-routine-focus-start', 'start', 0);
+    const focusCreated = await request('/api/routines/focus-timer/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(focusStart)
+    });
+    assert.equal(focusCreated.response.status, 201, JSON.stringify(focusCreated.body));
+    assert.equal(focusCreated.body.entry.status, 'active');
+    const focusReplay = await request('/api/routines/focus-timer/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(focusStart)
+    });
+    assert.equal(focusReplay.response.status, 200);
+    assert.equal(focusReplay.body.duplicate, true);
+    assert.equal(focusReplay.body.entry.id, focusCreated.body.entry.id);
+    const focusPaused = await request('/api/routines/focus-timer/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(routineEvent('api-routine-focus-pause', 'pause', 10, { elapsedSeconds: 60 }))
+    });
+    assert.equal(focusPaused.body.entry.status, 'paused');
+    await request('/api/routines/focus-timer/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(routineEvent('api-routine-focus-resume', 'resume', 20, { elapsedSeconds: 60 }))
+    });
+    const focusFinished = await request('/api/routines/focus-timer/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(routineEvent('api-routine-focus-finish', 'finish', 30, { elapsedSeconds: 120 }))
+    });
+    assert.equal(focusFinished.body.entry.status, 'finished');
+
+    await request('/api/routines/bedtime-review/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(routineEvent('api-routine-bed-start', 'start', 40))
+    });
+    const bedtimeReflection = '今天由我决定是否记录的睡前回顾。';
+    const bedtimeFinished = await request('/api/routines/bedtime-review/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(routineEvent('api-routine-bed-finish', 'finish', 50, { reflection: bedtimeReflection }))
+    });
+    assert.equal(bedtimeFinished.body.entry.reflection, bedtimeReflection);
+    assert.equal((await request(`/api/memories?query=${encodeURIComponent(bedtimeReflection)}`)).body.memories.length, 0);
+    const routineHistory = await request('/api/routines?cursor=0&limit=1');
+    assert.equal(routineHistory.body.history.length, 1);
+    assert.equal(routineHistory.body.nextCursor, 1);
+    assert.equal(routineHistory.body.current.length, 0);
+
+    const invalidRoutineTransition = await request('/api/routines/focus-timer/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(routineEvent('api-routine-illegal-pause', 'pause', 60))
+    });
+    assert.equal(invalidRoutineTransition.response.status, 409);
+    const invalidRoutine = await request('/api/routines/not-a-routine/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(routineEvent('api-routine-unknown', 'start', 60))
+    });
+    assert.equal(invalidRoutine.response.status, 404);
+
+    const routinesPrivacy = await request('/api/privacy/overview');
+    assert.equal(routinesPrivacy.body.categories.routines.count, 2);
+    const routinesExport = await request('/api/privacy/export', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ categories: ['routines'], passphrase: 'phonebridge test passphrase' })
+    });
+    assert.equal(routinesExport.response.status, 200);
+    assert.equal(JSON.stringify(routinesExport.body).includes(bedtimeReflection), false);
+    const routinesArchive = decryptArchive(routinesExport.body.archive, 'phonebridge test passphrase');
+    assert.ok(routinesArchive.data.routines.entries.some(entry => entry.reflection === bedtimeReflection));
+    const heldRoutineEvent = {
+      ...routineEvent('api-routine-held-during-delete', 'start', 55),
+      privacyRevision: routinesPrivacy.body.categories.routines.revision,
+    };
+    const heldRoutineWrite = beginPartialRoutineRequest('/api/routines/focus-timer/events', heldRoutineEvent);
+    let deletionPromise;
+    try {
+      await heldRoutineWrite.bodyFlushed;
+      await new Promise(resolve => setTimeout(resolve, 75));
+      deletionPromise = request('/api/privacy/delete', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ requestId: 'delete-routine-001', categories: ['routines'], confirmation: 'DELETE SELECTED DATA' })
+      });
+      await waitForPendingPrivacyDelete(runtimeDir, 'delete-routine-001');
+      const blockedRoutineWrite = await request('/api/routines/walk-observation/events', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...routineEvent('api-routine-blocked-during-delete', 'start', 56), privacyRevision: 0 })
+      });
+      assert.equal(blockedRoutineWrite.response.status, 409);
+      assert.equal(blockedRoutineWrite.body.retryable, true);
+    } finally {
+      heldRoutineWrite.finish();
+    }
+    const [heldRoutineResponse, deletedRoutinesResult] = await Promise.all([heldRoutineWrite.response, deletionPromise]);
+    assert.equal(heldRoutineResponse.transportError, undefined, String(heldRoutineResponse.transportError || ''));
+    assert.equal(heldRoutineResponse.status, 409, JSON.stringify(heldRoutineResponse.body));
+    assert.equal(heldRoutineResponse.body.code, 'privacy_revision_stale:routines');
+    assert.equal(deletedRoutinesResult.response.status, 200);
+    assert.equal(deletedRoutinesResult.body.receipt.categoryRevisions.routines, 1);
+    assert.equal((await request('/api/routines')).body.history.length, 0);
+    assert.equal((await request('/api/privacy/overview')).body.categories.routines.count, 0);
+
+    const staleRoutineReplay = await request('/api/routines/focus-timer/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(heldRoutineEvent)
+    });
+    assert.equal(staleRoutineReplay.response.status, 409);
+    assert.equal(staleRoutineReplay.body.code, 'privacy_revision_stale:routines');
+    const missingRoutineRevision = await request('/api/routines/walk-observation/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(routineEvent('api-routine-missing-revision', 'start', 57))
+    });
+    assert.equal(missingRoutineRevision.response.status, 409);
+    assert.equal(missingRoutineRevision.body.code, 'privacy_revision_required:routines');
+    const currentRoutineEvent = {
+      ...routineEvent('api-routine-current-revision', 'start', 58),
+      privacyRevision: 1,
+    };
+    const currentRoutineWrite = await request('/api/routines/walk-observation/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(currentRoutineEvent)
+    });
+    assert.equal(currentRoutineWrite.response.status, 201);
+    assert.equal((await request('/api/routines')).body.privacyRevision, 1);
 
     const privacySession = await request('/api/workspace/sessions', {
       method: 'POST', headers: { 'content-type': 'application/json' },
