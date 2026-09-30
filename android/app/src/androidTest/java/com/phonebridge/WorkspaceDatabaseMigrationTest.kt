@@ -193,7 +193,7 @@ class WorkspaceDatabaseMigrationTest {
                 assertTrue(it.isNull(1))
                 assertTrue(it.isNull(2))
             }
-            migrated.query("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workspace_routines','workspace_goals','workspace_milestones')").use {
+            migrated.query("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workspace_routine_entries','workspace_goals','workspace_milestones')").use {
                 assertTrue(it.moveToFirst())
                 assertEquals(3, it.getInt(0))
             }
