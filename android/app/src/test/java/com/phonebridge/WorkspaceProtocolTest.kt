@@ -1,6 +1,5 @@
 package com.phonebridge
 
-import androidx.room.migration.Migration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -163,6 +162,17 @@ class WorkspaceProtocolTest {
             val expectedRevisions = PrivacyRevisionWire.fromValue(eventJson["privacyRevisions"])
             assertEquals(caseId, expectedRevisions, event.privacyRevisions)
         }
+    }
+
+    @Test
+    fun routineOutboxEventIsFencedByTheRoutinesPrivacyCategory() {
+        val classification = PrivacyDataPolicy.classifyEvent(
+            WorkspaceEventTypes.ROUTINE_EVENT,
+            parseWorkspaceJsonObject("""{"routineId":"focus-timer","action":"start","eventId":"routine-event-001"}""")
+        )
+
+        assertEquals(listOf("routines"), classification?.categories)
+        assertNull(PrivacyDataPolicy.classifyEvent("routine.unreviewed", emptyMap()))
     }
 
     @Test
@@ -415,12 +425,13 @@ class WorkspaceProtocolTest {
 
     @Test
     fun workspaceDatabaseDeclaresPrivacyFenceMigration() {
-        assertEquals(5, WORKSPACE_DB_VERSION)
+        assertEquals(6, WORKSPACE_DB_VERSION)
         val migrations = WorkspaceRepository.MIGRATIONS.toList()
         assertTrue(migrations.any { it.startVersion == 1 && it.endVersion == 2 })
         assertTrue(migrations.any { it.startVersion == 3 && it.endVersion == 4 })
         assertTrue(migrations.any { it.startVersion == 4 && it.endVersion == 5 })
-        assertTrue(migrations.all { it is Migration })
+        assertTrue(migrations.any { it.startVersion == 5 && it.endVersion == 6 })
+        assertTrue(migrations.isNotEmpty())
     }
 
     private fun fixtureObject(value: Any?): Map<String, Any?> =

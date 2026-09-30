@@ -6,14 +6,37 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+import java.util.Locale
+
+data class WorkspaceHttpResponse(val statusCode: Int, val body: String) {
+    val isSuccessful: Boolean get() = statusCode in 200..299
+}
 
 class WorkspaceClient {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
-        .build()
+    private val clientsByFingerprint = ConcurrentHashMap<String, OkHttpClient>()
 
-    fun request(serverUrl: String, token: String, path: String, method: String = "GET", payload: JSONObject? = null): Result<JSONObject> = runCatching {
+    internal fun clientForFingerprint(certificateFingerprint: String?): OkHttpClient {
+        val fingerprint = certificateFingerprint?.trim()?.takeIf(String::isNotEmpty)
+            ?.lowercase(Locale.ROOT)
+            .orEmpty()
+        return clientsByFingerprint.computeIfAbsent(fingerprint) {
+            val builder = OkHttpClient.Builder()
+                .connectTimeout(6, TimeUnit.SECONDS)
+                .readTimeout(120, TimeUnit.SECONDS)
+            if (it.isNotEmpty()) PairingTls.configure(builder, it)
+            builder.build()
+        }
+    }
+
+    fun execute(
+        serverUrl: String,
+        token: String,
+        path: String,
+        method: String = "GET",
+        payload: JSONObject? = null,
+        certificateFingerprint: String? = null
+    ): Result<WorkspaceHttpResponse> = runCatching {
         val base = serverUrl.trim()
             .replaceFirst("^ws://".toRegex(), "http://")
             .replaceFirst("^wss://".toRegex(), "https://")
@@ -26,11 +49,21 @@ class WorkspaceClient {
         } else if (method != "GET") {
             requestBuilder.method(method, "{}".toRequestBody(JSON_MEDIA_TYPE))
         }
-        client.newCall(requestBuilder.build()).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
-            JSONObject(text.ifBlank { "{}" })
+        clientForFingerprint(certificateFingerprint).newCall(requestBuilder.build()).execute().use { response ->
+            WorkspaceHttpResponse(response.code, response.body?.string().orEmpty())
         }
+    }
+
+    fun request(
+        serverUrl: String,
+        token: String,
+        path: String,
+        method: String = "GET",
+        payload: JSONObject? = null,
+        certificateFingerprint: String? = null
+    ): Result<JSONObject> = execute(serverUrl, token, path, method, payload, certificateFingerprint).map { response ->
+        if (!response.isSuccessful) error("HTTP ${response.statusCode}: ${response.body.take(180)}")
+        JSONObject(response.body.ifBlank { "{}" })
     }
 
     companion object {

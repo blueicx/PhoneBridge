@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "entry": {
+    "id": "routine_fixture_001",
+    "routineId": "focus-timer",
+    "title": "专注计时",
+    "status": "active",
+    "startedAt": "2026-09-30T08:00:00.000Z",
+    "updatedAt": "2026-09-30T08:00:00.000Z",
+    "lastEventAt": "2026-09-30T08:00:00.000Z",
+    "elapsedSeconds": 0,
+    "revision": 5,
+    "futureField": "ignored"
+  },
+  "action": "start",
+  "duplicate": false,
+  "revision": 5
+}

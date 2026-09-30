@@ -118,14 +118,14 @@
 
 **接入文件：** `WorkspaceEntities.kt`、`WorkspaceRepository.kt`、`WorkspaceProtocol.kt`、`WorkspaceClient.kt`、`MainActivity.kt`。
 
-- [ ] 先写纯 JVM 测试覆盖 routine 状态转换/中断重启、goal 草案编辑与确认分离、未知字段兼容、revision/eventId 去重和 task-goal 映射。
-- [ ] Room 升级至 v6：加入 routine entry、goal、milestone 本地镜像表；给本地 task 镜像增加 nullable `goalId`/`milestoneId`。Migration 5→6 用默认值安全迁移 v5 数据，不 destructive migration，并为 MigrationTestHelper 增加 v5→v6 用例。
-- [ ] Repository 提供读取/更新/删除、事务保存已确认 goal+milestone+tasks、解绑任务引用、清理 routines/goals 隐私分类及 outbox 的明确方法。草案仅保存在当前 UI 内存，不写长期存储。
-- [ ] 增加 HTTP 请求/响应模型和事件 fixture。routine 操作离线时先本地标注“待同步”；收到业务拒绝显示原因，不把传输成功当作业务成功。
-- [ ] Android 抽屉中新增“日常”和“目标”入口，使用现有 View/XML/协调风格，不替换沉浸启动。专注计时可暂停/跳过/中断；散步观察不请求定位/相机；睡前回顾为纯文本且默认不进长期记忆。
-- [ ] 目标 UI 允许建立目标、显式请求草案、编辑/删除建议步骤、逐条确认，然后显示与普通任务绑定的进度。退出草案流程不创建目标任务。
-- [ ] Room 测试覆盖从 v5 迁移、goal cascade、本地 routine/goals 隐私清理和 pending 状态。
-- [ ] 运行 `.gradlew.bat :app:testDebugUnitTest`。
+- [x] 先写纯 JVM 测试覆盖 routine 状态转换/中断重启、goal 草案编辑与确认分离、未知字段兼容、revision/eventId 去重和 task-goal 映射。
+- [x] Room 升级至 v6：加入 routine entry、goal、milestone 本地镜像表；给本地 task 镜像增加 nullable `goalId`/`milestoneId`。Migration 5→6 用默认值安全迁移 v5 数据，不 destructive migration，并为 MigrationTestHelper 增加 v5→v6 用例。
+- [x] Repository 提供读取/更新/删除、事务保存已确认 goal+milestone+tasks、解绑任务引用、清理 routines/goals 隐私分类及 outbox 的明确方法。草案仅保存在当前 UI 内存，不写长期存储。
+- [x] 增加 HTTP 请求/响应模型和事件 fixture。routine 操作离线时先本地标注“待同步”；收到业务拒绝显示原因，不把传输成功当作业务成功。
+- [x] Android 抽屉中新增“日常”和“目标”入口，使用现有 View/XML/协调风格，不替换沉浸启动。专注计时可暂停/跳过/中断；散步观察不请求定位/相机；睡前回顾为纯文本且默认不进长期记忆。
+- [x] 目标 UI 允许建立目标、显式请求草案、编辑/删除建议步骤、逐条确认，然后显示与普通任务绑定的进度。退出草案流程不创建目标任务。
+- [x] Room 测试覆盖从 v5 迁移、goal cascade、本地 routine/goals 隐私清理和 pending 状态；测试源码已编译，模拟器执行留待本批 GitHub Actions。
+- [x] 运行 `.gradlew.bat :app:testDebugUnitTest`；扩展验收同时运行 AndroidTest 编译、Lint 和 Debug 构建。本机结果已通过，最新 SHA 的 GitHub Actions 仍待验收。
 
 ### B4. Web 工作台与跨端协议一致性
 

@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "goalId": "goal-fixture-001",
+  "steps": [
+    {
+      "title": "选择一个最小行动",
+      "description": "控制在十五分钟内并能观察结果"
+    },
+    {
+      "title": "完成后记录实际结果",
+      "description": "仅在用户确认草案后创建普通任务"
+    }
+  ],
+  "providerId": "local",
+  "fallbackProvider": "local",
+  "fallbackReason": "provider_unavailable",
+  "privacyRevision": 6,
+  "unknownExtension": "ignored"
+}

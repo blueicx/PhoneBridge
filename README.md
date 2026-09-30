@@ -299,3 +299,14 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 验证：目标/工作区/隐私/API 定向 Node **65/65**，Node 全量 **221/221**；相关 `node --check`、工作区性能预算、`scan_secrets.ps1` 与 `git diff --check` 通过。最终性能预算输出 `elapsedMs=2.203`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。
 - B2 源码提交 `32a052d6e3a57a5061e9307ee03307f74c882ead` 的 GitHub Actions [run 36667677629](https://github.com/blueicx/PhoneBridge/actions/runs/36667677629) 全部成功（23m40s），包含 Room emulator migration **7/7**、Lint、Debug 构建、签名解析、发布门禁、artifact 上传及干净工作树检查。内部 Debug artifact `phonebridge-debug-32a052d6e3a57a5061e9307ee03307f74c882ead` 为 **65,370,820 bytes**，ZIP SHA-256 `459dd29e8e9918da3bd1cb9c07f9af7f273e71333ff271fe768313df699a1279`；APK 未进入源码历史。
 - 当前仅完成服务端 B2。Android Room 镜像和沉浸抽屉在 B3，Web 目标工作台在 B4；未运行 ADB、未操作手机。后续文档收尾提交的 Actions 状态另行确认。
+
+## 2026-09-30 批次 B3：Android 日常与目标镜像
+
+- Android Room 升级至 v6，持久化日常记录、目标、里程碑及普通任务关联；5→6 migration 保留既有 task 行。routine outbox 经带证书指纹校验的 HTTPS 请求同步，分别呈现待同步、服务端确认和业务拒绝，不把 HTTP 传输成功当业务成功。
+- 沉浸工具抽屉新增“日常”和“目标”。专注计时支持暂停/继续/跳过/完成/中断；散步观察不请求定位或相机；睡前回顾是可选纯文本，不写入长期记忆。离线队列依赖此前已同步的完整隐私概览和类别 revision，缺少安全版本时不会盲目发送。
+- 目标支持节点创建、显式请求当前 provider 的草案、编辑/删除步骤并逐条确认；只有确认后才创建普通 Workspace task。Room 保存 goal/milestone/task 同一确认结果，任务状态变化回写里程碑；目标任务按 `goals`+`tasks` 两类隐私 revision 分类。
+- `WorkspaceClient` 对相同 TLS 指纹复用 OkHttp 客户端和连接池，证书指纹不同则隔离客户端配置。
+- 本机验证：Node **223/223**；Android JVM **164/164**；`:app:compileDebugAndroidTestKotlin`、`:app:lintDebug`（0 lint errors）和 `:app:assembleDebug` 全部成功；秘密扫描、Android CI workflow contract、APK signer parser、Debug APK release gate、`git diff --check` 通过。性能预算：`elapsedMs=0.668`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。
+- Android Room v5→v6 instrumentation 测试已编写并在本机成功编译，但本机没有运行模拟器/ADB；由本批推送后的 GitHub Actions API 34 emulator 执行。手机未触碰、未安装、未授予权限；实机体验与正式 Release 签名仍待各自门槛。
+
+实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。

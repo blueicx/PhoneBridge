@@ -186,6 +186,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var focusRealityButton: Button
     private lateinit var focusCommandButton: Button
     private lateinit var focusStageButton: Button
+    private lateinit var focusRoutinesButton: Button
+    private lateinit var focusGoalsButton: Button
+    private var goalDraftForUi: GoalBoardDraft? = null
+    private var goalBoardRefresh: (() -> Unit)? = null
     private lateinit var ambientSoundController: AmbientSoundController
     private var stagePreferences = CompanionStagePreferences()
     private var stageDecorations = emptyList<StageDecoration>()
@@ -312,6 +316,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private val networkExecutor = Executors.newSingleThreadExecutor()
     private val speechExecutor = Executors.newSingleThreadExecutor()
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val outboxSequenceLock = Any()
     private var telemetryJob: Job? = null
 
     @Volatile private var cameraRunning = false
@@ -659,6 +664,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusRealityButton = findViewById(R.id.focusRealityButton)
         focusCommandButton = findViewById(R.id.focusCommandButton)
         focusStageButton = findViewById(R.id.focusStageButton)
+        focusRoutinesButton = findViewById(R.id.focusRoutinesButton)
+        focusGoalsButton = findViewById(R.id.focusGoalsButton)
         realityRepositionButton.setOnClickListener {
             if (!realityLensActive) return@setOnClickListener
             if (realityCaptureController.snapshot().owner == RealityCameraOwner.ARCORE) {
@@ -1703,6 +1710,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             say("回到工作台，可以直接输入指令。")
         }
         focusStageButton.setOnClickListener { showCompanionStageSettings() }
+        focusRoutinesButton.setOnClickListener { showDailyRoutineDialog() }
+        focusGoalsButton.setOnClickListener { showGoalBoardDialog() }
         cockpitSummaryToggle.setOnClickListener {
             cockpitSummaryExpanded = !cockpitSummaryExpanded
             renderCockpitSummary()
@@ -3288,18 +3297,27 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     ) {
         val server = savedServer()
         val token = savedAccessToken()
+        val certificateFingerprint = BridgeLink.httpAccess()
+            ?.takeIf { access ->
+                endpointIdentity(access.serverUrl) == endpointIdentity(server) && access.token == token
+            }
+            ?.certificateFingerprint
         networkExecutor.execute {
-            val result = workspaceClient.request(server, token, path, method, payload)
+            val result = workspaceClient.request(server, token, path, method, payload, certificateFingerprint)
             runOnUiThread {
                 result.onSuccess(onSuccess).onFailure { onError(it.message ?: "节点请求失败") }
             }
         }
     }
 
+    private fun endpointIdentity(raw: String): String = raw.trim()
+        .substringAfter("://", raw.trim())
+        .substringBefore('/')
+        .trimEnd('/')
+        .lowercase(Locale.ROOT)
+
     private fun enqueueWorkspaceEvent(type: String, payload: JSONObject) {
-        val meta = getSharedPreferences("workspace_meta", Context.MODE_PRIVATE)
-        val sequence = meta.getLong("sequence", 0L) + 1L
-        meta.edit().putLong("sequence", sequence).apply()
+        val sequence = nextWorkspaceSequence()
         val event = WorkspaceEvent(
             origin = "phone-${android.os.Build.MODEL}",
             sequence = sequence,
@@ -3310,6 +3328,13 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             workspaceRepository.enqueue(event)
             withContext(Dispatchers.Main) { scheduleOutboxSync() }
         }
+    }
+
+    private fun nextWorkspaceSequence(): Long = synchronized(outboxSequenceLock) {
+        val meta = getSharedPreferences("workspace_meta", Context.MODE_PRIVATE)
+        val sequence = meta.getLong("sequence", 0L) + 1L
+        check(meta.edit().putLong("sequence", sequence).commit()) { "无法保存离线事件序号" }
+        sequence
     }
 
     private fun flushWorkspaceOutbox() {
@@ -3762,6 +3787,18 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun handleWorkspaceTaskEvent(task: JSONObject?) {
         if (task == null || task.optString("id").isBlank()) return
+        if (task.optBoolean("deleted")) {
+            val deletedTaskId = task.optString("id")
+            runOnUiThread {
+                workspaceTaskMirror.remove(deletedTaskId)
+                appScope.launch(Dispatchers.IO) { workspaceRepository.deleteTask(deletedTaskId) }
+                rebuildAttentionItems()
+                renderAttentionCenter()
+                renderCockpitSummary()
+                refreshAiTasks()
+            }
+            return
+        }
         applyLegacyTaskToCompanion(task)
         runOnUiThread {
             val taskId = task.optString("id")
@@ -3783,6 +3820,27 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 setMoteMoment(MoteMoment.TASK)
                 say(MoteCharacterizationEngine.resolve(pet.appearance, MoteMoment.TASK, moteRelationship.level).line)
             }
+        }
+    }
+
+    private fun handleWorkspaceGoalEvent(event: JSONObject) {
+        val operation = event.optString("operation", "upsert")
+        val goalId = event.optString("id").ifBlank { event.optString("goalId") }
+        if (operation == "delete") {
+            if (goalId.isBlank()) return
+            appScope.launch {
+                withContext(Dispatchers.IO) { workspaceRepository.deleteGoal(goalId) }
+                goalBoardRefresh?.invoke()
+            }
+            return
+        }
+        val rawGoal = event.optJSONObject("goal") ?: return
+        val goal = runCatching {
+            GoalBoardProtocol.parseSnapshot(JSONObject().put("goals", JSONArray().put(rawGoal)).toString()).goals.firstOrNull()
+        }.getOrNull() ?: return
+        appScope.launch {
+            withContext(Dispatchers.IO) { workspaceRepository.saveGoalEvent(goal) }
+            goalBoardRefresh?.invoke()
         }
     }
 
@@ -3947,6 +4005,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun persistWorkspaceTask(task: JSONObject) {
         val createdAt = parseEpochMs(task.opt("createdAt")) ?: System.currentTimeMillis()
         val updatedAt = parseEpochMs(task.opt("updatedAt")) ?: createdAt
+        val metadata = task.optJSONObject("metadata")
+        val goalId = metadata?.optString("goalId").orEmpty().ifBlank { task.optString("goalId").ifBlank { null } }
+        val milestoneId = metadata?.optString("milestoneId").orEmpty().ifBlank { task.optString("milestoneId").ifBlank { null } }
         appScope.launch(Dispatchers.IO) {
             workspaceRepository.saveTask(
                 WorkspaceTaskEntity(
@@ -3960,7 +4021,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     retryCount = task.optInt("retryCount", 0),
                     artifactRefsJson = task.optJSONArray("artifactRefs")?.toString() ?: "[]",
                     createdAt = createdAt,
-                    updatedAt = updatedAt
+                    updatedAt = updatedAt,
+                    goalId = goalId,
+                    milestoneId = milestoneId
                 )
             )
         }
@@ -5620,6 +5683,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 }
                 "workspace.message" -> handleWorkspaceMessage(json)
                 "workspace.task" -> handleWorkspaceTaskEvent(json.optJSONObject("task"))
+                "workspace.goal" -> handleWorkspaceGoalEvent(json)
                 "attention.upsert" -> handleAttentionEvent(json.optJSONObject("attention"))
                 "action.run", "action.result" -> handleActionRunEvent(json.optJSONObject("actionRun"))
                 "workspace.policy" -> handlePolicyEvent(json.optJSONObject("policy"))
@@ -5970,6 +6034,602 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         "现实标签" to "把镜头里的地点和物体变成可探索笔记。",
         "共生直觉" to "把 Codex、手机和环境线索合成下一步。"
     )
+
+    private fun showDailyRoutineDialog() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(6), dp(18), dp(12))
+        }
+        val scroll = android.widget.ScrollView(this).apply { addView(content) }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("日常陪伴")
+            .setView(scroll)
+            .setNegativeButton("关闭", null)
+            .create()
+        var deliveryNote = if (BridgeLink.isOnline) "正在同步节点记录…" else "离线镜像 · 操作会标记为待同步；散步观察不请求定位或相机。"
+        lateinit var render: (List<DailyRoutineEntry>) -> Unit
+        render = { entries ->
+            content.removeAllViews()
+            content.addView(TextView(this).apply {
+                text = deliveryNote
+                textSize = 12f
+                setTextColor(Color.rgb(135, 164, 149))
+                setPadding(0, dp(4), 0, dp(12))
+            })
+            val latest = entries.groupBy { it.routineId }.mapValues { (_, values) ->
+                values.firstOrNull { it.status in setOf("active", "paused", "pending") }
+                    ?: values.maxByOrNull { it.updatedAt }
+            }
+            DailyRoutineProtocol.defaultCatalog.forEach { definition ->
+                val entry = latest[definition.id]
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    setBackgroundResource(R.drawable.bg_chip)
+                }
+                val title = TextView(this).apply {
+                    text = definition.title
+                    textSize = 15f
+                    setTextColor(Color.rgb(234, 255, 245))
+                }
+                val status = when {
+                    entry == null -> "尚未开始"
+                    entry.syncState == RoutineSyncState.PENDING -> "待同步 · ${entry.pendingAction ?: "操作"}"
+                    entry.syncState == RoutineSyncState.REJECTED -> "服务端拒绝：${entry.syncReason ?: "请重试"}"
+                    else -> when (entry.status) {
+                        "active" -> "进行中 · 已专注 ${formatRoutineElapsed(entry.elapsedSeconds)}"
+                        "paused" -> "已暂停 · ${formatRoutineElapsed(entry.elapsedSeconds)}"
+                        "finished" -> "已完成 · ${formatRoutineElapsed(entry.elapsedSeconds)}"
+                        "skipped" -> "已跳过"
+                        "interrupted" -> "已中断"
+                        else -> "尚未开始"
+                    }
+                }
+                card.addView(title)
+                card.addView(TextView(this).apply {
+                    text = definition.description + "\n" + status
+                    textSize = 12f
+                    setTextColor(if (entry?.syncState == RoutineSyncState.REJECTED) Color.rgb(255, 157, 157) else Color.rgb(167, 197, 182))
+                    setPadding(0, dp(5), 0, dp(7))
+                })
+                val actionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                val currentStatus = if (entry?.syncState == RoutineSyncState.REJECTED && entry.status == "pending") null else entry?.status
+                val actions = if (entry?.syncState == RoutineSyncState.PENDING) emptySet() else DailyRoutineProtocol.allowedActions(currentStatus)
+                actions.forEach { action ->
+                    val actionLabel = when (action) {
+                        "start" -> "开始"
+                        "pause" -> "暂停"
+                        "resume" -> "继续"
+                        "finish" -> "完成"
+                        "skip" -> "跳过"
+                        "interrupt" -> "中断"
+                        else -> action
+                    }
+                    actionRow.addView(Button(this).apply {
+                        text = actionLabel
+                        isAllCaps = false
+                        minWidth = 0
+                        setOnClickListener {
+                            val submit: (String?) -> Unit = { reflection ->
+                                queueDailyRoutineAction(definition.id, action, reflection) { queued ->
+                                    if (queued) {
+                                        dialog.dismiss()
+                                        showDailyRoutineDialog()
+                                    } else {
+                                        appScope.launch(Dispatchers.IO) {
+                                            val latestEntries = workspaceRepository.routineEntries()
+                                            withContext(Dispatchers.Main) { render(latestEntries) }
+                                        }
+                                    }
+                                }
+                            }
+                            if (definition.id == DailyRoutineProtocol.BEDTIME_REVIEW && action == "finish") {
+                                promptRoutineReflection(submit)
+                            } else submit(null)
+                        }
+                    })
+                }
+                if (actions.isEmpty()) {
+                    actionRow.addView(TextView(this).apply {
+                        text = if (entry?.syncState == RoutineSyncState.PENDING) "等待节点确认" else "暂无可执行操作"
+                        textSize = 11f
+                        setTextColor(Color.rgb(135, 164, 149))
+                        setPadding(0, dp(8), 0, dp(4))
+                    })
+                }
+                card.addView(actionRow)
+                content.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+            }
+            entries.filter { it.routineId == DailyRoutineProtocol.BEDTIME_REVIEW && !it.reflection.isNullOrBlank() }
+                .maxByOrNull { it.updatedAt }?.let { entry ->
+                    content.addView(TextView(this).apply {
+                        text = "最近一次睡前回顾（仅本地/节点日常记录，不写入长期记忆）：\n${entry.reflection}"
+                        textSize = 12f
+                        setTextColor(Color.rgb(167, 197, 182))
+                        setPadding(0, dp(4), 0, dp(8))
+                    })
+                }
+        }
+        dialog.show()
+        appScope.launch(Dispatchers.IO) {
+            val local = runCatching { workspaceRepository.routineEntries() }.getOrDefault(emptyList())
+            withContext(Dispatchers.Main) { render(local) }
+        }
+        if (BridgeLink.isOnline) {
+            workspaceRequest("/api/routines", onSuccess = { response ->
+                val snapshot = runCatching { DailyRoutineProtocol.parseSnapshot(response.toString()) }.getOrNull()
+                if (snapshot == null) {
+                    deliveryNote = "节点返回的日常记录无法识别；仍显示本地镜像。"
+                    appScope.launch {
+                        render(runCatching { withContext(Dispatchers.IO) { workspaceRepository.routineEntries() } }.getOrDefault(emptyList()))
+                    }
+                    return@workspaceRequest
+                }
+                deliveryNote = if (snapshot.migrationRequired) "日常数据待完成隐私迁移选择；当前仅查看，暂不能同步操作。"
+                else "节点已同步 · 散步观察不需要位置或相机权限；睡前回顾不会写入长期记忆。"
+                appScope.launch {
+                    workspaceRepository.saveRoutineSnapshot(snapshot)
+                    render(runCatching { workspaceRepository.routineEntries() }.getOrDefault(emptyList()))
+                }
+            }, onError = { error ->
+                deliveryNote = "节点暂不可用，显示离线镜像；提交后会明确标记待同步。($error)"
+                appScope.launch {
+                    render(runCatching { withContext(Dispatchers.IO) { workspaceRepository.routineEntries() } }.getOrDefault(emptyList()))
+                }
+            })
+        }
+    }
+
+    private fun promptRoutineReflection(onSubmit: (String?) -> Unit) {
+        val input = EditText(this).apply {
+            hint = "可选：写下一件今天想记住的事（最多 1000 字）"
+            minLines = 3
+            maxLines = 6
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        AlertDialog.Builder(this)
+            .setTitle("睡前回顾")
+            .setMessage("这是纯文本日常记录，不会进入长期记忆；留空也可以完成。")
+            .setView(input)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("完成回顾", null)
+            .create().also { dialog ->
+                dialog.setOnShowListener {
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        val text = input.text.toString().trim()
+                        if (text.codePointCount(0, text.length) > 1000) {
+                            input.error = "最多 1000 个字符"
+                            return@setOnClickListener
+                        }
+                        dialog.dismiss()
+                        onSubmit(text.ifBlank { null })
+                    }
+                }
+            }.show()
+    }
+
+    private fun queueDailyRoutineAction(
+        routineId: String,
+        action: String,
+        reflection: String?,
+        onComplete: (Boolean) -> Unit
+    ) {
+        appScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val entries = workspaceRepository.routineEntries()
+                val current = entries.filter { it.routineId == routineId }.maxByOrNull { it.updatedAt }
+                val now = Instant.now()
+                val status = if (current?.syncState == RoutineSyncState.REJECTED && current.status == "pending") null else current?.status
+                if (current?.syncState == RoutineSyncState.PENDING) error("上一条操作仍待同步")
+                if (action !in DailyRoutineProtocol.allowedActions(status)) error("当前日常状态不允许此操作")
+                val elapsed = DailyRoutineProtocol.elapsedForAction(action, current, now.toEpochMilli())
+                val eventId = "routine-${UUID.randomUUID()}"
+                val request = DailyRoutineProtocol.createRequest(
+                    eventId = eventId,
+                    routineId = routineId,
+                    action = action,
+                    occurredAt = now.toString(),
+                    elapsedSeconds = elapsed,
+                    reflection = reflection
+                ) ?: error("日常操作内容无效")
+                val event = WorkspaceEvent(
+                    eventId = eventId,
+                    origin = "phone-${Build.MODEL}",
+                    sequence = nextWorkspaceSequence(),
+                    type = WorkspaceEventTypes.ROUTINE_EVENT,
+                    payload = DailyRoutineProtocol.actionPayload(request, 0L)
+                )
+                val queued = workspaceRepository.enqueueRoutineAction(event, request)
+                if (!queued.queued) error(queued.reason ?: "日常操作未能排队")
+                queued
+            }
+            withContext(Dispatchers.Main) {
+                result.onSuccess {
+                    scheduleOutboxSync()
+                    Toast.makeText(this@MainActivity, "已暂存 · 待节点确认", Toast.LENGTH_SHORT).show()
+                    onComplete(true)
+                }.onFailure { error ->
+                    Toast.makeText(this@MainActivity, error.message ?: "日常操作失败", Toast.LENGTH_LONG).show()
+                    onComplete(false)
+                }
+            }
+        }
+    }
+
+    private fun formatRoutineElapsed(seconds: Long): String {
+        val safe = seconds.coerceAtLeast(0L)
+        return "%02d:%02d".format(Locale.ROOT, safe / 3600L, (safe / 60L) % 60L)
+    }
+
+    private fun showGoalBoardDialog() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(6), dp(18), dp(12))
+        }
+        val titleInput = EditText(this).apply { hint = "想完成什么？（最多 120 字）"; setSingleLine(true) }
+        val descriptionInput = EditText(this).apply { hint = "补充说明（可选）"; minLines = 2; maxLines = 4 }
+        val statusText = TextView(this).apply {
+            text = if (BridgeLink.isOnline) "目标与普通任务共享同一节点；建议只在你主动点击时生成。" else "离线镜像 · 目标创建、建议和确认需要连接节点。"
+            textSize = 12f
+            setTextColor(Color.rgb(135, 164, 149))
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        val createButton = Button(this).apply { text = "创建目标"; isAllCaps = false }
+        val goalsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(statusText)
+        content.addView(titleInput)
+        content.addView(descriptionInput)
+        content.addView(createButton)
+        content.addView(goalsContainer)
+        val scroll = android.widget.ScrollView(this).apply { addView(content) }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("个人目标")
+            .setView(scroll)
+            .setNegativeButton("关闭", null)
+            .create()
+        dialog.setOnDismissListener { goalBoardRefresh = null }
+
+        lateinit var renderGoals: (List<GoalBoardGoal>) -> Unit
+        renderGoals = { goals ->
+            goalsContainer.removeAllViews()
+            if (goals.isEmpty()) {
+                goalsContainer.addView(TextView(this).apply {
+                    text = "还没有目标。先写下一个目标，再决定是否需要步骤建议。"
+                    textSize = 13f
+                    setTextColor(Color.rgb(167, 197, 182))
+                    setPadding(0, dp(14), 0, dp(8))
+                })
+            }
+            goals.forEach { goal ->
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    setBackgroundResource(R.drawable.bg_chip)
+                }
+                card.addView(TextView(this).apply {
+                    text = goal.title
+                    textSize = 15f
+                    setTextColor(Color.rgb(234, 255, 245))
+                })
+                if (goal.description.isNotBlank()) card.addView(TextView(this).apply {
+                    text = goal.description
+                    textSize = 12f
+                    setTextColor(Color.rgb(167, 197, 182))
+                    setPadding(0, dp(3), 0, dp(5))
+                })
+                if (goal.milestones.isEmpty()) {
+                    card.addView(TextView(this).apply {
+                        text = "尚未确认步骤；生成建议不会自动创建任务。"
+                        textSize = 11f
+                        setTextColor(Color.rgb(135, 164, 149))
+                    })
+                } else {
+                    goal.milestones.forEachIndexed { index, milestone ->
+                        card.addView(TextView(this).apply {
+                            text = "${index + 1}. ${milestone.title} · ${milestone.status} · 任务 ${milestone.taskId ?: "未绑定"}"
+                            textSize = 12f
+                            setTextColor(Color.rgb(167, 197, 182))
+                            setPadding(0, dp(4), 0, 0)
+                        })
+                    }
+                }
+                if (goal.status == "active" && goal.milestones.isEmpty()) {
+                    card.addView(Button(this).apply {
+                        text = "生成步骤建议…"
+                        isAllCaps = false
+                        setOnClickListener { promptGoalDraftContext(goal) }
+                    })
+                }
+                goalsContainer.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+            }
+        }
+
+        fun refreshRemote() {
+            if (!BridgeLink.isOnline) return
+            workspaceRequest("/api/goals", onSuccess = { response ->
+                val snapshot = runCatching { GoalBoardProtocol.parseSnapshot(response.toString()) }.getOrNull()
+                if (snapshot == null) {
+                    statusText.text = "节点目标响应无法识别；保留本地镜像。"
+                    return@workspaceRequest
+                }
+                statusText.text = if (snapshot.migrationRequired) {
+                    "目标或任务隐私迁移仍待选择；请先在设置 → 隐私与数据完成处理。"
+                } else {
+                    "节点已同步 · 草案只有逐项确认后才会创建普通任务。"
+                }
+                appScope.launch {
+                    workspaceRepository.saveGoalSnapshot(snapshot)
+                    renderGoals(runCatching { workspaceRepository.goals() }.getOrDefault(emptyList()))
+                }
+            }, onError = { error -> statusText.text = "节点暂不可用，显示离线镜像。($error)" })
+        }
+        goalBoardRefresh = { refreshRemote() }
+
+        createButton.setOnClickListener {
+            val title = titleInput.text.toString().trim()
+            val description = descriptionInput.text.toString().trim()
+            if (title.isBlank() || title.codePointCount(0, title.length) > 120) {
+                titleInput.error = if (title.isBlank()) "请先填写目标" else "标题最多 120 字"
+                return@setOnClickListener
+            }
+            if (description.codePointCount(0, description.length) > 2000) {
+                descriptionInput.error = "说明最多 2000 字"
+                return@setOnClickListener
+            }
+            appScope.launch {
+                val revision = withContext(Dispatchers.IO) { workspaceRepository.privacyRevision("goals") }
+                if (revision == null) {
+                    Toast.makeText(this@MainActivity, "先连接节点并同步目标隐私版本", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                createButton.isEnabled = false
+                workspaceRequest(
+                    "/api/goals",
+                    method = "POST",
+                    payload = JSONObject().put("title", title).put("description", description).put("privacyRevision", revision),
+                    onSuccess = {
+                        createButton.isEnabled = true
+                        titleInput.setText("")
+                        descriptionInput.setText("")
+                        statusText.text = "目标已创建；尚未生成建议或任务。"
+                        refreshRemote()
+                    },
+                    onError = { error ->
+                        createButton.isEnabled = true
+                        statusText.text = "创建失败：$error"
+                    }
+                )
+            }
+        }
+        dialog.show()
+        appScope.launch(Dispatchers.IO) {
+            val local = runCatching { workspaceRepository.goals() }.getOrDefault(emptyList())
+            withContext(Dispatchers.Main) { renderGoals(local) }
+        }
+        refreshRemote()
+    }
+
+    private fun promptGoalDraftContext(goal: GoalBoardGoal) {
+        val contextInput = EditText(this).apply {
+            hint = "可选补充：时间、限制或你希望的节奏"
+            minLines = 2
+            maxLines = 4
+        }
+        AlertDialog.Builder(this)
+            .setTitle("为「${goal.title}」生成步骤建议？")
+            .setMessage("只有点击生成后才会向当前主 provider 请求建议；请求失败时服务端使用本地规则。不会调用工具或自动创建任务。")
+            .setView(contextInput)
+            .setNegativeButton("暂不生成", null)
+            .setPositiveButton("生成建议", null)
+            .create().also { prompt ->
+                prompt.setOnShowListener {
+                    prompt.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        val contextText = contextInput.text.toString().trim()
+                        if (contextText.codePointCount(0, contextText.length) > 1000) {
+                            contextInput.error = "补充内容最多 1000 字"
+                            return@setOnClickListener
+                        }
+                        prompt.dismiss()
+                        requestGoalDraft(goal, contextText)
+                    }
+                }
+            }.show()
+    }
+
+    private fun requestGoalDraft(goal: GoalBoardGoal, contextText: String) {
+        appScope.launch {
+            val revision = withContext(Dispatchers.IO) { workspaceRepository.privacyRevision("goals") }
+            if (revision == null) {
+                Toast.makeText(this@MainActivity, "先连接节点并同步目标隐私版本", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val buttonEventId = "goal_accept_${UUID.randomUUID()}"
+            workspaceRequest(
+                "/api/goals/${android.net.Uri.encode(goal.id)}/draft",
+                method = "POST",
+                payload = JSONObject().put("context", contextText).put("privacyRevision", revision),
+                onSuccess = { response ->
+                    val draft = GoalBoardProtocol.parseDraft(response.toString(), buttonEventId)
+                    if (draft == null || draft.goalId != goal.id) {
+                        Toast.makeText(this@MainActivity, "服务端返回的草案无效；未创建任务", Toast.LENGTH_LONG).show()
+                    } else {
+                        goalDraftForUi = draft
+                        showGoalDraftEditor(draft)
+                    }
+                },
+                onError = { error -> Toast.makeText(this@MainActivity, "生成建议失败：$error", Toast.LENGTH_LONG).show() }
+            )
+        }
+    }
+
+    private fun showGoalDraftEditor(draft: GoalBoardDraft) {
+        goalDraftForUi = draft
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(4), dp(18), dp(8))
+        }
+        val providerNote = when (draft.fallbackReason) {
+            "provider_unavailable" -> "主 provider：${draft.providerId} · 不可用，已降级至 ${draft.fallbackProvider ?: "local"}。"
+            "provider_output_invalid" -> "主 provider：${draft.providerId} · 输出未通过校验，已降级至 ${draft.fallbackProvider ?: "local"}。"
+            null -> "建议来源：${draft.providerId}"
+            else -> "建议来源：${draft.providerId} · 降级原因：${draft.fallbackReason}"
+        }
+        root.addView(TextView(this).apply {
+            text = "$providerNote\n这些步骤只在你逐项确认后才会生成任务。"
+            textSize = 12f
+            setTextColor(Color.rgb(135, 164, 149))
+            setPadding(0, 0, 0, dp(8))
+        })
+        val stepsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val fields = mutableListOf<Pair<EditText, EditText>>()
+        fun appendStep(step: GoalBoardStep = GoalBoardStep("", "")) {
+            if (fields.size >= 8) {
+                Toast.makeText(this, "最多 8 个步骤", Toast.LENGTH_SHORT).show()
+                return
+            }
+            val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val title = EditText(this).apply { setText(step.title); hint = "步骤名称（最多 120 字）"; setSingleLine(true) }
+            val description = EditText(this).apply { setText(step.description); hint = "步骤说明（可选，最多 500 字）"; minLines = 1; maxLines = 3 }
+            val remove = Button(this).apply { text = "删除这一步"; isAllCaps = false }
+            row.addView(title)
+            row.addView(description)
+            row.addView(remove)
+            val pair = title to description
+            fields += pair
+            remove.setOnClickListener {
+                stepsContainer.removeView(row)
+                fields.remove(pair)
+            }
+            stepsContainer.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        }
+        draft.steps.forEach(::appendStep)
+        root.addView(stepsContainer)
+        root.addView(Button(this).apply {
+            text = "添加一步"
+            isAllCaps = false
+            setOnClickListener { appendStep() }
+        })
+        val scroll = android.widget.ScrollView(this).apply { addView(root) }
+        val editor = AlertDialog.Builder(this)
+            .setTitle("检查并编辑步骤")
+            .setView(scroll)
+            .setNegativeButton("放弃草案", null)
+            .setPositiveButton("逐项确认…", null)
+            .create()
+        editor.setOnCancelListener { goalDraftForUi = null }
+        editor.setOnShowListener {
+            editor.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                goalDraftForUi = null
+                editor.dismiss()
+            }
+            editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val edited = draft.copy(steps = fields.map { (title, description) ->
+                    GoalBoardStep(title.text.toString().trim(), description.text.toString().trim())
+                })
+                if (!GoalBoardProtocol.canAccept(edited, draft.goalId)) {
+                    Toast.makeText(this, "步骤标题、说明或数量不符合要求，请检查后再确认", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                goalDraftForUi = edited
+                editor.dismiss()
+                confirmGoalStep(edited, 0)
+            }
+        }
+        editor.show()
+    }
+
+    private fun confirmGoalStep(draft: GoalBoardDraft, index: Int) {
+        if (index !in draft.steps.indices) {
+            acceptGoalDraft(draft)
+            return
+        }
+        val step = draft.steps[index]
+        AlertDialog.Builder(this)
+            .setTitle("逐项确认 ${index + 1}/${draft.steps.size}")
+            .setMessage(step.title + if (step.description.isBlank()) "" else "\n\n${step.description}")
+            .setNegativeButton("取消确认", null)
+            .setPositiveButton("确认此步骤") { _, _ -> confirmGoalStep(draft, index + 1) }
+            .show()
+    }
+
+    private fun acceptGoalDraft(draft: GoalBoardDraft) {
+        if (!GoalBoardProtocol.canAccept(draft, draft.goalId)) return
+        appScope.launch {
+            val revisions = withContext(Dispatchers.IO) {
+                workspaceRepository.privacyRevision("goals") to workspaceRepository.privacyRevision("tasks")
+            }
+            val goalRevision = revisions.first
+            val taskRevision = revisions.second
+            if (goalRevision == null || taskRevision == null) {
+                Toast.makeText(this@MainActivity, "目标或任务隐私版本未就绪；尚未创建步骤", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val payload = runCatching {
+                JSONObject(GoalBoardProtocol.acceptancePayload(draft, goalRevision, taskRevision))
+            }.getOrElse {
+                Toast.makeText(this@MainActivity, "步骤内容无效：${it.message}", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            workspaceRequest(
+                "/api/goals/${android.net.Uri.encode(draft.goalId)}/accept",
+                method = "POST",
+                payload = payload,
+                onSuccess = { response ->
+                    val goalJson = response.optJSONObject("goal")
+                    val goal = goalJson?.let {
+                        runCatching {
+                            GoalBoardProtocol.parseSnapshot(JSONObject().put("goals", JSONArray().put(it)).toString()).goals.firstOrNull()
+                        }.getOrNull()
+                    }
+                    if (goal == null) {
+                        Toast.makeText(this@MainActivity, "节点已接受，但目标镜像无法解析；请刷新目标列表", Toast.LENGTH_LONG).show()
+                        return@workspaceRequest
+                    }
+                    val taskArray = response.optJSONArray("tasks") ?: JSONArray()
+                    val taskMaps = (0 until taskArray.length()).mapNotNull { taskArray.optJSONObject(it)?.let { item -> runCatching { parseWorkspaceJsonObject(item.toString()) }.getOrNull() } }
+                    val refs = GoalBoardProtocol.taskRefs(taskMaps).associateBy { it.taskId }
+                    val tasks = (0 until taskArray.length()).mapNotNull { index ->
+                        val item = taskArray.optJSONObject(index) ?: return@mapNotNull null
+                        val id = item.optString("id")
+                        val ref = refs[id] ?: return@mapNotNull null
+                        WorkspaceTaskEntity(
+                            id = id,
+                            source = item.optString("source", "goal"),
+                            title = item.optString("title", ref.title),
+                            state = item.optString("state", ref.state),
+                            progress = item.optInt("progress", 0).coerceIn(0, 100),
+                            detail = item.optString("detail"),
+                            error = item.optString("error").ifBlank { null },
+                            retryCount = item.optInt("retryCount", 0),
+                            artifactRefsJson = item.optJSONArray("artifactRefs")?.toString() ?: "[]",
+                            createdAt = parseEpochMs(item.opt("createdAt")) ?: System.currentTimeMillis(),
+                            updatedAt = parseEpochMs(item.opt("updatedAt")) ?: System.currentTimeMillis(),
+                            goalId = ref.goalId,
+                            milestoneId = ref.milestoneId
+                        )
+                    }
+                    appScope.launch {
+                        runCatching { withContext(Dispatchers.IO) { workspaceRepository.saveAcceptedGoal(goal, tasks) } }
+                            .onSuccess {
+                                goalDraftForUi = null
+                                Toast.makeText(this@MainActivity, "已逐项确认 · 创建 ${tasks.size} 个普通任务", Toast.LENGTH_LONG).show()
+                            }
+                            .onFailure { error ->
+                                Toast.makeText(this@MainActivity, "节点已接受；本地镜像待恢复：${error.message}", Toast.LENGTH_LONG).show()
+                            }
+                    }
+                },
+                onError = { error ->
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("确认结果尚不确定")
+                        .setMessage("为避免重复创建或修改同一收据，请使用相同 eventId 和原步骤重试。\n$error")
+                        .setNegativeButton("稍后") { _, _ -> goalDraftForUi = draft }
+                        .setPositiveButton("重试原提交") { _, _ -> acceptGoalDraft(draft) }
+                        .show()
+                }
+            )
+        }
+    }
 
     private fun showGrowthDialog() {
         val required = pet.level * 45
@@ -6614,7 +7274,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             focusToolsToggle.minimumHeight = dp(if (stagePreferences.oneHanded) 52 else 36)
             listOf(
                 focusCameraButton, focusLensButton, focusListenButton, focusVoiceButton,
-                focusMemoryButton, focusGameButton, focusRealityButton, focusCommandButton, focusStageButton
+                focusMemoryButton, focusGameButton, focusRealityButton, focusCommandButton, focusStageButton,
+                focusRoutinesButton, focusGoalsButton
             ).forEach { it.minimumHeight = dp(if (stagePreferences.oneHanded) 52 else 36) }
             if (stagePreferences.oneHanded && immersiveMode) {
                 focusToolsExpanded = true

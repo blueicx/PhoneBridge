@@ -12,7 +12,7 @@ import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 
-const val WORKSPACE_DB_VERSION = 5
+const val WORKSPACE_DB_VERSION = 6
 
 @Entity(tableName = "workspace_sessions")
 data class WorkspaceSessionEntity(
@@ -51,7 +51,60 @@ data class WorkspaceTaskEntity(
     val retryCount: Int = 0,
     val artifactRefsJson: String = "[]",
     val createdAt: Long = 0L,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val goalId: String? = null,
+    val milestoneId: String? = null
+)
+
+@Entity(
+    tableName = "workspace_routine_entries",
+    indices = [Index(value = ["routineId", "updatedAt"]), Index(value = ["syncState"])]
+)
+data class WorkspaceRoutineEntryEntity(
+    @PrimaryKey val id: String,
+    val routineId: String,
+    val title: String,
+    val status: String,
+    val startedAt: Long,
+    val updatedAt: Long,
+    val lastEventAt: Long,
+    val elapsedSeconds: Long = 0L,
+    val revision: Long = 0L,
+    val reflection: String? = null,
+    val syncState: String = RoutineSyncState.CONFIRMED,
+    val pendingEventId: String? = null,
+    val pendingAction: String? = null,
+    val syncReason: String? = null
+)
+
+@Entity(tableName = "workspace_goals", indices = [Index(value = ["updatedAt"])])
+data class WorkspaceGoalEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val description: String = "",
+    val status: String = "active",
+    val createdAt: String = "",
+    val updatedAt: String = ""
+)
+
+@Entity(
+    tableName = "workspace_milestones",
+    foreignKeys = [androidx.room.ForeignKey(
+        entity = WorkspaceGoalEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["goalId"],
+        onDelete = androidx.room.ForeignKey.CASCADE
+    )],
+    indices = [Index(value = ["goalId", "position"]), Index(value = ["taskId"])]
+)
+data class WorkspaceMilestoneEntity(
+    @PrimaryKey val id: String,
+    val goalId: String,
+    val title: String,
+    val description: String = "",
+    val status: String = "pending",
+    val taskId: String? = null,
+    val position: Int = 0
 )
 
 @Entity(
@@ -176,6 +229,9 @@ abstract class WorkspaceDao {
     @Query("SELECT * FROM workspace_tasks ORDER BY updatedAt DESC")
     abstract suspend fun tasks(): List<WorkspaceTaskEntity>
 
+    @Query("SELECT * FROM workspace_tasks WHERE goalId = :goalId ORDER BY updatedAt DESC")
+    abstract suspend fun tasksForGoal(goalId: String): List<WorkspaceTaskEntity>
+
     @Query("DELETE FROM workspace_tasks")
     abstract suspend fun clearTasks()
 
@@ -187,6 +243,72 @@ abstract class WorkspaceDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun saveTask(task: WorkspaceTaskEntity)
+
+    @Query("SELECT * FROM workspace_routine_entries ORDER BY updatedAt DESC")
+    abstract suspend fun routineEntries(): List<WorkspaceRoutineEntryEntity>
+
+    @Query("SELECT * FROM workspace_routine_entries WHERE routineId = :routineId ORDER BY updatedAt DESC LIMIT 1")
+    abstract suspend fun routineEntry(routineId: String): WorkspaceRoutineEntryEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun saveRoutineEntry(entry: WorkspaceRoutineEntryEntity)
+
+    @Query("DELETE FROM workspace_routine_entries WHERE id = :entryId")
+    abstract suspend fun deleteRoutineEntry(entryId: String)
+
+    @Query("DELETE FROM workspace_routine_entries")
+    abstract suspend fun clearRoutineEntries()
+
+    @Query("SELECT COUNT(*) FROM workspace_routine_entries")
+    abstract suspend fun countRoutineEntries(): Long
+
+    @Query("SELECT * FROM workspace_goals ORDER BY updatedAt DESC")
+    abstract suspend fun goals(): List<WorkspaceGoalEntity>
+
+    @Query("SELECT * FROM workspace_milestones WHERE goalId = :goalId ORDER BY position ASC, id ASC")
+    abstract suspend fun milestonesForGoal(goalId: String): List<WorkspaceMilestoneEntity>
+
+    @Query("SELECT * FROM workspace_milestones WHERE id = :milestoneId LIMIT 1")
+    abstract suspend fun milestone(milestoneId: String): WorkspaceMilestoneEntity?
+
+    @Query("SELECT * FROM workspace_milestones ORDER BY goalId ASC, position ASC, id ASC")
+    abstract suspend fun allMilestones(): List<WorkspaceMilestoneEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun saveGoal(goal: WorkspaceGoalEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun saveGoals(goals: List<WorkspaceGoalEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun saveMilestones(milestones: List<WorkspaceMilestoneEntity>)
+
+    @Query("DELETE FROM workspace_milestones WHERE goalId = :goalId")
+    abstract suspend fun clearMilestonesForGoal(goalId: String)
+
+    @Query("DELETE FROM workspace_goals")
+    abstract suspend fun clearGoals()
+
+    @Query("DELETE FROM workspace_goals WHERE id = :goalId")
+    abstract suspend fun deleteGoal(goalId: String)
+
+    @Query("SELECT COUNT(*) FROM workspace_goals")
+    abstract suspend fun countGoals(): Long
+
+    @Query("SELECT COUNT(*) FROM workspace_milestones")
+    abstract suspend fun countMilestones(): Long
+
+    @Query("UPDATE workspace_milestones SET taskId = NULL, status = 'pending' WHERE taskId IS NOT NULL")
+    abstract suspend fun unbindGoalMilestoneTasks()
+
+    @Query("UPDATE workspace_milestones SET taskId = NULL, status = 'pending' WHERE taskId IN (:taskIds)")
+    abstract suspend fun unbindMilestonesForTasks(taskIds: List<String>)
+
+    @Query("UPDATE workspace_milestones SET taskId = NULL, status = 'pending' WHERE taskId = :taskId")
+    abstract suspend fun unbindMilestoneForTask(taskId: String)
+
+    @Query("DELETE FROM workspace_tasks WHERE goalId IN (:goalIds)")
+    abstract suspend fun deleteTasksForGoals(goalIds: List<String>)
 
     @Query("SELECT * FROM workspace_attention ORDER BY updatedAt DESC")
     abstract suspend fun attention(): List<WorkspaceAttentionEntity>
@@ -313,6 +435,7 @@ abstract class WorkspaceDao {
 
     @Transaction
     open suspend fun purgeTaskData() {
+        unbindGoalMilestoneTasks()
         clearTasks()
         clearAttention()
         clearActionRuns()
@@ -381,6 +504,9 @@ abstract class WorkspaceDao {
         WorkspaceSessionEntity::class,
         WorkspaceMessageEntity::class,
         WorkspaceTaskEntity::class,
+        WorkspaceRoutineEntryEntity::class,
+        WorkspaceGoalEntity::class,
+        WorkspaceMilestoneEntity::class,
         WorkspaceAttentionEntity::class,
         WorkspaceAutonomyPolicyEntity::class,
         WorkspaceActionRunEntity::class,

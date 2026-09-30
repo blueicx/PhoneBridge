@@ -116,13 +116,15 @@ function privacyFenceCategories(event, deletedConversationTaskIds = new Set()) {
   const metadata = payload?.metadata || {};
   const conversationLinked = String(payload?.source || '').toLowerCase() === 'conversation' ||
     Boolean(payload?.sessionId || payload?.relatedSessionId || payload?.messageId || payload?.relatedMessageId || metadata.sessionId || metadata.messageId);
+  const goalLinked = Boolean(payload?.goalId || metadata.goalId);
   const deletedConversationTask = [payload?.id, payload?.taskId, payload?.relatedTaskId]
     .some(value => value != null && deletedConversationTaskIds.has(String(value)));
   if (type === 'workspace.message') return ['conversations'];
   if (type.startsWith('mote.') || type.startsWith('reality.')) return ['progress'];
   const taskEvent = type.startsWith('workspace.task') || type.includes('attention') || type.includes('action_run');
   if (!taskEvent) return [];
-  if (deletedConversationTask || conversationLinked) return ['conversations', 'tasks'];
+  if (deletedConversationTask || conversationLinked) return ['conversations', ...(goalLinked ? ['goals'] : []), 'tasks'];
+  if (goalLinked) return ['goals', 'tasks'];
   return ['tasks'];
 }
 

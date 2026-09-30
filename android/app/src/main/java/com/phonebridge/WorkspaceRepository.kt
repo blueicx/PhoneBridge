@@ -40,9 +40,175 @@ class WorkspaceRepository internal constructor(
 
     suspend fun messages(sessionId: String): List<WorkspaceMessageEntity> = withContext(Dispatchers.IO) { dao.messages(sessionId) }
 
-    suspend fun saveTask(task: WorkspaceTaskEntity) = withContext(Dispatchers.IO) { dao.saveTask(task) }
+    suspend fun saveTask(task: WorkspaceTaskEntity) = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            dao.saveTask(task)
+            updateGoalMilestoneForTask(task)
+        }
+    }
+
+    suspend fun deleteTask(taskId: String) = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            dao.unbindMilestoneForTask(taskId)
+            dao.clearAttentionForTask(taskId)
+            dao.clearActionRunsForTask(taskId)
+            dao.clearTaskById(taskId)
+        }
+    }
 
     suspend fun tasks(): List<WorkspaceTaskEntity> = withContext(Dispatchers.IO) { dao.tasks() }
+
+    suspend fun routineEntries(): List<DailyRoutineEntry> = withContext(Dispatchers.IO) {
+        dao.routineEntries().map { it.toModel() }
+    }
+
+    suspend fun saveRoutineSnapshot(snapshot: DailyRoutineSnapshot) = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            (snapshot.current + snapshot.history).distinctBy { it.id }.forEach { incoming ->
+                val existing = dao.routineEntry(incoming.routineId)
+                if (existing?.syncState == RoutineSyncState.PENDING) return@forEach
+                if (existing?.syncState == RoutineSyncState.REJECTED && existing.status == "pending") return@forEach
+                dao.saveRoutineEntry(incoming.toEntity())
+            }
+        }
+    }
+
+    suspend fun goals(): List<GoalBoardGoal> = withContext(Dispatchers.IO) {
+        val milestones = dao.allMilestones().groupBy { it.goalId }
+        dao.goals().map { goal -> goal.toModel(milestones[goal.id].orEmpty()) }
+    }
+
+    suspend fun saveGoalSnapshot(snapshot: GoalBoardSnapshot) = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            dao.clearGoals()
+            if (snapshot.goals.isNotEmpty()) {
+                dao.saveGoals(snapshot.goals.map { it.toEntity() })
+                val milestones = snapshot.goals.flatMap { goal -> goal.milestones.mapIndexed { index, item -> item.toEntity(index) } }
+                if (milestones.isNotEmpty()) dao.saveMilestones(milestones)
+            }
+        }
+    }
+
+    /** A confirmed server acceptance and its ordinary tasks are mirrored in one Room transaction. */
+    suspend fun saveAcceptedGoal(goal: GoalBoardGoal, tasks: List<WorkspaceTaskEntity>) = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            dao.saveGoal(goal.toEntity())
+            dao.clearMilestonesForGoal(goal.id)
+            val milestones = goal.milestones.mapIndexed { index, item -> item.toEntity(index) }
+            if (milestones.isNotEmpty()) dao.saveMilestones(milestones)
+            if (tasks.isNotEmpty()) tasks.forEach { task ->
+                val linked = task.copy(goalId = goal.id)
+                dao.saveTask(linked)
+                updateGoalMilestoneForTask(linked)
+            }
+        }
+    }
+
+    suspend fun saveGoalEvent(goal: GoalBoardGoal) = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            dao.saveGoal(goal.toEntity())
+            dao.clearMilestonesForGoal(goal.id)
+            val milestones = goal.milestones.mapIndexed { index, item -> item.toEntity(index) }
+            if (milestones.isNotEmpty()) dao.saveMilestones(milestones)
+        }
+    }
+
+    suspend fun deleteGoal(goalId: String) = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            val taskIds = dao.tasksForGoal(goalId).map { it.id }
+            taskIds.forEach { taskId ->
+                dao.clearAttentionForTask(taskId)
+                dao.clearActionRunsForTask(taskId)
+                dao.clearTaskById(taskId)
+            }
+            dao.deleteGoal(goalId)
+        }
+    }
+
+    suspend fun privacyRevision(category: String): Long? = withContext(Dispatchers.IO) {
+        dao.privacyState(category)?.takeUnless { it.migrationRequired }?.revision
+    }
+
+    /** Enqueues one routine action and its pending mirror atomically; server confirmation remains authoritative. */
+    suspend fun enqueueRoutineAction(event: WorkspaceEvent, request: RoutineActionRequest): RoutineActionQueueResult = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            if (event.type != WorkspaceEventTypes.ROUTINE_EVENT || event.eventId != request.eventId) {
+                return@withTransaction RoutineActionQueueResult(false, "日常事件标识无效")
+            }
+            val privacyStates = dao.privacyStates()
+            val overviewLoaded = PrivacyRevisionPolicy.hasCompleteOverview(
+                PrivacyDataPolicy.categories,
+                privacyStates.mapTo(mutableSetOf()) { it.category }
+            )
+            if (PrivacyRevisionPolicy.shouldHoldOutbox(overviewLoaded, privacyStates.any { it.migrationRequired })) {
+                return@withTransaction RoutineActionQueueResult(false, "请先完成隐私版本同步或迁移选择")
+            }
+            val privacy = dao.privacyState("routines")
+                ?: return@withTransaction RoutineActionQueueResult(false, "请先连接节点同步隐私版本")
+            if (privacy.migrationRequired) return@withTransaction RoutineActionQueueResult(false, "日常数据迁移需要先完成隐私选择")
+            val existing = dao.routineEntry(request.routineId)
+            if (existing?.syncState == RoutineSyncState.PENDING) {
+                return@withTransaction RoutineActionQueueResult(false, "上一条日常操作仍待同步")
+            }
+            val effectiveStatus = if (existing?.syncState == RoutineSyncState.REJECTED && existing.status == "pending") null else existing?.status
+            if (request.action !in DailyRoutineProtocol.allowedActions(effectiveStatus)) {
+                return@withTransaction RoutineActionQueueResult(false, "当前日常状态不允许此操作")
+            }
+            val revision = PrivacyRevisionPolicy.revisionForNewEvent(privacy.revision, privacy.migrationRequired, privacy.decision)
+            val payload = DailyRoutineProtocol.actionPayload(request, revision)
+            val revisions = mapOf("routines" to revision)
+            val rowId = dao.enqueue(
+                WorkspaceOutboxEntity(
+                    eventId = event.eventId,
+                    origin = event.origin,
+                    sequence = event.sequence,
+                    type = event.type,
+                    payload = payload,
+                    createdAt = event.createdAt,
+                    ack = false,
+                    nextAttemptAt = event.createdAt,
+                    privacyCategory = "routines",
+                    privacyRevision = revision,
+                    privacyRevisionsJson = PrivacyRevisionWire.toJson(revisions),
+                    quarantined = false
+                )
+            )
+            if (rowId == -1L) return@withTransaction RoutineActionQueueResult(false, "日常事件已存在")
+            val pending = DailyRoutineProtocol.pendingEntry(existing?.toModel(), request)
+            if (existing != null && existing.id != pending.id) dao.deleteRoutineEntry(existing.id)
+            dao.saveRoutineEntry(pending.toEntity())
+            RoutineActionQueueResult(true)
+        }
+    }
+
+    /** Commits the business receipt and its local mirror together; HTTP success alone is never treated as acceptance. */
+    suspend fun completeRoutineAction(
+        eventId: String,
+        accepted: Boolean,
+        serverEntry: DailyRoutineEntry? = null,
+        reason: String? = null,
+        resultRevision: Long? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            val row = dao.outbox(eventId) ?: return@withTransaction false
+            val envelope = DailyRoutineProtocol.parseActionPayload(row.payload)
+                ?: return@withTransaction false
+            val current = dao.routineEntry(envelope.request.routineId)
+            if (accepted && serverEntry != null) {
+                if (current != null && current.id != serverEntry.id && current.pendingEventId == eventId) {
+                    dao.deleteRoutineEntry(current.id)
+                }
+                dao.saveRoutineEntry(DailyRoutineProtocol.confirmedEntry(serverEntry).toEntity())
+                dao.acknowledge(eventId, "accepted", null, resultRevision)
+            } else {
+                if (current?.pendingEventId == eventId) {
+                    DailyRoutineProtocol.rejectedEntry(current.toModel(), reason.orEmpty())?.let { dao.saveRoutineEntry(it.toEntity()) }
+                }
+                dao.acknowledge(eventId, "rejected", reason?.trim()?.take(180)?.ifBlank { null } ?: "服务端拒绝了日常操作", resultRevision)
+            }
+            true
+        }
+    }
 
     suspend fun saveAttentionItem(item: AttentionItem) = withContext(Dispatchers.IO) {
         // SQLite's primary/unique keys make this a single atomic upsert. A
@@ -159,8 +325,8 @@ class WorkspaceRepository internal constructor(
                 ),
             "tasks" to (dao.countTasks() + dao.countAttention() + dao.countActionRuns()),
             "progress" to 0L,
-            "routines" to 0L,
-            "goals" to 0L
+            "routines" to dao.countRoutineEntries(),
+            "goals" to (dao.countGoals() + dao.countMilestones())
         )
         PrivacyDataPolicy.categories.associateWith { category ->
             val matching = allEvents.filter { row ->
@@ -255,8 +421,24 @@ class WorkspaceRepository internal constructor(
             "conversations" -> dao.purgeConversationData(linkedConversationTaskIds)
             "tasks" -> dao.purgeTaskData()
             "progress" -> dao.purgeProgressData()
-            "memories", "routines", "goals" -> Unit
+            "routines" -> dao.clearRoutineEntries()
+            "goals" -> clearLocalGoalsAndTasks()
+            "memories" -> Unit
         }
+    }
+
+    private suspend fun clearLocalGoalsAndTasks() {
+        val goalIds = dao.goals().map { it.id }.distinct()
+        val linkedTaskIds = buildSet {
+            goalIds.forEach { goalId -> dao.tasksForGoal(goalId).forEach { add(it.id) } }
+            dao.allMilestones().mapNotNullTo(this) { it.taskId }
+        }
+        linkedTaskIds.forEach { taskId ->
+            dao.clearTaskById(taskId)
+            dao.clearAttentionForTask(taskId)
+            dao.clearActionRunsForTask(taskId)
+        }
+        dao.clearGoals()
     }
 
     private suspend fun purgeClassifiedOutbox(categories: Set<String>) {
@@ -444,6 +626,92 @@ class WorkspaceRepository internal constructor(
     }
 
     fun close() = database.close()
+
+    private suspend fun updateGoalMilestoneForTask(task: WorkspaceTaskEntity) {
+        val milestoneId = task.milestoneId?.takeIf(String::isNotBlank) ?: return
+        val milestone = dao.milestone(milestoneId) ?: return
+        val state = task.state.trim().lowercase()
+        val nextStatus = when (state) {
+            "succeeded", "success", "completed", "done" -> "completed"
+            "failed", "error" -> "failed"
+            "running", "paused", "needs_confirmation" -> "in_progress"
+            "archived" -> milestone.status.takeIf { it == "completed" || it == "failed" } ?: "pending"
+            else -> "pending"
+        }
+        dao.saveMilestones(listOf(milestone.copy(status = nextStatus, taskId = task.id)))
+    }
+
+    private fun WorkspaceRoutineEntryEntity.toModel() = DailyRoutineEntry(
+        id = id,
+        routineId = routineId,
+        title = title,
+        status = status,
+        startedAt = startedAt,
+        updatedAt = updatedAt,
+        lastEventAt = lastEventAt,
+        elapsedSeconds = elapsedSeconds,
+        revision = revision,
+        reflection = reflection,
+        syncState = syncState,
+        pendingEventId = pendingEventId,
+        pendingAction = pendingAction,
+        syncReason = syncReason
+    )
+
+    private fun DailyRoutineEntry.toEntity() = WorkspaceRoutineEntryEntity(
+        id = id,
+        routineId = routineId,
+        title = title,
+        status = status,
+        startedAt = startedAt,
+        updatedAt = updatedAt,
+        lastEventAt = lastEventAt,
+        elapsedSeconds = elapsedSeconds,
+        revision = revision,
+        reflection = reflection,
+        syncState = syncState,
+        pendingEventId = pendingEventId,
+        pendingAction = pendingAction,
+        syncReason = syncReason
+    )
+
+    private fun WorkspaceGoalEntity.toModel(milestones: List<WorkspaceMilestoneEntity>) = GoalBoardGoal(
+        id = id,
+        title = title,
+        description = description,
+        status = status,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        milestones = milestones.map { it.toModel() }
+    )
+
+    private fun GoalBoardGoal.toEntity() = WorkspaceGoalEntity(
+        id = id,
+        title = title,
+        description = description,
+        status = status,
+        createdAt = createdAt,
+        updatedAt = updatedAt
+    )
+
+    private fun WorkspaceMilestoneEntity.toModel() = GoalBoardMilestone(
+        id = id,
+        goalId = goalId,
+        title = title,
+        description = description,
+        status = status,
+        taskId = taskId
+    )
+
+    private fun GoalBoardMilestone.toEntity(position: Int) = WorkspaceMilestoneEntity(
+        id = id,
+        goalId = goalId,
+        title = title,
+        description = description,
+        status = status,
+        taskId = taskId,
+        position = position
+    )
 
     private fun WorkspaceAttentionEntity.toModel() = AttentionItem(
         id = id,
@@ -647,6 +915,66 @@ class WorkspaceRepository internal constructor(
                         )
                         """.trimIndent()
                     )
+                }
+            },
+            object : Migration(5, 6) {
+                override fun migrate(database: SupportSQLiteDatabase) {
+                    database.execSQL("ALTER TABLE `workspace_tasks` ADD COLUMN `goalId` TEXT")
+                    database.execSQL("ALTER TABLE `workspace_tasks` ADD COLUMN `milestoneId` TEXT")
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `workspace_routine_entries` (
+                            `id` TEXT NOT NULL,
+                            `routineId` TEXT NOT NULL,
+                            `title` TEXT NOT NULL,
+                            `status` TEXT NOT NULL,
+                            `startedAt` INTEGER NOT NULL,
+                            `updatedAt` INTEGER NOT NULL,
+                            `lastEventAt` INTEGER NOT NULL,
+                            `elapsedSeconds` INTEGER NOT NULL,
+                            `revision` INTEGER NOT NULL,
+                            `reflection` TEXT,
+                            `syncState` TEXT NOT NULL,
+                            `pendingEventId` TEXT,
+                            `pendingAction` TEXT,
+                            `syncReason` TEXT,
+                            PRIMARY KEY(`id`)
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL("CREATE INDEX IF NOT EXISTS `index_workspace_routine_entries_routineId_updatedAt` ON `workspace_routine_entries` (`routineId`, `updatedAt`)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS `index_workspace_routine_entries_syncState` ON `workspace_routine_entries` (`syncState`)")
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `workspace_goals` (
+                            `id` TEXT NOT NULL,
+                            `title` TEXT NOT NULL,
+                            `description` TEXT NOT NULL,
+                            `status` TEXT NOT NULL,
+                            `createdAt` TEXT NOT NULL,
+                            `updatedAt` TEXT NOT NULL,
+                            PRIMARY KEY(`id`)
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL("CREATE INDEX IF NOT EXISTS `index_workspace_goals_updatedAt` ON `workspace_goals` (`updatedAt`)")
+                    database.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `workspace_milestones` (
+                            `id` TEXT NOT NULL,
+                            `goalId` TEXT NOT NULL,
+                            `title` TEXT NOT NULL,
+                            `description` TEXT NOT NULL,
+                            `status` TEXT NOT NULL,
+                            `taskId` TEXT,
+                            `position` INTEGER NOT NULL,
+                            PRIMARY KEY(`id`),
+                            FOREIGN KEY(`goalId`) REFERENCES `workspace_goals`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+                    database.execSQL("CREATE INDEX IF NOT EXISTS `index_workspace_milestones_goalId_position` ON `workspace_milestones` (`goalId`, `position`)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS `index_workspace_milestones_taskId` ON `workspace_milestones` (`taskId`)")
                 }
             }
         )

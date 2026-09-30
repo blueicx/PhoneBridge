@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "goals": [
+    {
+      "id": "goal-fixture-001",
+      "title": "完成一项小目标",
+      "description": "用于验证 Android 与服务端字段一致",
+      "status": "active",
+      "createdAt": "2026-09-30T08:00:00.000Z",
+      "updatedAt": "2026-09-30T08:10:00.000Z",
+      "milestones": [
+        {
+          "id": "milestone-fixture-001",
+          "goalId": "goal-fixture-001",
+          "title": "完成第一步",
+          "description": "留下可观察结果",
+          "status": "pending",
+          "taskId": "task-fixture-001"
+        }
+      ]
+    }
+  ],
+  "privacyRevision": 6,
+  "taskPrivacyRevision": 9,
+  "migrationRequired": false,
+  "futureEnvelopeField": true
+}

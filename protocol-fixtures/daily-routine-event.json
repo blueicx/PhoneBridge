@@ -1,0 +1,15 @@
+{
+  "eventId": "routine-fixture-001",
+  "origin": "phone-fixture",
+  "sequence": 17,
+  "type": "routine.event",
+  "payload": {
+    "eventId": "routine-fixture-001",
+    "routineId": "focus-timer",
+    "action": "start",
+    "occurredAt": "2026-09-30T08:00:00.000Z",
+    "privacyRevision": 4
+  },
+  "createdAt": "2026-09-30T08:00:00.000Z",
+  "ack": false
+}

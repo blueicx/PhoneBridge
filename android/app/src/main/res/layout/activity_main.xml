@@ -368,6 +368,8 @@
                     <Button android:id="@+id/focusRealityButton" style="@style/PetAction" android:minWidth="0dp" android:text="现实"/>
                     <Button android:id="@+id/focusCommandButton" style="@style/PetAction" android:minWidth="0dp" android:layout_marginEnd="0dp" android:text="指令"/>
                     <Button android:id="@+id/focusStageButton" style="@style/PetAction" android:minWidth="0dp" android:layout_marginEnd="0dp" android:text="舞台" android:contentDescription="打开舞台、家园和安静模式设置"/>
+                    <Button android:id="@+id/focusRoutinesButton" style="@style/PetAction" android:minWidth="0dp" android:layout_marginEnd="0dp" android:text="日常" android:contentDescription="打开专注计时、散步观察和睡前回顾"/>
+                    <Button android:id="@+id/focusGoalsButton" style="@style/PetAction" android:minWidth="0dp" android:layout_marginEnd="0dp" android:text="目标" android:contentDescription="打开个人目标和步骤草案"/>
                 </LinearLayout>
             </HorizontalScrollView>
         </LinearLayout>

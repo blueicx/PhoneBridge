@@ -2,15 +2,34 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { WorkspaceStore } = require('./workspace-core');
 const { AiProviderManager } = require('./ai-provider');
 
 let GoalBoardService = null;
-try { ({ GoalBoardService } = require('./goal-board')); }
+let normalizeSteps = null;
+try { ({ GoalBoardService, normalizeSteps } = require('./goal-board')); }
 catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
 
 test('exports a dedicated goal board domain service', () => {
   assert.equal(typeof GoalBoardService, 'function');
+});
+
+test('shared Android goal and draft fixtures create ordinary milestone-linked tasks', () => {
+  const fixtureDir = path.join(__dirname, '..', 'protocol-fixtures');
+  const boardFixture = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'goal-board.json'), 'utf8'));
+  const draftFixture = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'goal-draft.json'), 'utf8'));
+  const steps = normalizeSteps(draftFixture.steps);
+  const { workspaceStore, service } = createBoard();
+  const goal = service.createGoal({ title: boardFixture.goals[0].title, description: boardFixture.goals[0].description });
+  const result = service.acceptDraft(goal.id, { eventId: 'goal-fixture-accept-001', steps });
+
+  assert.equal(draftFixture.goalId, boardFixture.goals[0].id);
+  assert.equal(result.tasks.length, steps.length);
+  assert.equal(result.goal.milestones.length, steps.length);
+  assert.ok(result.tasks.every(task => task.metadata.goalId === goal.id && task.metadata.milestoneId));
+  assert.equal(workspaceStore.listTasks().length, steps.length);
 });
 
 function createBoard({ providerManager = null, isTaskActive = () => false, recordProviderAudit = () => {} } = {}) {

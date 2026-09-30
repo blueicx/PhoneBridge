@@ -301,6 +301,7 @@ test('privacy fencing maps conversation, task, attention, action and Mote events
   check(['conversations'], 'workspace.message');
   check(['progress'], 'mote.exploration');
   check(['tasks'], 'workspace.task.progress');
+  check(['goals', 'tasks'], 'workspace.task.progress', { metadata: { goalId: 'goal-1', milestoneId: 'mile-1' } });
   check(['conversations', 'tasks'], 'workspace.task.finished', { source: 'conversation' });
   check(['tasks'], 'workspace.attention');
   check(['conversations', 'tasks'], 'workspace.attention', { relatedSessionId: 'session-1' });

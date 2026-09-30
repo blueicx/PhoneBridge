@@ -11,6 +11,12 @@ import java.lang.ref.WeakReference
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
+internal data class BridgeHttpAccess(
+    val serverUrl: String,
+    val token: String,
+    val certificateFingerprint: String?
+)
+
 object BridgeLink {
     private const val TAG = "BridgeLink"
 
@@ -60,6 +66,12 @@ object BridgeLink {
 
     val isOnline: Boolean get() = webSocket != null
     val url: String? get() = targetUrl
+
+    internal fun httpAccess(): BridgeHttpAccess? {
+        val url = targetUrl?.takeIf(String::isNotBlank) ?: return null
+        val token = accessToken.takeIf(String::isNotBlank) ?: return null
+        return BridgeHttpAccess(url, token, expectedFingerprint)
+    }
 
     fun setListener(listener: Listener?) {
         listenerRef = listener?.let { WeakReference(it) }

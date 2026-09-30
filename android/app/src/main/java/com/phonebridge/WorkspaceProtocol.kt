@@ -94,6 +94,7 @@ object PrivacyRevisionWire {
 
 object WorkspaceEventTypes {
     const val MESSAGE = "workspace.message"
+    const val ROUTINE_EVENT = DailyRoutineProtocol.EVENT_TYPE
     const val ATTENTION = "workspace.attention"
     const val POLICY = "workspace.policy"
     const val ACTION_RUN = "workspace.action_run"

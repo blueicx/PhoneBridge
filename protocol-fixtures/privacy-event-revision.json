@@ -58,6 +58,36 @@
       },
       "expectedCategories": ["conversations", "tasks"],
       "expectedStatus": "accepted"
+    },
+    {
+      "id": "stale-goal-linked-task",
+      "categoryRevisions": { "goals": 4, "tasks": 5 },
+      "event": {
+        "eventId": "fixture-stale-goal-linked-task",
+        "origin": "fixture-phone",
+        "sequence": 5,
+        "type": "workspace.task.progress",
+        "payload": { "metadata": { "goalId": "fixture-goal", "milestoneId": "fixture-milestone" } },
+        "privacyRevisions": { "goals": 3, "tasks": 5 },
+        "createdAt": 104
+      },
+      "expectedCategories": ["goals", "tasks"],
+      "expectedStatus": "privacy_revision_stale"
+    },
+    {
+      "id": "current-goal-linked-task",
+      "categoryRevisions": { "goals": 4, "tasks": 5 },
+      "event": {
+        "eventId": "fixture-current-goal-linked-task",
+        "origin": "fixture-phone",
+        "sequence": 6,
+        "type": "workspace.task.progress",
+        "payload": { "metadata": { "goalId": "fixture-goal", "milestoneId": "fixture-milestone" } },
+        "privacyRevisions": { "goals": 4, "tasks": 5 },
+        "createdAt": 105
+      },
+      "expectedCategories": ["goals", "tasks"],
+      "expectedStatus": "accepted"
     }
   ]
 }

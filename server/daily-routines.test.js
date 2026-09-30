@@ -20,6 +20,21 @@ function makeStore(overrides = {}) {
 const at = seconds => new Date(Date.parse('2026-09-30T10:00:00.000Z') + seconds * 1000).toISOString();
 const event = (eventId, action, seconds, extra = {}) => ({ eventId, action, occurredAt: at(seconds), ...extra });
 
+test('shared Android routine fixtures are accepted with the same business receipt fields', () => {
+  const fixtureDir = path.join(__dirname, '..', 'protocol-fixtures');
+  const envelope = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'daily-routine-event.json'), 'utf8'));
+  const expected = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'daily-routine-response.json'), 'utf8'));
+  const { store } = makeStore();
+  const result = store.recordEvent(envelope.payload.routineId, envelope.payload);
+
+  assert.equal(envelope.type, 'routine.event');
+  assert.equal(result.action, envelope.payload.action);
+  assert.equal(result.entry.status, expected.entry.status);
+  assert.equal(result.entry.routineId, expected.entry.routineId);
+  assert.equal(typeof result.revision, 'number');
+  assert.equal(expected.ok, true);
+});
+
 test('catalog contains only the three fixed permission-free activities', () => {
   assert.deepEqual(ACTIVITY_CATALOG.map(activity => activity.id), ['focus-timer', 'walk-observation', 'bedtime-review']);
   assert.ok(ACTIVITY_CATALOG.every(activity => activity.permissionRequired === false));

@@ -27,6 +27,9 @@ object PrivacyDataPolicy {
         if (normalized == WorkspaceEventTypes.MESSAGE || normalized == "chat.message") {
             return PrivacyEventClassification(listOf("conversations"))
         }
+        if (normalized == WorkspaceEventTypes.ROUTINE_EVENT) {
+            return PrivacyEventClassification(listOf("routines"))
+        }
         if (normalized.startsWith("mote.") || normalized.startsWith("reality.")) {
             return PrivacyEventClassification(listOf("progress"))
         }
@@ -41,9 +44,15 @@ object PrivacyDataPolicy {
                         record.stringValue(key).isNotBlank() || metadata.stringValue(key).isNotBlank()
                     }
             }
-            return PrivacyEventClassification(
-                if (linkedToConversation) listOf("conversations", "tasks") else listOf("tasks")
-            )
+            val linkedToGoal = records.any { record ->
+                val metadata = record["metadata"] as? Map<*, *> ?: emptyMap<Any?, Any?>()
+                record.stringValue("goalId").isNotBlank() || metadata.stringValue("goalId").isNotBlank()
+            }
+            return PrivacyEventClassification(buildList {
+                if (linkedToConversation) add("conversations")
+                if (linkedToGoal) add("goals")
+                add("tasks")
+            })
         }
         if (normalized in NON_PERSONAL_EVENTS) return PrivacyEventClassification(emptyList())
         // New personal event names must be reviewed and explicitly classified before sending.

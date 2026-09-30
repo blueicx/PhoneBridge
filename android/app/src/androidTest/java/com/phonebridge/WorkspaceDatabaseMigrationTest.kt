@@ -172,6 +172,164 @@ class WorkspaceDatabaseMigrationTest {
     }
 
     @Test
+    fun migratesV5ToV6WithoutDestructiveFallbackOrLosingTaskRows() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        context.deleteDatabase(V6_MIGRATION_DATABASE)
+        try {
+            helper.createDatabase(V6_MIGRATION_DATABASE, 5).apply {
+                execSQL("INSERT INTO workspace_tasks (id,source,title,state,progress,detail,error,retryCount,artifactRefsJson,createdAt,updatedAt) VALUES ('v5-task','goal','Saved task','running',40,'keep',NULL,1,'[]',100,120)")
+                close()
+            }
+
+            val migrated = helper.runMigrationsAndValidate(
+                V6_MIGRATION_DATABASE,
+                6,
+                true,
+                *WorkspaceRepository.MIGRATIONS
+            )
+            migrated.query("SELECT id,goalId,milestoneId FROM workspace_tasks WHERE id='v5-task'").use {
+                assertTrue(it.moveToFirst())
+                assertEquals("v5-task", it.getString(0))
+                assertTrue(it.isNull(1))
+                assertTrue(it.isNull(2))
+            }
+            migrated.query("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workspace_routines','workspace_goals','workspace_milestones')").use {
+                assertTrue(it.moveToFirst())
+                assertEquals(3, it.getInt(0))
+            }
+            migrated.close()
+        } finally {
+            context.deleteDatabase(V6_MIGRATION_DATABASE)
+        }
+    }
+
+    @Test
+    fun routineOutboxSeparatesPendingAcceptedAndRejectedBusinessState() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        context.deleteDatabase(ROUTINE_REPOSITORY_DATABASE)
+        val repository = WorkspaceRepository(context, ROUTINE_REPOSITORY_DATABASE)
+        try {
+            val start = RoutineActionRequest(
+                eventId = "routine-room-start-001",
+                routineId = DailyRoutineProtocol.FOCUS_TIMER,
+                action = "start",
+                occurredAt = "2026-09-30T08:00:00.000Z"
+            )
+            val startEvent = routineWorkspaceEvent(start, sequence = 1L)
+            repository.observePrivacyStates(listOf(WorkspacePrivacyStateEntity("routines", revision = 2L)))
+            assertFalse(repository.enqueueRoutineAction(startEvent, start).queued)
+            repository.observePrivacyStates(completePrivacyStates(
+                WorkspacePrivacyStateEntity("routines", revision = 2L)
+            ))
+            assertTrue(repository.enqueueRoutineAction(startEvent, start).queued)
+            val pending = repository.routineEntries().single()
+            assertEquals("pending", pending.status)
+            assertEquals(RoutineSyncState.PENDING, pending.syncState)
+            assertEquals(mapOf("routines" to 2L), repository.outboxEvent(start.eventId)?.privacyRevisions)
+
+            val serverEntry = pending.copy(
+                id = "routine-server-001",
+                status = "active",
+                syncState = RoutineSyncState.CONFIRMED,
+                pendingEventId = null,
+                pendingAction = null,
+                revision = 1L
+            )
+            assertTrue(repository.completeRoutineAction(start.eventId, accepted = true, serverEntry = serverEntry, resultRevision = 1L))
+            assertEquals("active", repository.routineEntries().single().status)
+            assertEquals(RoutineSyncState.CONFIRMED, repository.routineEntries().single().syncState)
+
+            val pause = start.copy(
+                eventId = "routine-room-pause-001",
+                action = "pause",
+                occurredAt = "2026-09-30T08:05:00.000Z",
+                elapsedSeconds = 300L
+            )
+            assertTrue(repository.enqueueRoutineAction(routineWorkspaceEvent(pause, sequence = 2L), pause).queued)
+            val rejected = repository.routineEntries().single()
+            assertEquals("active", rejected.status)
+            assertEquals(RoutineSyncState.PENDING, rejected.syncState)
+            assertTrue(repository.completeRoutineAction(pause.eventId, accepted = false, reason = "invalid_transition"))
+            val restored = repository.routineEntries().single()
+            assertEquals("active", restored.status)
+            assertEquals(RoutineSyncState.REJECTED, restored.syncState)
+            assertEquals("invalid_transition", restored.syncReason)
+            assertTrue(repository.outboxEvent(pause.eventId)?.ack == true)
+        } finally {
+            repository.close()
+            context.deleteDatabase(ROUTINE_REPOSITORY_DATABASE)
+        }
+    }
+
+    @Test
+    fun routineAndGoalPrivacyPurgesAreScopedAndTaskDeletionUnbindsMilestones() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        context.deleteDatabase(SPACES_REPOSITORY_DATABASE)
+        val repository = WorkspaceRepository(context, SPACES_REPOSITORY_DATABASE)
+        try {
+            repository.observePrivacyStates(completePrivacyStates(
+                WorkspacePrivacyStateEntity("routines", revision = 1L),
+                WorkspacePrivacyStateEntity("goals", revision = 2L),
+                WorkspacePrivacyStateEntity("tasks", revision = 3L)
+            ))
+            val goal = GoalBoardGoal(
+                id = "goal-room-001",
+                title = "完成离线样例",
+                description = "仅用于数据库迁移测试",
+                createdAt = "2026-09-30T08:00:00.000Z",
+                updatedAt = "2026-09-30T08:00:00.000Z",
+                milestones = listOf(GoalBoardMilestone("milestone-room-001", "goal-room-001", "整理需求", "", "running", "task-room-001"))
+            )
+            val task = WorkspaceTaskEntity(
+                id = "task-room-001", source = "goal", title = "整理需求", state = "running",
+                goalId = goal.id, milestoneId = goal.milestones.single().id
+            )
+            repository.saveAcceptedGoal(goal, listOf(task))
+            assertEquals("in_progress", repository.goals().single().milestones.single().status)
+            repository.saveTask(task.copy(state = "succeeded"))
+            assertEquals("completed", repository.goals().single().milestones.single().status)
+            val routineRequest = RoutineActionRequest(
+                eventId = "routine-room-privacy-001", routineId = DailyRoutineProtocol.WALK_OBSERVATION,
+                action = "start", occurredAt = "2026-09-30T08:10:00.000Z"
+            )
+            assertTrue(repository.enqueueRoutineAction(routineWorkspaceEvent(routineRequest, 1L), routineRequest).queued)
+
+            repository.purgePrivacyCategories(listOf("tasks"))
+            assertTrue(repository.tasks().isEmpty())
+            val retained = repository.goals().single().milestones.single()
+            assertNull(retained.taskId)
+            assertEquals("pending", retained.status)
+            assertEquals(1, repository.routineEntries().size)
+
+            repository.saveAcceptedGoal(goal, listOf(task))
+            repository.saveTask(task.copy(state = "succeeded"))
+            assertEquals("completed", repository.goals().single().milestones.single().status)
+            repository.deleteTask(task.id)
+            assertTrue(repository.tasks().isEmpty())
+            assertNull(repository.goals().single().milestones.single().taskId)
+            assertEquals("pending", repository.goals().single().milestones.single().status)
+
+            repository.saveAcceptedGoal(goal, listOf(task))
+            repository.deleteGoal(goal.id)
+            assertTrue(repository.goals().isEmpty())
+            assertTrue(repository.tasks().isEmpty())
+
+            repository.saveAcceptedGoal(goal, listOf(task))
+            repository.purgePrivacyCategories(listOf("goals"))
+            assertTrue(repository.goals().isEmpty())
+            assertTrue(repository.tasks().isEmpty())
+            assertEquals(1, repository.routineEntries().size)
+
+            repository.purgePrivacyCategories(listOf("routines"))
+            assertTrue(repository.routineEntries().isEmpty())
+            assertNull(repository.outboxEvent(routineRequest.eventId))
+        } finally {
+            repository.close()
+            context.deleteDatabase(SPACES_REPOSITORY_DATABASE)
+        }
+    }
+
+    @Test
     fun legacyKeepIsReadOnlyAndClearPurgesItsCategoryOutbox() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         context.deleteDatabase(REPOSITORY_DATABASE)
@@ -300,6 +458,9 @@ class WorkspaceDatabaseMigrationTest {
 
     companion object {
         private const val TEST_DATABASE = "workspace-migration-v4-v5.db"
+        private const val V6_MIGRATION_DATABASE = "workspace-migration-v5-v6.db"
+        private const val ROUTINE_REPOSITORY_DATABASE = "workspace-routine-repository-v6.db"
+        private const val SPACES_REPOSITORY_DATABASE = "workspace-spaces-repository-v6.db"
         private const val REPOSITORY_DATABASE = "workspace-privacy-decision-test.db"
         private const val REVISION_DATABASE = "workspace-privacy-revision-test.db"
         private const val OVERVIEW_DATABASE = "workspace-privacy-overview-test.db"
@@ -311,4 +472,13 @@ class WorkspaceDatabaseMigrationTest {
             byCategory[category] ?: WorkspacePrivacyStateEntity(category)
         }
     }
+
+    private fun routineWorkspaceEvent(request: RoutineActionRequest, sequence: Long) = WorkspaceEvent(
+        eventId = request.eventId,
+        origin = "phone-test",
+        sequence = sequence,
+        type = WorkspaceEventTypes.ROUTINE_EVENT,
+        payload = DailyRoutineProtocol.actionPayload(request, privacyRevision = 0L),
+        createdAt = 1_790_740_800_000L
+    )
 }

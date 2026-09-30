@@ -54,6 +54,17 @@ class PrivacyDataPolicyTest {
     }
 
     @Test
+    fun goalLinkedTaskEventsAreFencedByBothGoalAndTaskPrivacy() {
+        assertEquals(
+            listOf("goals", "tasks"),
+            PrivacyDataPolicy.classifyEvent(
+                WorkspaceEventTypes.TASK_PROGRESS,
+                mapOf("task" to mapOf("metadata" to mapOf("goalId" to "goal-1", "milestoneId" to "mile-1")))
+            )?.categories
+        )
+    }
+
+    @Test
     fun exportRequiresMatchingLongPassphrases() {
         assertTrue(PrivacyDataPolicy.isValidPassphrase("correct horse battery staple", "correct horse battery staple"))
         assertFalse(PrivacyDataPolicy.isValidPassphrase("short", "short"))

@@ -527,3 +527,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - B2 仅为服务端批次。Android Room/离线镜像和沉浸抽屉留 B3，Web 工作台留 B4；本批未运行 ADB、未安装或操作手机。源码 SHA `32a052d6e3a57a5061e9307ee03307f74c882ead` 的 GitHub Actions [run 36667677629](https://github.com/blueicx/PhoneBridge/actions/runs/36667677629) 全部成功（23m40s）：Node、Android JVM、Room emulator migration **7/7**、Lint、Debug 构建、签名元数据解析、发布清单、artifact 上传、diff whitespace 与工作树检查均通过。内部 Debug artifact `phonebridge-debug-32a052d6e3a57a5061e9307ee03307f74c882ead`（65,370,820 bytes；ZIP SHA-256 `459dd29e8e9918da3bd1cb9c07f9af7f273e71333ff271fe768313df699a1279`）仅作 CI 构建产物，未加入源码历史。后续文档收尾提交仍须核对其最新 SHA 的 Actions。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
+
+## 43. 2026-09-30 批次 B3：Android 日常、目标与离线镜像
+
+- Android `WorkspaceDatabase` 升级至 v6，新增 `workspace_routine_entries`、`workspace_goals`、`workspace_milestones`，任务镜像增加 nullable `goalId` / `milestoneId`。Migration 5→6 为旧 task 行加空关联字段，不使用 destructive migration；`MigrationTestHelper` 覆盖旧 task 保留、新表和 Room repository 操作。
+- `WorkspaceRepository` 为已确认 goal + milestones + 普通 tasks 使用同一 Room transaction；goal 删除会清理关联任务及审计镜像，任务删除会解绑 milestone，清理 goals/tasks/routines 隐私分类时按范围移除记录和 outbox。routine action 以同一事务排队并更新本地“待同步”镜像；服务端 business receipt 会原子确认或拒绝，保留拒绝原因。
+- routine outbox 使用 BridgeLink 的当前 HTTPS 节点、令牌和可选证书 fingerprint 直连 `/api/routines/:id/events`；2xx 但缺少有效 `{ok:true, entry}` 不视作业务成功，临时 HTTP 错误重试，明确业务错误进入 rejected。`WorkspaceClient` 按证书指纹复用 OkHttp 实例，避免每请求重建连接池。
+- 沉浸抽屉新增“日常”和“目标”。日常包括专注计时、免位置/相机的散步观察及不写长期记忆的睡前回顾。目标流程为创建 → 用户显式调用 provider 草案 → 编辑步骤 → 逐条确认 → 建立普通任务；草案只存 UI 内存，未确认不创建任务。Room 镜像的任务状态驱动 milestone 进度。
+- `routine.event` 纳入 Android 隐私分类；带 `goalId` 的任务事件同时受 `goals` 与 `tasks` revision 栅栏保护。新增跨端 protocol fixtures、纯 JVM models 测试和 Room 迁移/事务/隐私测试。
+- 本机验收：Node **223/223**；Android JVM **164/164**；`compileDebugAndroidTestKotlin` 成功；`lintDebug` 成功且报告中 0 个 lint errors；`assembleDebug` 成功；`scan_secrets.ps1`、`test_android_ci_workflow.ps1`、`test_apk_signer_output.ps1`、Debug APK `verify_release_gates.ps1` 与 `git diff --check` 通过。性能预算 `elapsedMs=0.668`、snapshot `1694 bytes`、summary `48 bytes`、cache hits `10000`、burst broadcasts `1`。
+- Room v5→v6 instrumentation tests 只在本机编译，尚未执行；待最新 SHA 的 GitHub Actions API 34 emulator 验证后，才能将 B3 标为已交付并进入 B4。本轮没有连接 ADB、操作手机、安装 APK 或授予相机/定位权限。正式 Release 签名仍受独立加密恢复副本门禁约束。
+- 收尾回归中发现并修复 `WorkspaceClient` 每次 HTTP 请求重建 OkHttp/连接池：新增客户端缓存红灯测试，随后按证书指纹复用客户端、不同指纹隔离。定向测试已通过。
+- 当前分支：`feature/integrated-enhancement`。B3 的实现与本机门禁已完成；API 34 emulator instrumentation、GitHub Actions 最新 SHA 仍待验收。保持不修改 `main`，且在最新 SHA 的 Actions 全绿前不进入批次 B4。
+
+实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
