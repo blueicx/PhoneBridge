@@ -505,6 +505,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
 
+## 44. 2026-09-30 批次 B4：Web 日常、目标与隐私工作台
+
+- Web 工作台现从 `/api/routines` 和 `/api/goals` 读取节点权威状态。日常操作覆盖 start/pause/resume/skip/finish/interrupt，睡前回顾只在 finish 时发送；服务端错误码/原因可见。传输结果不确定时保留原始事件 ID 与 payload 供安全重试，页面阻止同一活动重复并发提交。界面不调用位置或相机权限。
+- 目标页允许创建个人目标、显式请求当前 provider 生成草案、编辑/添加/移除步骤，再通过确认对话框显式 accept。草案请求本身不调用 accept；刷新丢弃未确认草案。请求失败显示 provider、错误码或本地回退原因；provider audit 不包含目标正文/草案/密钥。确认后通过现有任务详情与审计查看关联普通任务，里程碑状态沿用 WorkspaceStore 的任务状态。
+- 隐私类别 checkbox 完全由服务端 overview 动态生成，默认全不选；可单独选 `routines` / `goals` 导出或删除，也保留旧类别 ID。用户口令仍仅用于当次加密导出，不持久化。
+- 新增共享 `goal-task-ref.json`，Node 与 Kotlin 读取同一 fixture；Kotlin 校验 goalId/milestoneId、忽略未知扩展字段，并将缺失 task state 兼容为 pending。现有 routine event/receipt、goal board/draft fixtures 持续由两端使用。认证 Web 页面测试会编译其内嵌脚本，并断言 draft 流不含 accept 调用。
+- 本机验证：Node **225/225**；Android JVM **165/165**；`lintDebug`、`assembleDebug`、`node --check server/index.js`、`scan_secrets.ps1`、工作区性能预算和 `git diff --check` 均通过。最终性能预算 `elapsedMs=0.735`、full snapshot `1694 bytes`、summary `48 bytes`、cache hits `10000`、burst broadcasts `1`。
+- 当前 B4 代码与文档已本地完成，尚未提交/推送；待提交 SHA 的 GitHub Actions 尚未运行。无 ADB/手机实测证据；UI 真实浏览器交互仍待后续验收。此节覆盖上文较早的“B3 后等待再进入 B4”状态。继续保持 `feature/integrated-enhancement`，不修改 `main`。
+
+实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
+
 ## 41. 2026-09-30 批次 B1：服务端日常活动领域与 API
 
 - 新增 `server/daily-routines.js` / `.test.js`。`DailyRoutinesStore` 使用运行时持久化键 `daily-routines`，目录仅含专注计时、无需位置/相机权限的散步观察、纯文本睡前回顾；状态为 active/paused/finished/skipped/interrupted。活动时间必须递增，累计 elapsed 不回退，回顾仅限 bedtime finish 且最多 1000 个 Unicode 字符。

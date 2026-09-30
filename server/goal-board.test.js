@@ -32,6 +32,17 @@ test('shared Android goal and draft fixtures create ordinary milestone-linked ta
   assert.equal(workspaceStore.listTasks().length, steps.length);
 });
 
+test('shared GoalTaskRef fixture keeps only stable goal and milestone identifiers', () => {
+  const fixtureDir = path.join(__dirname, '..', 'protocol-fixtures');
+  const task = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'goal-task-ref.json'), 'utf8'));
+  const goal = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'goal-board.json'), 'utf8')).goals[0];
+
+  assert.equal(task.metadata.goalId, goal.id);
+  assert.equal(task.metadata.milestoneId, goal.milestones[0].id);
+  assert.equal(task.metadata.futureMetadataField, 'ignored');
+  assert.equal(Object.hasOwn(task, 'state'), false, 'missing task state remains a safe-default contract case');
+});
+
 function createBoard({ providerManager = null, isTaskActive = () => false, recordProviderAudit = () => {} } = {}) {
   let now = Date.parse('2026-09-30T12:00:00.000Z');
   const workspaceStore = new WorkspaceStore({ now: () => now });

@@ -123,6 +123,8 @@ class DailyRoutineModelsTest {
         assertEquals("routine.event", event.type)
         val envelope = requireNotNull(DailyRoutineProtocol.parseActionPayload(event.payload))
         assertEquals(4L, envelope.privacyRevision)
+        assertEquals("focus-timer", envelope.request.routineId)
+        assertEquals("start", envelope.request.action)
         assertEquals(17L, event.sequence)
 
         val receipt = DailyRoutineProtocol.classifyHttpResponse(201, fixture("daily-routine-response.json"))

@@ -1757,19 +1757,34 @@ const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name
 .grid{display:grid;grid-template-columns:minmax(280px,380px) minmax(340px,1fr);gap:16px;margin-top:18px}.panel{background:linear-gradient(160deg,#101e18,#0a1511);border:1px solid #24352c;border-radius:18px;padding:16px}.panel h2{font-size:15px;margin:0 0 12px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.metric{background:#0d1913;border-radius:12px;padding:11px}.metric b{display:block;color:var(--mint)}.metric span{font-size:11px;color:var(--muted)}
 .tabs{display:flex;gap:6px;margin-bottom:10px}.tabs button{flex:1;background:#10201a;color:#d8f5e7;border:1px solid #2c483c;border-radius:9px;height:33px;cursor:pointer}.tabs button.active{background:#183326;color:var(--amber)}
 #log,#tasks,#sensors{height:min(48vh,430px);overflow:auto;padding-right:6px}.item{border-left:2px solid #33584a;padding:6px 9px;margin-bottom:6px;background:#081209;white-space:pre-wrap}.taskbar{height:4px;background:#20342b;margin-top:5px}.taskbar i{display:block;height:100%;background:var(--mint)}.row{display:flex;gap:8px;margin-top:10px}input,button,select{background:#0c1712;border:1px solid #2c483c;color:#effaf4;border-radius:10px;padding:9px;font:inherit}button{cursor:pointer}button.primary{background:#183326;border-color:#40705b;color:#ffdfa3}#frame{width:100%;aspect-ratio:3/2;object-fit:cover;border-radius:16px;border:2px solid var(--mint)}textarea{width:100%;min-height:110px;background:#081209;color:#cde8da;border:1px solid #24352c;border-radius:12px;padding:10px;font:12px ui-monospace}
+.routine-goal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}.workspace-card{min-width:0;background:#0b1711;border:1px solid var(--line);border-radius:14px;padding:12px}.workspace-card h3{margin:0 0 8px;font-size:14px;color:var(--mint)}.workspace-card input,.workspace-card textarea{max-width:100%}.workspace-card textarea{min-height:64px;resize:vertical}.routine-actions,.goal-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.routine-actions button,.goal-actions button{padding:6px 9px;font-size:12px}.goal-step{border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0}.goal-step input,.goal-step textarea{width:100%;margin-top:6px}.privacy-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;margin-top:10px}.privacy-check{display:flex;align-items:center;gap:8px;background:#0b1711;border:1px solid var(--line);border-radius:9px;padding:8px}.privacy-check input{accent-color:#8FF0C4}.status-note{min-height:18px;margin-top:6px;color:var(--amber);font-size:12px;white-space:pre-wrap}.status-note.error{color:var(--coral)}
 @media(max-width:850px){.grid{grid-template-columns:1fr}}
+@media(max-width:650px){.routine-goal-grid{grid-template-columns:1fr}.wrap{padding:12px}}
 </style><div class="wrap"><div class="top"><div><div class="logo">Mote</div><div class="sub">PhoneBridge · sensory familiar</div></div><div style="margin-left:auto;display:flex;gap:12px;align-items:center"><div class="pill" id="status">loading</div><button onclick="logout()" style="padding:4px 12px;font-size:12px;background:#0d1b15">退出</button></div></div>
 <div class="grid"><div class="panel"><h2>实时感官</h2><img id="frame"><div class="metrics" style="margin-top:12px"><div class="metric"><b id="cpu">-</b><span>手机 CPU</span></div><div class="metric"><b id="mem">-</b><span>内存</span></div><div class="metric"><b id="bat">-</b><span>电量</span></div><div class="metric"><b id="temp">-</b><span>温度</span></div></div><div class="row"><button class="primary" onclick="device('camera_on')">开眼</button><button onclick="device('camera_front')">前眼</button><button onclick="device('camera_back')">后眼</button><button onclick="device('listen_on')">监听</button><button onclick="say()">说话</button></div><div class="row"><input id="speech" placeholder="输入要在手机上播放的话" style="flex:1"></div><div class=row><select id=idleTimeout title="空闲断流时间"><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5 selected>5 分钟</option><option value=10>10 分钟</option><option value=30>30 分钟</option></select><button onclick=setIdleTimeout()>空闲断流</button></div><div class=row><select id=screenOffTimeout title="息屏自动退出时间"><option value=0>不自动退出</option><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5>5 分钟</option><option value=10 selected>10 分钟</option><option value=30>30 分钟</option><option value=60>60 分钟</option></select><button onclick=setScreenOffTimeout()>息屏退出</button></div></div>
 <div class="panel"><h2>指挥台</h2><div class="tabs"><button class="active" data-tab="tasks">任务</button><button data-tab="log">日志</button><button data-tab="sensors">传感器</button><button data-tab="frame">画面</button></div><div id="tasks"></div><div id="log" hidden></div><div id="sensors" hidden></div><div id="framebox" hidden><img id="frame2"></div><div class="row"><input id="cmd" placeholder="help / ping 8.8.8.8 / screenshot / ps / say 你好" style="flex:1"><button class="primary" onclick="sendCmd()">执行</button></div><textarea id="detail" readonly placeholder="选中任务的输出会出现在这里"></textarea></div></div>
-<div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div></div>
+<div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div>
+<div id="dailyWorkspace" class="routine-goal-grid"><section class="workspace-card"><h3>日常与习惯</h3><div id="routineStatus" class="status-note" role="status" aria-live="polite">日常记录加载中…</div><div id="routineList"></div></section><section class="workspace-card"><h3>个人目标</h3><label class="sub" for="goalTitle">写下一个想推进的目标</label><div class="row"><input id="goalTitle" maxlength="120" placeholder="例如：完成一个小型作品" style="flex:1;min-width:0"></div><textarea id="goalDescription" maxlength="2000" placeholder="可选说明；仅在点击生成草案时发给当前 provider"></textarea><div class="goal-actions"><button id="goalCreateButton" class="primary" onclick="createGoalFromWeb()">创建目标</button><button onclick="refreshDailyWorkspace()">刷新日常与目标</button></div><div id="goalStatus" class="status-note" role="status" aria-live="polite">目标加载中…</div><div id="goalList"></div></section></div><div id="goalDraftPanel" class="workspace-card" style="margin-top:12px" hidden></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>手机安全配对</h2><div class="row"><button onclick="startPairing()">生成五分钟二维码</button><span id="pairingStatus" class="sub" aria-live="polite">在手机“节点”中选择“扫码配对”</span></div><img id="pairingQr" alt="手机配对二维码" style="display:none;width:min(300px,100%);margin-top:12px;background:white;border-radius:12px;padding:8px"></div>
 <div class="panel" style="grid-column:1/-1"><h2>现实探索</h2><div class="sub">只输入粗区域 ID，不上传精确位置；例如 <code>cell:1561:6073</code>。</div><div class="row"><input id="realityRegion" placeholder="粗区域 ID" style="flex:1"><button class="primary" onclick="refreshReality()">刷新事件</button></div><div id="realitySummary" class="sub" style="margin-top:8px">尚未加载现实事件</div></div>
-<div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div id="privacyMigration" class="sub" role="status" style="margin-top:8px"></div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出加密档案</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
+<div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div id="privacyCategories" class="privacy-checklist" aria-label="选择要处理的数据类别"></div><div id="privacyMigration" class="sub" role="status" style="margin-top:8px"></div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。请在上方逐项勾选类别；日常与个人目标可单独导出或删除。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出选定类别</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
 <script>
 let selected='';
 let companionSummaryRevision = '';
 let providerOptionsRevision = '';
 let privacyCategoryIds = [];
+let dailyRoutineSnapshot = { catalog: [], current: [], history: [], privacyRevision: 0, migrationRequired: false };
+let dailyGoalSnapshot = { goals: [], privacyRevision: 0, taskPrivacyRevision: 0, migrationRequired: false };
+let routineRenderSignature = '';
+let goalRenderSignature = '';
+let dailyRefreshPromise = null;
+let activeGoalDraft = null;
+const routineRetryPayloads = new Map();
+const routineInFlight = new Set();
+const goalDraftInFlight = new Set();
+const goalContextValues = new Map();
+let goalCreateInFlight = false;
+function webEventId(prefix){const random=globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);return prefix+'-'+random.replace(/[^A-Za-z0-9_-]/g,'')}
 function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 function jsAttr(s){return JSON.stringify(String(s??'')).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function sel(id){selected=id;let t=(window.TASKS||{})[id];detail.value=t?t.detail:''}
@@ -1786,7 +1801,7 @@ async function api(p,o={}){
   let response=await fetch(p,options);
   if(response.status===304) return {_status:304};
   if(response.status===401) location.reload();
-  if(!response.ok) throw new Error('HTTP ' + response.status);
+  if(!response.ok){let problem={};try{problem=await response.json()}catch(_){}const error=new Error(problem.error||('HTTP '+response.status));error.status=response.status;error.code=problem.code||'http_error';error.retryable=problem.retryable===true;throw error}
   const etag=response.headers.get('etag');
   if(method==='GET' && etag) etags.set(p,etag);
   return response.json();
@@ -1884,8 +1899,31 @@ async function refreshPrivacy(){
     privacyCategoryIds=Object.keys(result.categories||{});
     const lines=Object.entries(result.categories||{}).map(([id,item])=>id+'：'+item.label+' '+item.count+' 条');
     privacySummary.textContent='可管理数据：'+lines.join(' · ')+'。排除：'+(result.excluded||[]).join('、');
+    renderPrivacyCategories(result.categories||{});
     renderPrivacyMigration(result.migration,result.categories||{});
   }catch(error){privacySummary.textContent='数据概览读取失败：'+error.message}
+}
+function renderPrivacyCategories(categories){
+  const root=document.getElementById('privacyCategories');if(!root)return;
+  const selected=new Set([...root.querySelectorAll('input:checked')].map(input=>input.value));
+  const ids=Object.keys(categories);
+  if(root.dataset.ids!==JSON.stringify(ids)){
+    root.replaceChildren();
+    for(const id of ids){
+      const item=categories[id]||{};
+      const label=document.createElement('label');label.className='privacy-check';
+      const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.value=id;checkbox.checked=selected.has(id);checkbox.setAttribute('aria-label',(item.label||id)+'（'+(item.count||0)+' 条）');
+      const text=document.createElement('span');text.textContent=(item.label||id)+' · '+(Number(item.count)||0)+' 条';
+      label.append(checkbox,text);root.appendChild(label);
+    }
+    root.dataset.ids=JSON.stringify(ids);
+    return;
+  }
+  for(const label of root.querySelectorAll('.privacy-check')){
+    const checkbox=label.querySelector('input');const item=categories[checkbox?.value]||{};
+    if(checkbox)checkbox.setAttribute('aria-label',(item.label||checkbox.value)+'（'+(item.count||0)+' 条）');
+    const text=label.querySelector('span');if(text)text.textContent=(item.label||checkbox?.value||'')+' · '+(Number(item.count)||0)+' 条';
+  }
 }
 function renderPrivacyMigration(migration,categories){
   const root=document.getElementById('privacyMigration');root.replaceChildren();
@@ -1913,10 +1951,8 @@ async function resolvePrivacyMigration(category,decision){
   }catch(error){privacyResult.textContent='迁移确认未完成：'+error.message}
 }
 function selectedPrivacyCategories(){
-  const value=prompt('输入要处理的数据类别，逗号分隔：'+privacyCategoryIds.join(', ')+'；输入 all 表示全部');
-  if(value===null)return null;
-  const ids=value.trim()==='all'?privacyCategoryIds:value.split(',').map(item=>item.trim()).filter(Boolean);
-  if(!ids.length)throw new Error('请至少选择一个类别');
+  const ids=[...document.querySelectorAll('#privacyCategories input[type="checkbox"]:checked')].map(input=>input.value).filter(id=>privacyCategoryIds.includes(id));
+  if(!ids.length){privacyResult.textContent='请先勾选至少一个数据类别。';return null}
   return [...new Set(ids)];
 }
 async function exportPrivacy(){
@@ -1939,11 +1975,154 @@ async function deletePrivacy(){
     const categories=selectedPrivacyCategories();if(!categories)return;
     const phrase=prompt('此操作不可撤销。输入 DELETE SELECTED DATA 确认删除所选类别：');
     if(phrase===null)return;
-    const result=await api('/api/privacy/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:'web-'+crypto.randomUUID(),categories,confirmation:phrase})});
+    const result=await api('/api/privacy/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:webEventId('web'),categories,confirmation:phrase})});
     privacyResult.textContent='删除已完成：'+result.receipt.categories.join('、')+'。收据 '+result.receipt.requestId;
     await refreshPrivacy();
   }catch(error){privacyResult.textContent='删除未完成：'+error.message}
 }
+function workspaceStatus(id,message,error=false){const node=document.getElementById(id);if(!node)return;node.className='status-note'+(error?' error':'');node.textContent=message}
+function routineElapsedSeconds(entry){if(!entry)return 0;const stored=Math.max(0,Number(entry.elapsedSeconds)||0);if(entry.status!=='active')return stored;const last=Date.parse(entry.lastEventAt||entry.updatedAt||entry.startedAt);return stored+(Number.isFinite(last)?Math.max(0,Math.floor((Date.now()-last)/1000)):0)}
+function routineStatusLabel(entry){if(!entry)return '未开始';return ({active:'进行中',paused:'已暂停',finished:'已完成',skipped:'已跳过',interrupted:'已中断'})[entry.status]||'状态未知'}
+function makeWorkspaceButton(title,handler,primary=false,disabled=false){const button=document.createElement('button');button.type='button';button.textContent=title;if(primary)button.className='primary';button.disabled=disabled;button.addEventListener('click',handler);return button}
+function renderRoutineWorkspace(){
+  const root=document.getElementById('routineList');if(!root)return;root.replaceChildren();
+  const currentById=new Map((dailyRoutineSnapshot.current||[]).map(entry=>[entry.routineId,entry]));
+  const blocked=dailyRoutineSnapshot.migrationRequired;
+  for(const activity of dailyRoutineSnapshot.catalog||[]){
+    const entry=currentById.get(activity.id);const retry=routineRetryPayloads.get(activity.id);const busy=routineInFlight.has(activity.id);const card=document.createElement('div');card.className='item';
+    const title=document.createElement('b');title.textContent=activity.title||activity.id;card.appendChild(title);
+    const description=document.createElement('div');description.className='sub';description.textContent=(activity.description||'')+' · '+routineStatusLabel(entry);card.appendChild(description);
+    if(entry){
+      const elapsed=document.createElement('div');elapsed.className='sub';elapsed.dataset.routineElapsed=activity.id;elapsed.textContent='已记录 '+routineElapsedSeconds(entry)+' 秒 · revision '+entry.revision;card.appendChild(elapsed);
+      if(activity.id==='bedtime-review'&&entry.status!=='finished'){
+        const reflection=document.createElement('textarea');reflection.id='routine-reflection-'+activity.id;reflection.maxLength=1000;reflection.placeholder='可选睡前回顾，仅在点击“完成”时提交';card.appendChild(reflection);
+      }
+    }
+    const actions=document.createElement('div');actions.className='routine-actions';
+    const allowed=!entry||['finished','skipped','interrupted'].includes(entry.status)?['start']:entry.status==='active'?['pause','finish','skip','interrupt']:['resume','finish','skip','interrupt'];
+    const labels={start:'开始',pause:'暂停',resume:'继续',finish:'完成',skip:'跳过',interrupt:'中断'};
+    for(const action of allowed)actions.appendChild(makeWorkspaceButton(labels[action],()=>routineAction(activity.id,action),action==='start'||action==='finish',blocked||busy||Boolean(retry)));
+    if(retry)actions.appendChild(makeWorkspaceButton('重试上次同步',()=>sendRoutineEvent(activity.id,retry),false,blocked||busy));
+    card.appendChild(actions);root.appendChild(card);
+  }
+  const history=(dailyRoutineSnapshot.history||[]).slice(0,3);
+  if(history.length){const recent=document.createElement('div');recent.className='sub';recent.textContent='最近记录：'+history.map(entry=>(entry.title||entry.routineId)+' · '+routineStatusLabel(entry)).join('；');root.appendChild(recent)}
+  if(blocked)workspaceStatus('routineStatus','日常数据迁移待确认，当前仅可查看；请先在 Android 隐私迁移流程中逐类确认。',true);
+  else workspaceStatus('routineStatus','节点记录已同步 · revision '+dailyRoutineSnapshot.revision+' · 活动时间仅在前台操作时提交。');
+  renderRoutineTimers();
+}
+function renderRoutineTimers(){for(const node of document.querySelectorAll('[data-routine-elapsed]')){const entry=dailyRoutineSnapshot.current.find(item=>item.routineId===node.dataset.routineElapsed);if(entry)node.textContent='已记录 '+routineElapsedSeconds(entry)+' 秒 · revision '+entry.revision}}
+function routineAction(routineId,action){
+  if(dailyRoutineSnapshot.migrationRequired)return workspaceStatus('routineStatus','日常数据迁移待确认，暂不能修改。',true);
+  const entry=dailyRoutineSnapshot.current.find(item=>item.routineId===routineId);const payload={eventId:webEventId('web-routine'),action,occurredAt:new Date().toISOString(),privacyRevision:dailyRoutineSnapshot.privacyRevision};
+  if(action!=='start'&&entry)payload.elapsedSeconds=routineElapsedSeconds(entry);
+  if(routineId==='bedtime-review'&&action==='finish'){const reflection=document.getElementById('routine-reflection-'+routineId);if(reflection&&reflection.value.trim())payload.reflection=reflection.value.trim()}
+  return sendRoutineEvent(routineId,payload);
+}
+async function sendRoutineEvent(routineId,payload){
+  if(routineInFlight.has(routineId))return;
+  routineInFlight.add(routineId);renderRoutineWorkspace();
+  try{
+    const result=await api('/api/routines/'+encodeURIComponent(routineId)+'/events',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+    routineInFlight.delete(routineId);routineRetryPayloads.delete(routineId);await refreshDailyWorkspace();renderRoutineWorkspace();workspaceStatus('routineStatus',(result.duplicate?'操作已确认（重复请求安全去重）':'操作已由节点确认')+' · revision '+result.revision);
+  }catch(error){
+    routineInFlight.delete(routineId);
+    if(!Number.isFinite(error.status)||error.status>=500)routineRetryPayloads.set(routineId,payload);
+    else routineRetryPayloads.delete(routineId);
+    const message='日常操作未确认：'+error.message+(error.code?' · '+error.code:'')+(routineRetryPayloads.has(routineId)?'。可用同一事件 ID 安全重试。':'。刷新状态后再尝试。');
+    renderRoutineWorkspace();
+    if(String(error.code||'').startsWith('privacy_'))await refreshDailyWorkspace();
+    workspaceStatus('routineStatus',message,true);
+  }
+}
+function renderGoalWorkspace(){
+  const root=document.getElementById('goalList');if(!root)return;root.replaceChildren();const blocked=dailyGoalSnapshot.migrationRequired;
+  for(const goal of dailyGoalSnapshot.goals||[]){
+    const card=document.createElement('div');card.className='item';const title=document.createElement('b');title.textContent=goal.title;card.appendChild(title);
+    const description=document.createElement('div');description.className='sub';description.textContent=(goal.description||'')+' · '+(goal.status||'active');card.appendChild(description);
+    for(const milestone of goal.milestones||[]){const row=document.createElement('div');row.className='sub';row.textContent=(milestone.status||'pending')+' · '+milestone.title;if(milestone.taskId){const taskButton=makeWorkspaceButton('打开关联任务',()=>selectTask(milestone.taskId));row.appendChild(document.createTextNode(' '));row.appendChild(taskButton)}card.appendChild(row)}
+    const context=document.createElement('textarea');context.maxLength=1000;context.value=goalContextValues.get(goal.id)||'';context.placeholder='可选补充（最多 1000 字）；只在点击“生成草案”时提交给当前 provider';context.setAttribute('aria-label','目标补充上下文');context.addEventListener('input',()=>goalContextValues.set(goal.id,context.value));card.appendChild(context);
+    const buttons=document.createElement('div');buttons.className='goal-actions';buttons.appendChild(makeWorkspaceButton('生成步骤草案',()=>requestGoalDraft(goal.id,context.value),true,blocked||goalDraftInFlight.has(goal.id)));card.appendChild(buttons);root.appendChild(card);
+  }
+  if(!(dailyGoalSnapshot.goals||[]).length){const empty=document.createElement('div');empty.className='sub';empty.textContent='还没有目标。创建后可选择是否让当前 AI provider 起草步骤。';root.appendChild(empty)}
+  if(blocked)workspaceStatus('goalStatus','目标或任务隐私迁移待确认，当前仅可查看。',true);
+  else if(['目标加载中…',''].includes(document.getElementById('goalStatus').textContent))workspaceStatus('goalStatus','目标 '+(dailyGoalSnapshot.goals||[]).length+' 个 · privacy revision '+dailyGoalSnapshot.privacyRevision);
+  renderGoalDraft();
+}
+function renderGoalDraft(){
+  const panel=document.getElementById('goalDraftPanel');if(!panel)return;panel.replaceChildren();const draft=activeGoalDraft;if(!draft){panel.hidden=true;return}panel.hidden=false;
+  const heading=document.createElement('h3');heading.textContent='草案 · '+draft.goalTitle;panel.appendChild(heading);
+  const provider=document.createElement('div');provider.className='sub';provider.textContent=draft.fallbackProvider?'当前 provider：'+(draft.providerId||'local')+'；已回退至本地规则（'+(draft.fallbackReason||'provider unavailable')+'）。':(draft.providerId==='local'?'由本地规则生成。':'当前 provider：'+(draft.providerId||'local')+'。');panel.appendChild(provider);
+  const note=document.createElement('div');note.className='sub';note.textContent='草案仅保存在当前页面内存；修改并明确确认之前，不创建任务。刷新页面会丢弃未确认草案。';panel.appendChild(note);
+  for(let index=0;index<draft.steps.length;index++){
+    const step=draft.steps[index];const box=document.createElement('div');box.className='goal-step';const label=document.createElement('div');label.className='sub';label.textContent='步骤 '+(index+1);box.appendChild(label);
+    const title=document.createElement('input');title.maxLength=120;title.value=step.title;title.setAttribute('aria-label','步骤 '+(index+1)+' 标题');title.disabled=Boolean(draft.retryPayload);title.addEventListener('input',()=>{draft.steps[index].title=title.value;draft.acceptEventId='';updateGoalDraftAcceptState()});box.appendChild(title);
+    const detail=document.createElement('textarea');detail.maxLength=500;detail.value=step.description||'';detail.placeholder='步骤说明（可选）';detail.disabled=Boolean(draft.retryPayload);detail.setAttribute('aria-label','步骤 '+(index+1)+' 说明');detail.addEventListener('input',()=>{draft.steps[index].description=detail.value;draft.acceptEventId='';updateGoalDraftAcceptState()});box.appendChild(detail);
+    if(!draft.retryPayload)box.appendChild(makeWorkspaceButton('移除此步',()=>{if(draft.steps.length<=1)return;draft.steps.splice(index,1);draft.acceptEventId='';renderGoalDraft()}));panel.appendChild(box);
+  }
+  const buttons=document.createElement('div');buttons.className='goal-actions';
+  if(!draft.retryPayload&&draft.steps.length<8)buttons.appendChild(makeWorkspaceButton('添加步骤',()=>{draft.steps.push({title:'',description:''});draft.acceptEventId='';renderGoalDraft()}));
+  buttons.appendChild(makeWorkspaceButton(draft.retryPayload?'重试确认结果':'确认草案并创建普通任务',()=>acceptGoalDraft(),true,Boolean(draft.submitting)));
+  buttons.appendChild(makeWorkspaceButton('丢弃草案',()=>{activeGoalDraft=null;renderGoalDraft()},false,Boolean(draft.retryPayload||draft.submitting)));
+  panel.appendChild(buttons);const status=document.createElement('div');status.className='status-note';status.id='goalDraftStatus';status.textContent=draft.retryPayload?'上次请求未收到确定结果；重试将使用完全相同的事件 ID 和内容。':'';panel.appendChild(status);updateGoalDraftAcceptState();
+}
+function goalDraftIsValid(draft){return draft.steps.length>=1&&draft.steps.length<=8&&draft.steps.every(step=>String(step.title||'').trim().length>0&&[...String(step.title||'').trim()].length<=120&&[...String(step.description||'')].length<=500)}
+function updateGoalDraftAcceptState(){const draft=activeGoalDraft;const panel=document.getElementById('goalDraftPanel');const button=panel?.querySelector('.goal-actions button.primary');if(button&&!draft?.submitting)button.disabled=!draft?.retryPayload&&!goalDraftIsValid(draft)}
+async function createGoalFromWeb(){
+  if(goalCreateInFlight)return;
+  const title=document.getElementById('goalTitle').value.trim();const description=document.getElementById('goalDescription').value.trim();if(!title)return workspaceStatus('goalStatus','请先输入目标名称。',true);
+  if(dailyGoalSnapshot.migrationRequired)return workspaceStatus('goalStatus','隐私迁移待确认，暂不能创建目标。',true);
+  goalCreateInFlight=true;document.getElementById('goalCreateButton').disabled=true;
+  try{const result=await api('/api/goals',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title,description,privacyRevision:dailyGoalSnapshot.privacyRevision})});document.getElementById('goalTitle').value='';document.getElementById('goalDescription').value='';workspaceStatus('goalStatus','目标已保存：'+result.goal.title);await refreshDailyWorkspace()}
+  catch(error){workspaceStatus('goalStatus','创建未完成：'+error.message+(error.code?' · '+error.code:''),true);if(String(error.code||'').startsWith('privacy_'))await refreshDailyWorkspace()}
+  finally{goalCreateInFlight=false;document.getElementById('goalCreateButton').disabled=false}
+}
+async function requestGoalDraft(goalId,context){
+  if(goalDraftInFlight.has(goalId))return;
+  if(dailyGoalSnapshot.migrationRequired)return workspaceStatus('goalStatus','隐私迁移待确认，暂不能生成草案。',true);
+  goalDraftInFlight.add(goalId);renderGoalWorkspace();
+  try{
+    const response=await api('/api/goals/'+encodeURIComponent(goalId)+'/draft',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({context:String(context||''),privacyRevision:dailyGoalSnapshot.privacyRevision})});
+    const goal=dailyGoalSnapshot.goals.find(item=>item.id===goalId);activeGoalDraft={goalId,goalTitle:goal?.title||'目标',eventId:'',steps:(response.steps||[]).map(step=>({title:String(step.title||''),description:String(step.description||'')})),providerId:response.providerId||'local',fallbackProvider:response.fallbackProvider||null,fallbackReason:response.fallbackReason||response.providerAudit?.fallbackReason||null,privacyRevision:response.privacyRevision,taskPrivacyRevision:dailyGoalSnapshot.taskPrivacyRevision,submitting:false,retryPayload:null};
+    renderGoalDraft();workspaceStatus('goalStatus','草案已生成；请检查、编辑每一步，再明确确认创建任务。');
+  }catch(error){workspaceStatus('goalStatus','草案生成失败：'+error.message+(error.code?' · '+error.code:''),true);if(String(error.code||'').startsWith('privacy_'))await refreshDailyWorkspace()}
+  finally{goalDraftInFlight.delete(goalId);renderGoalWorkspace()}
+}
+async function acceptGoalDraft(){
+  const draft=activeGoalDraft;if(!draft||draft.submitting)return;
+  if(dailyGoalSnapshot.migrationRequired)return workspaceStatus('goalStatus','隐私迁移待确认，暂不能确认草案。',true);
+  if(!draft.retryPayload&&!goalDraftIsValid(draft)){const status=document.getElementById('goalDraftStatus');if(status)status.textContent='请填写 1–8 个有效步骤（标题最多 120 字，说明最多 500 字）。';return}
+  if(!draft.retryPayload&&!confirm('确认当前编辑后的 '+draft.steps.length+' 个步骤，并创建对应普通任务？'))return;
+  if(!draft.retryPayload){draft.acceptEventId=webEventId('goal-accept');draft.retryPayload={eventId:draft.acceptEventId,steps:draft.steps.map(step=>({title:step.title.trim(),description:String(step.description||'').trim()})),privacyRevision:draft.privacyRevision,taskPrivacyRevision:draft.taskPrivacyRevision}}
+  draft.submitting=true;renderGoalDraft();
+  try{
+    const result=await api('/api/goals/'+encodeURIComponent(draft.goalId)+'/accept',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(draft.retryPayload)});
+    activeGoalDraft=null;workspaceStatus('goalStatus',(result.duplicate?'已确认（重复请求安全去重）':'已确认草案并创建 '+(result.tasks||[]).length+' 个普通任务')+'。');renderGoalDraft();await Promise.all([refreshDailyWorkspace(),refreshWorkspaceNow()]);if(result.tasks?.[0])selectTask(result.tasks[0].id);
+  }catch(error){
+    draft.submitting=false;
+    if(!Number.isFinite(error.status)||error.status>=500){draft.retryPayload=draft.retryPayload||null;workspaceStatus('goalStatus','无法确认服务端是否已接受：'+error.message+'。请用“重试确认结果”核对，不要重新编辑。',true)}
+    else{draft.retryPayload=null;draft.acceptEventId='';workspaceStatus('goalStatus','草案未接受：'+error.message+(error.code?' · '+error.code:''),true);if(String(error.code||'').startsWith('privacy_')){await refreshDailyWorkspace();draft.privacyRevision=dailyGoalSnapshot.privacyRevision;draft.taskPrivacyRevision=dailyGoalSnapshot.taskPrivacyRevision}}
+    renderGoalDraft();
+  }
+}
+function refreshDailyWorkspace(){
+  if(dailyRefreshPromise)return dailyRefreshPromise;
+  dailyRefreshPromise=Promise.allSettled([api('/api/routines?cursor=0&limit=20'),api('/api/goals')]).then(results=>{
+    const routine=results[0],goals=results[1];
+    if(routine.status==='fulfilled'){
+      dailyRoutineSnapshot=routine.value;const signature=JSON.stringify({revision:routine.value.revision,privacyRevision:routine.value.privacyRevision,migrationRequired:routine.value.migrationRequired,current:routine.value.current,history:routine.value.history,catalog:routine.value.catalog});
+      if(signature!==routineRenderSignature){routineRenderSignature=signature;renderRoutineWorkspace()}
+    }else workspaceStatus('routineStatus','日常状态读取失败：'+routine.reason.message,true);
+    if(goals.status==='fulfilled'){
+      dailyGoalSnapshot=goals.value;const signature=JSON.stringify(goals.value);
+      if(signature!==goalRenderSignature){goalRenderSignature=signature;renderGoalWorkspace()}
+    }else workspaceStatus('goalStatus','目标状态读取失败：'+goals.reason.message,true);
+  }).finally(()=>{dailyRefreshPromise=null});
+  return dailyRefreshPromise;
+}
+setInterval(renderRoutineTimers,1000);
+setInterval(refreshDailyWorkspace,10000);
+refreshDailyWorkspace();
 refreshPrivacy();
 async function probeSelectedProvider(){
   const id=aiProviderSelect.value;
@@ -2361,7 +2540,7 @@ const handleHttpRequest = async (req, res) => {
         const extraFields = Object.keys(payload).filter(key => !['context', 'privacyRevision'].includes(key));
         if (extraFields.length) throw new GoalBoardError(`unsupported goal draft field: ${extraFields[0]}`);
         const draft = await goalBoard.draftGoal(goalId, { context: payload.context });
-        return sendJson(res, 200, { ok: true, ...draft, privacyRevision: privacyCenter.categoryRevision('goals') });
+        return sendJson(res, 200, { ok: true, ...draft, fallbackReason: draft.providerAudit?.fallbackReason || null, privacyRevision: privacyCenter.categoryRevision('goals') });
       } catch (error) { return sendGoalError(res, error); }
     }
     const goalAcceptMatch = parsedUrl.pathname.match(/^\/api\/goals\/([^/]+)\/accept$/);

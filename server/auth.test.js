@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const { WebSocket } = require('ws');
+const vm = require('node:vm');
 
 test('PhoneBridge Authentication Flow', async (t) => {
   const testDir = path.join(__dirname, 'test-auth-runtime-' + Date.now());
@@ -75,6 +76,27 @@ test('PhoneBridge Authentication Flow', async (t) => {
     const res = await makeRequest('/', 'GET', { 'Cookie': 'phonebridge_token=' + token });
     assert.strictEqual(res.status, 200);
     assert.match(res.body, /退出/);
+  });
+
+  await t.test('workspace page exposes routine, goal, and dynamic privacy workflows', async () => {
+    const res = await makeRequest('/', 'GET', { 'Cookie': 'phonebridge_token=' + token });
+    assert.strictEqual(res.status, 200);
+    for (const id of ['dailyWorkspace', 'routineList', 'goalTitle', 'goalList', 'goalDraftPanel', 'privacyCategories']) {
+      assert.match(res.body, new RegExp(`id="${id}"`), `missing ${id} in web workspace`);
+    }
+    for (const flow of ['routineAction(', 'requestGoalDraft(', 'acceptGoalDraft(', 'selectedPrivacyCategories(']) {
+      assert.ok(res.body.includes(flow), `missing ${flow} in web workspace`);
+    }
+    assert.doesNotMatch(res.body, /prompt\('输入要处理的数据类别/);
+    const scripts = [...res.body.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    assert.ok(scripts.length > 0, 'authenticated workspace should have its app script');
+    for (const [, source] of scripts) assert.doesNotThrow(() => new vm.Script(source));
+    const appScript = scripts[scripts.length - 1][1];
+    const draftFlow = appScript.slice(appScript.indexOf('async function requestGoalDraft'), appScript.indexOf('async function acceptGoalDraft'));
+    assert.doesNotMatch(draftFlow, /\/accept/, 'draft generation must not accept or create tasks');
+    assert.match(appScript, /error\.code=problem\.code/);
+    assert.match(appScript, /routineRetryPayloads\.set\(routineId,payload\)/);
+    assert.match(appScript, /setInterval\(refreshDailyWorkspace,10000\)/);
   });
 
   await t.test('logout clears cookie and returns 200', async () => {

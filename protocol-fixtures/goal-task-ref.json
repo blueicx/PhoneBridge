@@ -1,0 +1,10 @@
+{
+  "id": "task-fixture-001",
+  "title": "完成第一步",
+  "metadata": {
+    "goalId": "goal-fixture-001",
+    "milestoneId": "milestone-fixture-001",
+    "futureMetadataField": "ignored"
+  },
+  "futureTaskField": true
+}

@@ -131,13 +131,13 @@
 
 **接入文件：** `server/index.js` 内嵌 Web UI、`server/enhancement-api.test.js`、`protocol-fixtures/` 与 Kotlin fixture 测试。
 
-- [ ] 在现有 Web 工作台增加“日常”卡片和“个人目标”视图，不重做整页或抢占沉浸主视觉；routine UI 完整支持暂停/继续/跳过/完成/中断及失败提示。
-- [ ] 目标草案按钮显式触发 provider；编辑器确认前不调用接受接口；显示使用的 provider 与本地规则降级原因，但不展示或记录密钥/敏感 prompt。
-- [ ] 目标任务使用既有 task detail/audit 页面；完成状态回写对应里程碑，不复制第二套任务状态机。
-- [ ] 更新现有隐私类别清单/选择器为服务端 overview 驱动，确保 `routines` 与 `goals` 可单独选择导出或删除，旧类别 ID 与旧客户端请求继续有效。
-- [ ] 通过共同 fixtures 验证 Android/Web 共用的 routine action、goal draft/accept、GoalTaskRef 字段；未知扩展字段忽略，缺省状态安全回退。
-- [ ] API/Web 测试覆盖失败消息、刷新恢复、重复提交和无业务写入的 draft 请求。
-- [ ] 运行 `node --test server/*.test.js` 及 `.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`（Android 工作目录 `android`）；执行敏感字段扫描和 `git diff --check`。
+- [x] 在现有 Web 工作台增加“日常”卡片和“个人目标”视图，不重做整页或抢占沉浸主视觉；routine UI 完整支持暂停/继续/跳过/完成/中断及失败提示。
+- [x] 目标草案按钮显式触发 provider；编辑器确认前不调用接受接口；显示使用的 provider 与本地规则降级原因，但不展示或记录密钥/敏感 prompt。
+- [x] 目标任务使用既有 task detail/audit 页面；完成状态回写对应里程碑，不复制第二套任务状态机。
+- [x] 更新现有隐私类别清单/选择器为服务端 overview 驱动，确保 `routines` 与 `goals` 可单独选择导出或删除，旧类别 ID 与旧客户端请求继续有效。
+- [x] 通过共同 fixtures 验证 Android/Web 共用的 routine action、goal draft/accept、GoalTaskRef 字段；未知扩展字段忽略，缺省状态安全回退。
+- [x] API/Web 测试覆盖失败消息、刷新恢复、重复提交和无业务写入的 draft 请求。
+- [x] 运行 `node --test server/*.test.js`（225/225）及 `:app:testDebugUnitTest`（165/165）、`:app:lintDebug`、`:app:assembleDebug`；执行敏感字段扫描、性能预算、`node --check server/index.js` 和 `git diff --check`。
 - [ ] 更新 `README.md` 与 `HANDOFF.md`，注明本机/服务端分别保存何种记录与无需权限的限制。提交批次 B 并 push；等待最新 GitHub Actions 后进入批次 C。
 
 ## 批次 C：从结算收据派生探索日志

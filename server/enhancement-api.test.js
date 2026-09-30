@@ -551,6 +551,7 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     assert.equal(draft.response.status, 200, JSON.stringify(draft.body));
     assert.ok(draft.body.steps.length > 0 && draft.body.steps.length <= 8);
     assert.equal(draft.body.providerAudit.providerId, 'local');
+    assert.equal(draft.body.fallbackReason, null);
     assert.deepEqual((await request('/api/tasks?source=goal')).body.tasks, []);
     assert.deepEqual((await request('/api/goals')).body.goals, goalsBeforeDraft.body.goals);
     const rejectedDraft = await request(`/api/goals/${encodeURIComponent(goalId)}/draft`, {

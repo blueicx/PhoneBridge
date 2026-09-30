@@ -104,6 +104,18 @@ class GoalBoardModelsTest {
         assertEquals(2, draft.steps.size)
     }
 
+    @Test
+    fun sharedGoalTaskReferenceFixtureIgnoresExtensionsAndDefaultsMissingState() {
+        val task = parseWorkspaceJsonObject(fixture("goal-task-ref.json"))
+        val refs = GoalBoardProtocol.taskRefs(listOf(task))
+
+        assertEquals(1, refs.size)
+        assertEquals("task-fixture-001", refs.single().taskId)
+        assertEquals("goal-fixture-001", refs.single().goalId)
+        assertEquals("milestone-fixture-001", refs.single().milestoneId)
+        assertEquals("pending", refs.single().state)
+    }
+
     private fun fixture(name: String): String =
         javaClass.getResourceAsStream("/$name")?.bufferedReader()?.use { it.readText() }
             ?: java.io.File("../../protocol-fixtures/$name").readText()

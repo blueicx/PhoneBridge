@@ -311,3 +311,14 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 内部 Debug artifact `phonebridge-debug-cd4eee96b3e592d6cff662ae0f08e27348279d06`（artifact ID `11086944240`，65,468,054 bytes；ZIP SHA-256 `73afd3877a2cec78591e8978459827e5eda7836aac6edd7a6f7a95cbe3265790`）仅保存在 GitHub Actions，未加入源码历史。手机未触碰、未安装、未授予权限；实机体验与正式 Release 签名仍待各自门槛。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
+
+## 2026-09-30 批次 B4：Web 日常、目标与隐私工作台
+
+- 现有工作台新增日常活动卡片，读取服务端例程目录、活动/历史状态及 revision；支持开始、暂停、继续、跳过、完成和中断。睡前回顾只在完成时提交，错误会显示服务端原因；网络结果不确定时以相同 `eventId` 重试，避免重复记录。活动计时按前台页面时钟展示，不申请定位/相机权限。
+- 新增个人目标工作区。AI 步骤草案仅在用户点击后请求当前 provider，显示 provider 与本地回退原因；编辑器确认前不会调用 accept 或创建任务。确认后只创建普通 Workspace task，并打开现有任务详情/审计；里程碑状态仍读取同一任务状态机。草案和补充上下文仅在当前页面内存保留，不记录进 provider 审计。
+- 隐私类别勾选项从 `/api/privacy/overview` 动态生成，默认不勾选；`routines`、`goals` 可各自选择加密导出或删除，不再要求手输类别 ID。服务端保留既有类别 ID 与旧客户端兼容。
+- Node/Kotlin 共用 routine、goal/draft 与新增 `goal-task-ref.json` fixtures，覆盖未知扩展字段忽略及缺失 task 状态安全回退。Web 脚本在认证页面测试中作语法编译检查，并验证草案调用与确认任务相互独立。
+- 本机验证：Node **225/225**；Android JVM **165/165**；Android `lintDebug` 与 `assembleDebug` 成功；`node --check server/index.js`、密钥扫描、性能预算和 `git diff --check` 通过。最终性能预算 `elapsedMs=0.735`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。
+- GitHub Actions 将在 B4 推送后对最新 SHA 验收。此批未运行 ADB、未安装/操作手机；UI 实际交互与真机仍待验收。
+
+实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
