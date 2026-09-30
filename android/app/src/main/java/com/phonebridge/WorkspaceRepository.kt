@@ -129,6 +129,10 @@ class WorkspaceRepository internal constructor(
         dao.privacyState(category)?.takeUnless { it.migrationRequired }?.revision
     }
 
+    suspend fun explorationLogOutbox(limit: Int = 500): List<WorkspaceOutboxEntity> = withContext(Dispatchers.IO) {
+        dao.explorationOutbox(limit.coerceIn(1, 1_000))
+    }
+
     /** Enqueues one routine action and its pending mirror atomically; server confirmation remains authoritative. */
     suspend fun enqueueRoutineAction(event: WorkspaceEvent, request: RoutineActionRequest): RoutineActionQueueResult = withContext(Dispatchers.IO) {
         database.withTransaction {

@@ -156,27 +156,27 @@
 - [x] 探索日志归入 `progress`：沿用既有加密导出与删除 adapter；确保进度删除同步清理对应日志投影来源，日志不可独立发奖。
 - [x] 运行定向测试 **43/43** 与 Node 全量 **234/234**；隐私删除 API 回归、旧版 ID 分页、`node --check`、敏感扫描、性能预算和 `git diff --check` 本地通过。
 - [x] C1 已提交并 push；源码 SHA `6c68b499bc986e5964eeb73babf5cb911f502f81` 的 GitHub Actions [run 36723923575](https://github.com/blueicx/PhoneBridge/actions/runs/36723923575) attempt 5 全绿，Room emulator migration **10/10**，Lint、Debug 构建及发布门禁通过。
-- [ ] 推送本次 CI 证据交接更新后，确认新 HEAD 的 GitHub Actions 全绿，再进入 C2；不要将上一 SHA 的成功误记为新 HEAD 的 CI 结果。
+- [x] C1 CI 证据交接更新已推送；新 HEAD `9a1009f74a3c8477499e04426caa9bacf6ebba70` 的 GitHub Actions [run 36740504032](https://github.com/blueicx/PhoneBridge/actions/runs/36740504032) 全绿，之后才开始 C2。
 
 ### C2. Android 确认/待同步日志合并
 
 **新增文件：** `android/app/src/main/java/com/phonebridge/ExplorationLog.kt`、`android/app/src/test/java/com/phonebridge/ExplorationLogTest.kt`。
 
-**接入文件：** `WorkspaceClient.kt`、`WorkspaceRepository.kt`、`WorkspaceProtocol.kt`、`MainActivity.kt`。
+**接入文件：** `WorkspaceClient.kt`、`WorkspaceRepository.kt`、`WorkspaceEntities.kt`、`MainActivity.kt`；复用既有 `WorkspaceEventTypes.MOTE_EXPLORATION` 协议常量。
 
-- [ ] 先写测试：离线 outbox 线索显示为待同步且不显示已领奖；ACK accepted/duplicate 后用服务端 receipt 替换同 `eventId` 待同步项；business rejection 显示原因且不创建已确认奖励；分页重叠按 eventId 去重；revision 变化后按 progress 类别清理。
-- [ ] Android 日志 repository 合并两种来源：服务端分页已确认 log 与本地尚未确认的 exploration outbox。服务端 receipt 优先；待同步项只标明线索类型、创建时间及“奖励待确认”，不得推算或展示奖励到账。
-- [ ] 单条日志详情允许查看已有 receipt 并跳转到 Reality 入口；遭遇已过期时只能查看结果，不重启遭遇、不二次领奖。
-- [ ] 网络恢复继续走唯一 Workspace outbox worker；不能为日志新增第二个同步 worker。新服务端页面请求使用游标并缓存已有页。
-- [ ] 添加共享 `protocol-fixtures/reality-log.json`，覆盖 confirmed/pending 两种 view-state、粗区域和奖励 receipt 的稳定字段；Node/Kotlin 均验证 privacy allowlist。
-- [ ] 运行 `.\gradlew.bat :app:testDebugUnitTest`。
+- [x] 先写测试：离线 outbox 线索显示为待同步且不显示已领奖；ACK accepted/duplicate 后用服务端 receipt 替换同 `eventId` 待同步项；business rejection 显示原因且不创建已确认奖励；分页重叠按 eventId 去重；progress revision 变化清页并忽略旧 outbox/迟到旧页。
+- [x] Android 日志投影合并两种来源：服务端分页已确认 log 与本地 exploration outbox。服务端 receipt 优先；待同步项只保留线索类型、粗区域、时间与 ACK 状态，不推算奖励；拒绝原因仅接受安全代码。
+- [ ] 日志详情、Reality 深链及过期遭遇只读 UI 由 C3 接入；C2 数据投影不提供任何重新遭遇或领奖入口。
+- [x] 网络恢复沿用唯一 Workspace outbox worker；无新增同步 worker。游标限制 base64url 且页面缓存最多 500 条；progress revision 变化清缓存并要求从第一页重取。
+- [x] 添加共享 `protocol-fixtures/reality-log.json`，覆盖 confirmed/pending/rejected、粗区域和奖励 receipt 稳定字段；Node/Kotlin 均验证 privacy allowlist。
+- [x] 运行定向探索日志测试、全量 Android 单测/Lint/Debug 构建；Node 全量与本地扫描通过，实际 emulator SQLite migration 仍以推送后的 CI 为验收门。
 
 ### C3. Web / Android 日志入口、隐私回归与交付
 
 **接入文件：** `server/index.js` 内嵌 Web UI、`MainActivity.kt` 抽屉 UI、共享 fixtures 与相关测试。
 
 - [ ] Web 工作台提供按时间分页的探索记录和 receipt 详情；仅确认收据显示真实奖励，日志行可跳至相关 Reality 记录；删除 `progress` 后刷新结果为空。
-- [ ] Android 抽屉提供同一日志字段与状态文案：已确认、待同步、被拒绝。无网/权限拒绝不隐藏日志入口，也不伪造粗区域或实地验证。
+- [ ] Android 抽屉提供同一日志字段与状态文案：已确认、待同步、被拒绝；详情显示已有 receipt、跳转 Reality，已过期遭遇仅可查看。无网/权限拒绝不隐藏日志入口，也不伪造粗区域或实地验证。
 - [ ] 回归隐私删除顺序：清除 `progress` 后服务端 Reality、growth、Mote 成长原始 receipt 同时不可被日志接口重新投影；客户端对应缓存/outbox 按 revision 清理或隔离；`routines`、`goals` 独立删除不影响 exploration log。
 - [ ] 回归目标删除、任务类别删除、routine 中断、provider 本地降级、旧客户端 revision 缺失、重复线索 eventId；确保无重复奖励、无静默重放。
 - [ ] 更新 `README.md` 与 `HANDOFF.md`，分栏报告自动验证、当前实机证据、未验收设备项、签名发布阻塞及复现命令。提交批次 C 并 push；不把 CI 结果写成实机结果。

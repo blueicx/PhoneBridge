@@ -293,6 +293,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var deviceHealthState = DeviceHealthState()
     private val workspaceClient = WorkspaceClient()
     private val workspaceRepository by lazy { WorkspaceRepository.get(this) }
+    private val explorationLogStore = ExplorationLogStore()
+    @Volatile private var explorationLogSnapshot = ExplorationLogSnapshot()
     private val appearanceButtons = mutableMapOf<PetAppearance, Button>()
     private val themeButtons = mutableMapOf<UiTheme, Button>()
     private lateinit var themeApplier: ThemeApplier
@@ -3090,6 +3092,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         reconcilePrivacyMigration {
             reconcilePrivacyDeletionHistory {
                 flushWorkspaceOutbox()
+                refreshExplorationLog()
                 drainChatOutbox()
                 pendingAutoCommand?.let { command ->
                     sendJson(JSONObject().put("type", "command").put("text", command))
@@ -3310,6 +3313,58 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
     }
 
+    private fun refreshExplorationLog(
+        cursor: String? = null,
+        restartAfterRevisionChange: Boolean = true
+    ) {
+        appScope.launch(Dispatchers.IO) {
+            val revision = workspaceRepository.privacyRevision("progress")
+            if (revision == null) {
+                withContext(Dispatchers.Main) {
+                    explorationLogStore.reset()
+                    explorationLogSnapshot = ExplorationLogSnapshot()
+                }
+                return@launch
+            }
+            val outbox = workspaceRepository.explorationLogOutbox()
+            withContext(Dispatchers.Main) {
+                if (destroyed) return@withContext
+                fun applyLocalOnly() {
+                    explorationLogSnapshot = explorationLogStore.applyPage(
+                        ExplorationLogPage(emptyList(), null),
+                        outbox,
+                        revision
+                    )
+                }
+
+                if (!BridgeLink.isOnline) {
+                    applyLocalOnly()
+                    return@withContext
+                }
+                workspaceRequest(
+                    path = workspaceClient.realityLogPath(cursor = cursor, limit = 50),
+                    onSuccess = { json ->
+                        val snapshot = explorationLogStore.applyPage(
+                            ExplorationLogParser.parsePage(json),
+                            outbox,
+                            revision
+                        )
+                        explorationLogSnapshot = snapshot
+                        if (snapshot.requiresRefreshFromStart && restartAfterRevisionChange) {
+                            refreshExplorationLog(cursor = null, restartAfterRevisionChange = false)
+                        }
+                    },
+                    onError = {
+                        applyLocalOnly()
+                        if (cursor != null && restartAfterRevisionChange) {
+                            refreshExplorationLog(cursor = null, restartAfterRevisionChange = false)
+                        }
+                    }
+                )
+            }
+        }
+    }
+
     private fun endpointIdentity(raw: String): String = raw.trim()
         .substringAfter("://", raw.trim())
         .substringBefore('/')
@@ -3325,8 +3380,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             payload = payload.toString()
         )
         appScope.launch(Dispatchers.IO) {
-            workspaceRepository.enqueue(event)
-            withContext(Dispatchers.Main) { scheduleOutboxSync() }
+            val inserted = workspaceRepository.enqueue(event)
+            withContext(Dispatchers.Main) {
+                scheduleOutboxSync()
+                if (inserted && type == WorkspaceEventTypes.MOTE_EXPLORATION) refreshExplorationLog()
+            }
         }
     }
 
@@ -3389,6 +3447,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                             }
                             loadRealityRewardReceipt(clueEventId)
                         }
+                        refreshExplorationLog()
                     }
                 }
             }
@@ -4973,6 +5032,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     focusSpeechStack.removeAllViews()
                 }
                 if ("progress" in categories) {
+                    explorationLogStore.reset()
+                    explorationLogSnapshot = ExplorationLogSnapshot()
                     getSharedPreferences("mote_roster", Context.MODE_PRIVATE).edit().clear().apply()
                     getSharedPreferences("mote_pet", Context.MODE_PRIVATE).edit().clear().apply()
                     moteRosterJson = JSONArray()
@@ -4985,6 +5046,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     realityLensView.setNearbyEvents(emptyList())
                     pet = PetState()
                     savePet()
+                    refreshExplorationLog()
                 }
                 if ("tasks" in categories) {
                     activeTasks.clear()
@@ -7876,6 +7938,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     override fun onResume() {
         super.onResume()
         updateAmbientSound()
+        refreshExplorationLog()
         if (::arCoreRenderView.isInitialized) {
             arCoreRenderView.onHostResume()
             handleArCoreInstallResume()

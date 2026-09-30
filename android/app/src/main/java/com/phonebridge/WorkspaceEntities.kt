@@ -413,6 +413,9 @@ abstract class WorkspaceDao {
     @Query("SELECT * FROM workspace_outbox ORDER BY createdAt ASC")
     abstract suspend fun allOutbox(): List<WorkspaceOutboxEntity>
 
+    @Query("SELECT * FROM workspace_outbox WHERE type = 'mote.exploration' AND quarantined = 0 ORDER BY createdAt DESC LIMIT :limit")
+    abstract suspend fun explorationOutbox(limit: Int): List<WorkspaceOutboxEntity>
+
     @Query("DELETE FROM workspace_outbox WHERE eventId = :eventId")
     abstract suspend fun deleteOutboxEvent(eventId: String)
 

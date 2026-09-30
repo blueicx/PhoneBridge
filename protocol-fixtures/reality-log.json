@@ -1,0 +1,60 @@
+{
+  "contractVersion": 1,
+  "privacyCategory": "progress",
+  "privacyRevision": 4,
+  "allowedServerEntryFields": [
+    "eventId",
+    "status",
+    "occurredAt",
+    "coarseRegion",
+    "clueType",
+    "moteId",
+    "observation",
+    "reward"
+  ],
+  "serverPage": {
+    "entries": [
+      {
+        "eventId": "reality-lens:v2:2026-09-30:cell:1:2:object:object_01",
+        "status": "confirmed",
+        "occurredAt": 1790769600000,
+        "coarseRegion": "cell:1:2",
+        "clueType": "object",
+        "moteId": "sprite",
+        "observation": "叶狐：一起留意可观察的物体线索。",
+        "reward": {
+          "xp": 3,
+          "items": [],
+          "boost": null
+        }
+      }
+    ],
+    "nextCursor": null
+  },
+  "pendingOutbox": {
+    "transportEventId": "transport-pending-1",
+    "createdAt": 1790770200000,
+    "privacyCategory": "progress",
+    "privacyRevision": 4,
+    "payload": {
+      "eventId": "reality-lens:v2:2026-09-30:cell:3:4:light:offline_01",
+      "clueType": "light",
+      "region": "cell:3:4",
+      "offline": true
+    }
+  },
+  "rejectedOutbox": {
+    "transportEventId": "transport-rejected-1",
+    "createdAt": 1790770300000,
+    "privacyCategory": "progress",
+    "privacyRevision": 4,
+    "businessStatus": "rejected",
+    "businessReason": "offline_event_expired",
+    "payload": {
+      "eventId": "reality-lens:v2:2026-09-30:cell:3:4:location:offline_02",
+      "clueType": "location",
+      "region": "cell:3:4",
+      "offline": true
+    }
+  }
+}

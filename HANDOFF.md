@@ -1,6 +1,15 @@
 # PhoneBridge 交接文档（Round 57 综合基线 / Round 63 收口）
 
-更新时间：2026-09-08（以证据文件与测试验证时间为准）
+## 当前交接覆盖（2026-10-01）
+
+- 当前目标分支：`feature/integrated-enhancement`；工作树 `F:\CodexApps\PhoneBridge-worktrees\integrated-enhancement`；不改 `main`。C2 Android 探索日志数据层已完成本地验证，推送后的 SHA/CI 状态以 GitHub Actions 最新运行记录为准。
+- C1 的交接证据提交 `9a1009f74a3c8477499e04426caa9bacf6ebba70` 已由 GitHub Actions run `36740504032` 全绿验证；包含 Node、Android 单测、Room migration、Lint、Debug 构建和发布门禁。
+- C2 已新增严格的 confirmed/pending/rejected 投影；ACK 不伪造奖励，confirmed 服务端收据优先，同一 `eventId` 去重。Android 从 progress 分类 outbox 读取有限日志、使用受限 base64url 游标请求服务端分页，并在 privacy revision 变化时丢弃旧页；陈旧 revision 的迟到响应不能恢复已清除缓存。
+- C2 本地验证：Node **235/235**；Android 定向 `ExplorationLogTest`、全量 `:app:testDebugUnitTest`、`:app:lintDebug`、`:app:assembleDebug` 通过；`scan_secrets.ps1`、`bench_workspace.ps1`、`git diff --check` 通过。正式批次还须 push 后确认最新 SHA Actions 全绿。
+- 当前未运行 ADB、未安装 APK、未做实机线索/网络恢复验收。探索日志抽屉、收据详情和 Reality 深链留给 C3；ARCore 真平面、GPS 与语音实机状态仍按已留存证据逐项核对，不以本地测试替代。
+- 下一步：提交并推送 C2；最新 SHA CI 全绿后才进入 C3 的 Web/Android 日志入口与隐私回归。
+
+更新时间：2026-10-01（以本节覆盖的当前工作树与自动验证记录为准）
 
 ## 0. Round 58 当前状态覆盖（2026-09-08）
 

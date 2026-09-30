@@ -16,6 +16,22 @@ data class WorkspaceHttpResponse(val statusCode: Int, val body: String) {
 class WorkspaceClient {
     private val clientsByFingerprint = ConcurrentHashMap<String, OkHttpClient>()
 
+    fun realityLogPath(cursor: String? = null, limit: Int = 50): String {
+        require(limit in 1..100) { "reality log limit must be between 1 and 100" }
+        val normalizedCursor = cursor?.takeIf(String::isNotBlank)
+        require(normalizedCursor == null || REALITY_LOG_CURSOR.matches(normalizedCursor)) {
+            "reality log cursor must be base64url"
+        }
+        return buildString {
+            append("/api/reality/log?limit=")
+            append(limit)
+            if (normalizedCursor != null) {
+                append("&cursor=")
+                append(normalizedCursor)
+            }
+        }
+    }
+
     internal fun clientForFingerprint(certificateFingerprint: String?): OkHttpClient {
         val fingerprint = certificateFingerprint?.trim()?.takeIf(String::isNotEmpty)
             ?.lowercase(Locale.ROOT)
@@ -68,5 +84,6 @@ class WorkspaceClient {
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private val REALITY_LOG_CURSOR = Regex("^[A-Za-z0-9_-]{1,512}$")
     }
 }
