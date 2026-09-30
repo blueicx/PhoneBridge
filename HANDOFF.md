@@ -523,7 +523,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_reality_clues.p
 - 新增 `GET /api/reality/log`，日志是 Reality 与 MoteGrowth 已确认奖励收据的只读投影；不新增账本、不触发领奖。按 `(occurredAt,eventId)` 稳定倒序分页，同一 `eventId` 合并为一条，cursor 仅接受当前日志中存在的 keyset。
 - 条目字段采用 allowlist：`eventId`、确认状态、时间、粗区域、线索类型、当前 Mote、固定观察语句及实际奖励。图像、经纬度、连续轨迹、事件标题和任意观察文本不会进入响应。畸形/未知 cursor 与越界 limit 返回 400。
 - 旧版 Reality/MoteGrowth 收据仅在 ID 可验证为粗区域、三类已知线索和安全字符后缀时纳入；区域/线索与收据身份不一致、时间无效、未确认或拒绝的记录会被排除。`progress` 删除清理两个原始收据来源，所以日志不会复活已删除内容。
-- 验证：C1 定向 Node 测试 **43/43**，Node 全量 **234/234**；隐私删除 API 回归、旧版分页和无效道具 ID 拒绝测试通过。`node --check`、敏感扫描、`git diff --check` 与性能预算均通过；性能脚本结果 `elapsedMs=0.860`、快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。最新 commit 的 GitHub Actions 尚待本批提交后记录。
+- 验证：C1 定向 Node 测试 **43/43**，Node 全量 **234/234**；隐私删除 API 回归、旧版分页和无效道具 ID 拒绝测试通过。`node --check`、敏感扫描、`git diff --check` 与性能预算均通过；性能脚本结果 `elapsedMs=0.860`、快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。源码 SHA `6c68b499bc986e5964eeb73babf5cb911f502f81` 的 GitHub Actions [run 36723923575](https://github.com/blueicx/PhoneBridge/actions/runs/36723923575) attempt 5 全绿（40m44s）：Node、Android JVM、Room emulator **10/10**、Lint、Debug 构建、签名元数据、发布清单、artifact 上传、diff whitespace 与清洁工作树均通过。attempt 4 曾在测试启动后由操作者提前取消（0/10），不作为失败结果；attempt 5 完整通过。
 - 本批未运行 ADB、安装 APK 或操作手机；Android 日志 UI 与 outbox 合并留在 C2/C3。现实镜头、实机奖励和长时间运行仍待独立设备验收；正式 Release 签名继续受独立加密恢复副本门禁约束。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。

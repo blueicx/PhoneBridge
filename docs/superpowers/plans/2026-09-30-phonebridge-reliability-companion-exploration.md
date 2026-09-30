@@ -155,7 +155,8 @@
 - [x] 使用当前 Mote profile 与 clueType 生成固定观察提示；不将模型生成自由文本、原始图像或精确位置写入日志；安全的 v1 receipt ID 可读取，未知/自由文本 ID 拒绝投影。
 - [x] 探索日志归入 `progress`：沿用既有加密导出与删除 adapter；确保进度删除同步清理对应日志投影来源，日志不可独立发奖。
 - [x] 运行定向测试 **43/43** 与 Node 全量 **234/234**；隐私删除 API 回归、旧版 ID 分页、`node --check`、敏感扫描、性能预算和 `git diff --check` 本地通过。
-- [ ] 提交并 push C1；确认包含源码和交接文档的最新 SHA 上 GitHub Actions 全绿后，再进入 C2。
+- [x] C1 已提交并 push；源码 SHA `6c68b499bc986e5964eeb73babf5cb911f502f81` 的 GitHub Actions [run 36723923575](https://github.com/blueicx/PhoneBridge/actions/runs/36723923575) attempt 5 全绿，Room emulator migration **10/10**，Lint、Debug 构建及发布门禁通过。
+- [ ] 推送本次 CI 证据交接更新后，确认新 HEAD 的 GitHub Actions 全绿，再进入 C2；不要将上一 SHA 的成功误记为新 HEAD 的 CI 结果。
 
 ### C2. Android 确认/待同步日志合并
 
