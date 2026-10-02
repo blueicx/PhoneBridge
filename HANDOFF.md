@@ -1,19 +1,16 @@
-# PhoneBridge 交接文档（Round 57 综合基线 / Round 63 收口）
+# PhoneBridge 交接文档（Round 63 收口 / 当前状态）
 
-## 当前交接覆盖（2026-10-01）
+## 当前交接覆盖（2026-10-03）
 
-- 当前目标分支：`feature/integrated-enhancement`；工作树 `F:\CodexApps\PhoneBridge-worktrees\integrated-enhancement`；不改 `main`。C2 源码提交 `b136adf55aca98c156b3dcca1eb019c04e880ff2` 的 GitHub Actions [run 36750431937](https://github.com/blueicx/PhoneBridge/actions/runs/36750431937) attempt 2 已全绿，耗时 **41 分 37 秒**；attempt 1 是模拟器启动超时，不是代码测试失败，也不是运行了一整天。
-- C3 已接入 Web 分页探索记录、receipt 详情与只读 Reality 历史卡片，以及 Android 抽屉日志、确认记录详情和只读 Reality 入口。真实奖励仅来自确认收据；待同步、已 ACK 未结算和拒绝项不会伪装成奖励；镜头记录不伪造区域/位置。
-- `progress` 删除现在清除服务端探索收据投影与本机日志镜像/outbox；客户端请求代次门禁阻止清除前发出的迟到页恢复旧记录。`routines`、`goals` 单独删除仍保留探索日志。
-- C3 本机验证：`node --check server/index.js` 与 Node 全量 **236/236**；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 全部通过，新增“首屏刷新/隐私清理使在途页失效”测试经过红灯后通过；浏览器交互覆盖确认收据 eventId/Mote/奖励、只读 Reality 跳转和 `progress` 删除刷新。`scan_secrets.ps1`、`git diff --check` 通过；性能预算结果 `elapsedMs=0.649`、snapshot `1694/48 bytes`、缓存命中 `10000`、突发广播 `1`。
-- Debug APK `com.phonebridge` `2.2.0` / code `4`，`93,857,764` bytes，SHA-256 `7EBF312DFF7E80B1DE856A68D2DE6546782F089CC7F5D9249DF63BAA10AE188F`；`verify_release_gates.ps1 -Channel internal-debug` 与 `apksigner verify` 通过，签名为 Android Debug / v2。APK 仅为本机构建产物，未加入源码历史；不代表正式签名发布。
-- C3 实机部分验收：无线 ADB 身份为 Xperia XZ2 / Android 15；电量 **76%**、温度 **34.2°C**。`adb install -r` 安装本批 Debug APK 成功并保留应用数据；`am start -W` 返回 `Status: ok`，启动后采集日志未发现 `FATAL EXCEPTION`。但设备当前处于锁屏，界面树仅包含系统锁屏，未绕过锁屏；因此不宣称已看到主界面、打开探索记录、点击历史 Reality 或完成线索/权限验收。没有授予相机或定位权限。
-- 复现本机自动检查：仓库根目录运行 `node --check server/index.js`、`node --test server/*.test.js`、`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/scan_secrets.ps1`、`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bench_workspace.ps1`、`git diff --check`；Android 在 `android` 目录运行 `.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`。浏览器真实交互由临时测试脚本完成，脚本已清除，没有作为依赖提交。
-- C3 远端验收入口：[`feature/integrated-enhancement` 最新 Actions](https://github.com/blueicx/PhoneBridge/actions?query=branch%3Afeature%2Fintegrated-enhancement)。每次 push 后只认该批实际最新 SHA 的全绿记录；C3 的精确提交与对应 run URL 在交付时一并报告。此前 C2 的 41 分 37 秒是已结束的独立 run，不是运行一整天。
-- 本批已连接 ADB 并安装/启动 Debug 包，但因锁屏未完成手机日志抽屉 UI 验收；真实线索/网络恢复、相机/位置权限、ARCore 平面和长时间运行不由浏览器或 CI 结果代替。正式签名仍需经验证的独立加密恢复副本。
-- 设备与发布边界：实机验收、ARCore 真平面及正式签名仍为独立待办；不得用 Debug APK、浏览器验收或 CI 模拟器替代。
+- 当前目标分支为 `feature/integrated-enhancement`，工作树为 `F:\CodexApps\PhoneBridge-worktrees\integrated-enhancement`；以 `53ec6e5` 为本轮 UI 改版基线，不修改 `main`。本轮推送后的最新提交与 GitHub Actions 结果须在交付时单独核对。
+- 双端沉浸式 UI 已实施：共享 [`shared/ui-themes.json`](shared/ui-themes.json) 提供“玻璃 / 流光 / 夜芯”三套语义色，默认夜芯；Node 与 Android 按相同 `#AARRGGBB` 解释透明色。Android 沿用已保存主题 ID，旧枚举名映射到新主题；Web 与 Android 分别在浏览器 `localStorage` 和 Android 偏好中记忆选择。
+- Android 保留原生伙伴舞台与现实镜头，首屏主题控制移入“舞台与家园”设置；沉浸工具的目标尺寸至少 48dp。Web 默认展示 Mote 舞台，20 种 `visualPreset` 使用独立 SVG 外形；任务/设备工作台收进响应式指挥抽屉，不新增服务端 API。舞台复用 `/api/companion/summary`、`/api/motes`、`/api/motes/behavior`，并缓存角色和状态；节点接口断开时明确显示离线状态。
+- Web 抽屉支持焦点陷阱、关闭后焦点返回、Escape 关闭；焦点等待抽屉实际可见后再移动。键盘操作不播放抽屉/按钮过渡；系统减弱动态时移除角色/位移动画，同时保留短暂透明度提示；应用开关单独记忆并减少角色动画。
+- 本机验收：Node 全量 **244/244**；Android JVM **180/180**；`:app:lintDebug`、`:app:assembleDebug` 成功。无头 Chromium 覆盖移动/桌面布局、无横向溢出、离线缓存、断网后过期在线摘要、三主题切换与 `AARRGGBB` 颜色、减弱动态、控件触控尺寸和键盘焦点；认证页面脚本编译回归通过。密钥扫描、`node --check`、`git diff --check` 通过；工作区性能基准 `elapsedMs=1.187`、full snapshot `1694 bytes`、summary `48 bytes`、cache hits `10000`、burst broadcasts `1`。
+- 本轮未完成 Xperia 实机 UI 验收：系统 ADB 在默认端口及隔离的 5038 端口均返回 server protocol fault，无法可靠读取设备/锁屏状态。本轮没有安装、启动或修改手机，也没有申请权限；重新连接后应先确认设备身份与解锁状态，再验收 Android 沉浸首屏、主题抽屉、PTT 与探索入口。历史 2026-10-01 锁屏记录不代表本轮实时状态。
+- 推送与远端验收：本地门禁已通过；推送后以 [`feature/integrated-enhancement` 最新 Actions](https://github.com/blueicx/PhoneBridge/actions?query=branch%3Afeature%2Fintegrated-enhancement) 对应最新 SHA 的结果为准，在全绿前不得记为远端完成。Release 签名仍受已验证的独立加密密钥恢复副本门禁约束；CI Debug APK 不进入源码历史。
 
-更新时间：2026-10-01（以本节覆盖的当前工作树与自动验证记录为准）
+更新时间：2026-10-03（以本节与当前功能分支为准）
 
 ## 0. Round 58 当前状态覆盖（2026-09-08）
 

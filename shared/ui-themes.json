@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "defaultTheme": "noir",
+  "themes": [
+    {
+      "id": "glass",
+      "label": "玻璃",
+      "tokens": {
+        "backgroundTop": "#070B16",
+        "backgroundBottom": "#101C36",
+        "panel": "#F2122344",
+        "card": "#E6182C4A",
+        "input": "#E614243E",
+        "bubble": "#E81A304C",
+        "stroke": "#729FD8FF",
+        "accent": "#FF9FE8FF",
+        "secondary": "#FFC7A7FF",
+        "textPrimary": "#FFF2F8FF",
+        "textSecondary": "#FFAFC4DE",
+        "buttonText": "#FFDFF3FF",
+        "buttonFill": "#B2192B45",
+        "buttonPressed": "#D92C4A73",
+        "success": "#FF72E5B1",
+        "warning": "#FFFFC86B",
+        "danger": "#FFFF7777",
+        "focus": "#FF9FE8FF"
+      }
+    },
+    {
+      "id": "liquid",
+      "label": "流光",
+      "tokens": {
+        "backgroundTop": "#04101B",
+        "backgroundBottom": "#132B2C",
+        "panel": "#E60D2028",
+        "card": "#E6113038",
+        "input": "#E60F252E",
+        "bubble": "#E6143844",
+        "stroke": "#8264FFDA",
+        "accent": "#FF64FFDA",
+        "secondary": "#FFFF7EB6",
+        "textPrimary": "#FFF0FFFA",
+        "textSecondary": "#FFB8D6D1",
+        "buttonText": "#FFDDFFF4",
+        "buttonFill": "#B30F2A33",
+        "buttonPressed": "#E6184652",
+        "success": "#FF72E5B1",
+        "warning": "#FFFFC86B",
+        "danger": "#FFFF7777",
+        "focus": "#FF64FFDA"
+      }
+    },
+    {
+      "id": "noir",
+      "label": "夜芯",
+      "tokens": {
+        "backgroundTop": "#060606",
+        "backgroundBottom": "#151311",
+        "panel": "#E00E0E0E",
+        "card": "#CC141414",
+        "input": "#D9111111",
+        "bubble": "#E0181818",
+        "stroke": "#40FFC86B",
+        "accent": "#FFFFB84D",
+        "secondary": "#FF53FFF2",
+        "textPrimary": "#FFF7F5F0",
+        "textSecondary": "#FFA6ADA8",
+        "buttonText": "#FFFFEFD4",
+        "buttonFill": "#CC121212",
+        "buttonPressed": "#E628241C",
+        "success": "#FF8FF0C4",
+        "warning": "#FFFFC86B",
+        "danger": "#FFFF7777",
+        "focus": "#FFFFB84D"
+      }
+    }
+  ]
+}

@@ -99,6 +99,29 @@ test('PhoneBridge Authentication Flow', async (t) => {
     assert.match(appScript, /setInterval\(refreshDailyWorkspace,10000\)/);
   });
 
+  await t.test('immersive Mote stage leads the page and keeps controls in an accessible drawer', async () => {
+    const res = await makeRequest('/', 'GET', { 'Cookie': 'phonebridge_token=' + token });
+    assert.strictEqual(res.status, 200);
+    assert.match(res.body, /<html lang="zh-CN" data-theme="noir">/);
+    assert.ok(res.body.indexOf('id="moteStage"') < res.body.indexOf('id="commandDrawer"'));
+    for (const id of ['moteVisual', 'stageOffline', 'themeSelect', 'reduceMotionToggle', 'drawerScrim']) {
+      assert.match(res.body, new RegExp(`id="${id}"`), `missing ${id} in immersive web page`);
+    }
+    assert.match(res.body, /phonebridge:web:theme/);
+    assert.match(res.body, /phonebridge:web:stage:v1/);
+    assert.match(res.body, /prefers-reduced-motion:reduce/);
+    assert.match(res.body, /aria-modal="true"[^>]*aria-hidden="true" inert/);
+    const scripts = [...res.body.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    for (const [, source] of scripts) assert.doesNotThrow(() => new vm.Script(source));
+    assert.match(scripts[1][1], /const DEFAULT_COLORS=/);
+    assert.match(scripts[1][1], /const FACE_BY_PRESET=/);
+    const appScript = scripts[scripts.length - 1][1];
+    const stageRefresh = appScript.slice(appScript.indexOf('async function refreshMoteStage'), appScript.indexOf('async function logout'));
+    assert.doesNotMatch(stageRefresh, /api\('\/api\/companion\/summary'\)/);
+    assert.match(stageRefresh, /requestsUnavailable\|\|!summary/);
+    assert.match(appScript, /getComputedStyle\(commandDrawer\)\.visibility/);
+  });
+
   await t.test('workspace exposes paginated, receipt-backed exploration history and clears it after progress deletion', async () => {
     const res = await makeRequest('/', 'GET', { 'Cookie': 'phonebridge_token=' + token });
     assert.strictEqual(res.status, 200);

@@ -16,8 +16,10 @@ import androidx.core.graphics.ColorUtils
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.card.MaterialCardView
 import kotlin.math.roundToInt
+import org.json.JSONObject
 
-enum class UiTheme(
+data class UiTheme(
+    val id: String,
     val label: String,
     val backgroundTop: Int,
     val backgroundBottom: Int,
@@ -32,79 +34,164 @@ enum class UiTheme(
     val textSecondary: Int,
     val buttonText: Int,
     val buttonFill: Int,
-    val buttonPressed: Int
+    val buttonPressed: Int,
+    val success: Int,
+    val warning: Int,
+    val danger: Int,
+    val focus: Int
 ) {
-    AURORA_GLASS(
-        label = "玻璃",
-        backgroundTop = Color.parseColor("#070B16"),
-        backgroundBottom = Color.parseColor("#101C36"),
-        panel = Color.parseColor("#82122344"),
-        card = Color.parseColor("#66182C4A"),
-        input = Color.parseColor("#7A14243E"),
-        bubble = Color.parseColor("#8A1A304C"),
-        stroke = Color.parseColor("#4D9FD8FF"),
-        accent = Color.parseColor("#9FE8FF"),
-        secondary = Color.parseColor("#C7A7FF"),
-        textPrimary = Color.parseColor("#F2F8FF"),
-        textSecondary = Color.parseColor("#AFC4DE"),
-        buttonText = Color.parseColor("#DFF3FF"),
-        buttonFill = Color.parseColor("#4A192B45"),
-        buttonPressed = Color.parseColor("#662C4A73")
-    ),
-    LIQUID_MOTION(
-        label = "流光",
-        backgroundTop = Color.parseColor("#04101B"),
-        backgroundBottom = Color.parseColor("#132B2C"),
-        panel = Color.parseColor("#B80D2028"),
-        card = Color.parseColor("#99113038"),
-        input = Color.parseColor("#AD0F252E"),
-        bubble = Color.parseColor("#B2143844"),
-        stroke = Color.parseColor("#4D64FFDA"),
-        accent = Color.parseColor("#64FFDA"),
-        secondary = Color.parseColor("#FF7EB6"),
-        textPrimary = Color.parseColor("#F0FFFA"),
-        textSecondary = Color.parseColor("#9CBDB8"),
-        buttonText = Color.parseColor("#DDFFF4"),
-        buttonFill = Color.parseColor("#660F2A33"),
-        buttonPressed = Color.parseColor("#8C184652")
-    ),
-    CIRCUIT_NOIR(
-        label = "夜芯",
-        backgroundTop = Color.parseColor("#060606"),
-        backgroundBottom = Color.parseColor("#151311"),
-        panel = Color.parseColor("#E00E0E0E"),
-        card = Color.parseColor("#CC141414"),
-        input = Color.parseColor("#D9111111"),
-        bubble = Color.parseColor("#E0181818"),
-        stroke = Color.parseColor("#40FFC86B"),
-        accent = Color.parseColor("#FFB84D"),
-        secondary = Color.parseColor("#53FFF2"),
-        textPrimary = Color.parseColor("#F7F5F0"),
-        textSecondary = Color.parseColor("#A6ADA8"),
-        buttonText = Color.parseColor("#FFEFD4"),
-        buttonFill = Color.parseColor("#CC121212"),
-        buttonPressed = Color.parseColor("#E628241C")
-    );
-
     companion object {
         private const val PREF_NAME = "phonebridge"
         private const val PREF_KEY = "ui_theme"
+        private val LEGACY_IDS = mapOf(
+            "AURORA_GLASS" to "glass",
+            "LIQUID_MOTION" to "liquid",
+            "CIRCUIT_NOIR" to "noir"
+        )
+
+        private fun parseArgb(value: String): Int {
+            require(value.matches(Regex("#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?"))) {
+                "Invalid ARGB color: $value"
+            }
+            val digits = value.substring(1)
+            val argb = if (digits.length == 6) "FF$digits" else digits
+            return java.lang.Long.parseLong(argb, 16).toInt()
+        }
+
+        private fun red(color: Int) = (color ushr 16) and 0xFF
+        private fun green(color: Int) = (color ushr 8) and 0xFF
+        private fun blue(color: Int) = color and 0xFF
+        private fun alpha(color: Int) = (color ushr 24) and 0xFF
+
+        val fallback = UiTheme(
+            id = "noir",
+            label = "夜芯",
+            backgroundTop = parseArgb("#060606"),
+            backgroundBottom = parseArgb("#151311"),
+            panel = parseArgb("#E00E0E0E"),
+            card = parseArgb("#CC141414"),
+            input = parseArgb("#D9111111"),
+            bubble = parseArgb("#E0181818"),
+            stroke = parseArgb("#40FFC86B"),
+            accent = parseArgb("#FFFFB84D"),
+            secondary = parseArgb("#FF53FFF2"),
+            textPrimary = parseArgb("#FFF7F5F0"),
+            textSecondary = parseArgb("#FFA6ADA8"),
+            buttonText = parseArgb("#FFFFEFD4"),
+            buttonFill = parseArgb("#CC121212"),
+            buttonPressed = parseArgb("#E628241C"),
+            success = parseArgb("#FF8FF0C4"),
+            warning = parseArgb("#FFFFC86B"),
+            danger = parseArgb("#FFFF7777"),
+            focus = parseArgb("#FFFFB84D")
+        )
+
+        fun parseCatalog(source: String): UiThemeCatalog {
+            val root = JSONObject(source)
+            require(root.optInt("version") == 1) { "Unsupported UI theme catalog version" }
+            val items = root.optJSONArray("themes") ?: error("UI theme catalog is missing themes")
+            val themes = buildList {
+                for (index in 0 until items.length()) {
+                    val item = items.optJSONObject(index) ?: continue
+                    val id = item.optString("id").takeIf { it.matches(Regex("[a-z0-9-]+")) } ?: continue
+                    val label = item.optString("label").takeIf { it.isNotBlank() } ?: continue
+                    val tokens = item.optJSONObject("tokens") ?: continue
+                    fun color(name: String): Int = parseArgb(tokens.getString(name))
+                    runCatching {
+                        add(
+                            UiTheme(
+                                id = id,
+                                label = label,
+                                backgroundTop = color("backgroundTop"),
+                                backgroundBottom = color("backgroundBottom"),
+                                panel = color("panel"),
+                                card = color("card"),
+                                input = color("input"),
+                                bubble = color("bubble"),
+                                stroke = color("stroke"),
+                                accent = color("accent"),
+                                secondary = color("secondary"),
+                                textPrimary = color("textPrimary"),
+                                textSecondary = color("textSecondary"),
+                                buttonText = color("buttonText"),
+                                buttonFill = color("buttonFill"),
+                                buttonPressed = color("buttonPressed"),
+                                success = color("success"),
+                                warning = color("warning"),
+                                danger = color("danger"),
+                                focus = color("focus")
+                            )
+                        )
+                    }
+                }
+            }.distinctBy { it.id }
+            require(themes.isNotEmpty()) { "UI theme catalog has no valid themes" }
+            val requestedDefault = root.optString("defaultTheme", "noir")
+            val defaultId = themes.firstOrNull { it.id == requestedDefault }?.id
+                ?: themes.firstOrNull { it.id == "noir" }?.id
+                ?: themes.first().id
+            return UiThemeCatalog(defaultId, themes)
+        }
+
+        fun loadCatalog(context: Context): UiThemeCatalog = runCatching {
+            context.assets.open("ui-themes.json").bufferedReader().use { parseCatalog(it.readText()) }
+        }.getOrElse { UiThemeCatalog("noir", listOf(fallback)) }
+
+        fun resolve(savedId: String?, catalog: UiThemeCatalog): UiTheme {
+            val normalized = LEGACY_IDS[savedId] ?: savedId
+            return catalog.themes.firstOrNull { it.id == normalized }
+                ?: catalog.themes.firstOrNull { it.id == catalog.defaultThemeId }
+                ?: fallback
+        }
 
         fun load(context: Context): UiTheme {
+            return load(context, loadCatalog(context))
+        }
+
+        fun load(context: Context, catalog: UiThemeCatalog): UiTheme {
             val saved = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
                 .getString(PREF_KEY, null)
-            return entries.firstOrNull { it.name == saved } ?: AURORA_GLASS
+            return resolve(saved, catalog)
         }
 
         fun save(context: Context, theme: UiTheme) {
             context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-                .edit().putString(PREF_KEY, theme.name).apply()
+                .edit().putString(PREF_KEY, theme.id).apply()
+        }
+
+        fun compositeColor(foreground: Int, background: Int): Int {
+            val foregroundAlpha = alpha(foreground) / 255f
+            val backgroundAlpha = alpha(background) / 255f
+            val outputAlpha = foregroundAlpha + backgroundAlpha * (1f - foregroundAlpha)
+            if (outputAlpha <= 0f) return 0
+            fun channel(fg: Int, bg: Int): Int =
+                ((fg * foregroundAlpha + bg * backgroundAlpha * (1f - foregroundAlpha)) / outputAlpha)
+                    .roundToInt().coerceIn(0, 255)
+            return ((outputAlpha * 255).roundToInt() shl 24) or
+                (channel(red(foreground), red(background)) shl 16) or
+                (channel(green(foreground), green(background)) shl 8) or
+                channel(blue(foreground), blue(background))
+        }
+
+        fun contrastRatio(foreground: Int, background: Int): Double {
+            fun luminance(color: Int): Double {
+                fun linear(channel: Int): Double {
+                    val value = channel / 255.0
+                    return if (value <= 0.04045) value / 12.92 else Math.pow((value + 0.055) / 1.055, 2.4)
+                }
+                return .2126 * linear(red(color)) + .7152 * linear(green(color)) + .0722 * linear(blue(color))
+            }
+            val first = luminance(foreground)
+            val second = luminance(background)
+            return (maxOf(first, second) + .05) / (minOf(first, second) + .05)
         }
     }
 }
 
+data class UiThemeCatalog(val defaultThemeId: String, val themes: List<UiTheme>)
+
 class ThemeApplier(private val activity: Activity) {
-    private var current = UiTheme.AURORA_GLASS
+    private var current = UiTheme.fallback
 
     fun apply(theme: UiTheme): UiTheme {
         current = theme
@@ -116,7 +203,6 @@ class ThemeApplier(private val activity: Activity) {
         paintButtons(root)
         paintFocusExit()
         paintVoiceCommand()
-        paintThemeSwitcher()
         paintTexts()
         paintPreviewFrame()
         activity.window?.statusBarColor = theme.backgroundTop
@@ -171,23 +257,13 @@ class ThemeApplier(private val activity: Activity) {
         return LayerDrawable(arrayOf(base, innerStroke, sheen))
     }
 
-    private fun paintThemeSwitcher() {
-        val selected = when (current) {
-            UiTheme.AURORA_GLASS -> R.id.themeGlass
-            UiTheme.LIQUID_MOTION -> R.id.themeLiquid
-            UiTheme.CIRCUIT_NOIR -> R.id.themeNoir
-        }
+    fun styleThemeButton(button: Button, selected: Boolean) {
         val selectedText = ColorUtils.blendARGB(current.backgroundTop, Color.WHITE, .16f)
-        listOf(R.id.themeGlass, R.id.themeLiquid, R.id.themeNoir).forEach { id ->
-            activity.findViewById<Button>(id)?.let { button ->
-                val isSelected = button.id == selected
-                button.backgroundTintList = ColorStateList.valueOf(
-                    if (isSelected) current.accent else current.buttonFill
-                )
-                button.setTextColor(if (isSelected) selectedText else current.buttonText)
-                button.translationZ = if (isSelected) 2f else 0f
-            }
-        }
+        button.backgroundTintList = ColorStateList.valueOf(if (selected) current.accent else current.buttonFill)
+        button.setTextColor(if (selected) selectedText else current.buttonText)
+        button.isSelected = selected
+        button.contentDescription = "${button.text}主题${if (selected) "，当前选中" else ""}"
+        button.translationZ = if (selected) 2f else 0f
     }
 
     private fun shape(id: Int, color: Int, radiusDp: Float, radiiDp: FloatArray? = null) {

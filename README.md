@@ -326,3 +326,10 @@ PhoneBridge Android 首次打开直接进入沉浸式 Mote 舞台，不再弹出
 - 此批未运行 ADB、未安装或操作手机，也未做浏览器交互验收；UI 实际交互和真机仍待验收。文档收尾提交后的最新 SHA 仍需通过 Actions 后再进入 C1。
 
 实现计划：[`docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md`](docs/superpowers/plans/2026-09-30-phonebridge-reliability-companion-exploration.md)。
+
+## 2026-10-03 双端沉浸式科幻 UI
+
+- Android 与 Web 共用 `shared/ui-themes.json` 的语义色令牌：“玻璃”“流光”“夜芯”，新安装默认夜芯。8 位颜色统一使用 `#AARRGGBB`；旧 Android 主题偏好 ID 会映射到对应新主题。Web 与 Android 各自本地记忆主题，不相互覆盖。
+- Android 保留原生 Mote 舞台和现实镜头，主题、单手布局、安静模式与动效控制收进舞台设置；沉浸工具最小触控目标为 48dp。Web 首屏是沉浸伙伴舞台，20 个角色按 `visualPreset` 呈现独立矢量外形；既有指挥工作台收进桌面侧抽屉/窄屏全屏抽屉。
+- Web 舞台复用现有伴侣摘要、角色图鉴与行为接口，不增加服务端 API。浏览器缓存伙伴状态，节点离线时明确提示；抽屉具备键盘焦点管理，系统减弱动态保留轻量透明度反馈并移除位置运动，应用动效偏好仅保存在当前设备。
+- 自动验证：Node **244/244**，Android JVM **180/180**，Lint 与 Debug 构建成功；无头 Chromium 覆盖手机/桌面布局、断网缓存、主题与 ARGB 颜色、减弱动态、焦点循环/恢复、Escape 和横向溢出。密钥扫描、脚本语法、性能预算和 `git diff --check` 通过。Xperia 实机暂未验收：本轮 ADB server 协议错误，未安装或操作手机；推送后的最新 GitHub Actions 结果以交接文档和分支 Actions 页面为准。

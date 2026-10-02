@@ -301,9 +301,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private var explorationLogDialog: AlertDialog? = null
     private var explorationLogDetailDialog: AlertDialog? = null
     private val appearanceButtons = mutableMapOf<PetAppearance, Button>()
-    private val themeButtons = mutableMapOf<UiTheme, Button>()
+    private val themeButtons = mutableMapOf<String, Button>()
+    private var themeCatalog = UiThemeCatalog("noir", listOf(UiTheme.fallback))
     private lateinit var themeApplier: ThemeApplier
-    private var activeTheme = UiTheme.AURORA_GLASS
+    private var activeTheme = UiTheme.fallback
     private val chatAdapter = ChatAdapter()
     private var pendingVoiceCommand = false
     private var voiceRetryAvailable = false
@@ -1634,16 +1635,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun setupThemes() {
         themeApplier = ThemeApplier(this)
-        activeTheme = UiTheme.load(this)
-        themeButtons[UiTheme.AURORA_GLASS] = findViewById(R.id.themeGlass)
-        themeButtons[UiTheme.LIQUID_MOTION] = findViewById(R.id.themeLiquid)
-        themeButtons[UiTheme.CIRCUIT_NOIR] = findViewById(R.id.themeNoir)
-        themeButtons.forEach { (theme, button) ->
-            button.setOnClickListener {
-                it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                selectTheme(theme)
-            }
-        }
+        themeCatalog = UiTheme.loadCatalog(this)
+        activeTheme = UiTheme.load(this, themeCatalog)
         applyTheme(activeTheme, persist = false)
     }
 
@@ -1656,6 +1649,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun applyTheme(theme: UiTheme, persist: Boolean) {
         themeApplier.apply(theme)
+        themeButtons.forEach { (id, button) -> themeApplier.styleThemeButton(button, id == theme.id) }
         companionView.setPalette(theme.accent, theme.secondary)
         renderAppearanceSelection()
         if (persist) UiTheme.save(this, theme)
@@ -7335,7 +7329,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         normalHeroParams = heroPanel.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
         rootLayout.setPadding(0, 0, 0, 0)
         listOf(
-            R.id.titleText, R.id.subtitleText, R.id.statusChip, R.id.themeSwitcher,
+            R.id.titleText, R.id.subtitleText, R.id.statusChip,
             R.id.appearanceRow, R.id.metricRow, R.id.actionScroll, R.id.pttButton,
             R.id.panelTabs, R.id.panelHost, R.id.speechText, R.id.cockpitDeck
         ).forEach { id -> findViewById<View>(id).visibility = View.GONE }
@@ -7375,7 +7369,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         }
         rootLayout.setPadding(dp(14), dp(14), dp(14), 0)
         listOf(
-            R.id.titleText, R.id.subtitleText, R.id.statusChip, R.id.themeSwitcher,
+            R.id.titleText, R.id.subtitleText, R.id.statusChip,
             R.id.appearanceRow, R.id.metricRow, R.id.actionScroll, R.id.pttButton,
             R.id.panelTabs, R.id.panelHost, R.id.cockpitDeck
         ).forEach { id -> findViewById<View>(id).visibility = View.VISIBLE }
@@ -7509,15 +7503,18 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun applyCompanionStagePreferences(updateVoiceService: Boolean = true) {
         if (::focusToolbar.isInitialized) {
             focusToolbar.layoutParams = focusToolbar.layoutParams.apply {
-                height = dp(if (stagePreferences.oneHanded) 56 else 36)
+                height = dp(if (stagePreferences.oneHanded) 56 else 48)
             }
-            focusToolsToggle.minimumWidth = dp(if (stagePreferences.oneHanded) 52 else 34)
-            focusToolsToggle.minimumHeight = dp(if (stagePreferences.oneHanded) 52 else 36)
+            focusToolsToggle.minimumWidth = dp(if (stagePreferences.oneHanded) 56 else 48)
+            focusToolsToggle.minimumHeight = dp(if (stagePreferences.oneHanded) 56 else 48)
             listOf(
-                focusCameraButton, focusLensButton, focusListenButton, focusVoiceButton,
+                findViewById<Button>(R.id.focusAiSpaceButton), focusCameraButton, focusLensButton, focusListenButton, focusVoiceButton,
                 focusMemoryButton, focusGameButton, focusRealityButton, focusExploreLogButton, focusCommandButton, focusStageButton,
                 focusRoutinesButton, focusGoalsButton
-            ).forEach { it.minimumHeight = dp(if (stagePreferences.oneHanded) 52 else 36) }
+            ).forEach {
+                it.minimumHeight = dp(if (stagePreferences.oneHanded) 56 else 48)
+                it.minimumWidth = maxOf(it.minimumWidth, dp(48))
+            }
             if (stagePreferences.oneHanded && immersiveMode) {
                 focusToolsExpanded = true
                 immersiveShellCoordinator.openDrawer()
@@ -7556,10 +7553,40 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             setTextColor(0xFFB8C8D8.toInt())
             textSize = 14f
         })
+        content.addView(TextView(this).apply {
+            text = "外观主题"
+            setTextColor(activeTheme.textPrimary)
+            textSize = 15f
+            setPadding(0, dp(16), 0, dp(4))
+        })
+        val themeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        themeButtons.clear()
+        themeCatalog.themes.forEach { theme ->
+            val button = Button(this).apply {
+                text = theme.label
+                isAllCaps = false
+                minWidth = 0
+                minHeight = dp(48)
+                setPadding(dp(8), 0, dp(8), 0)
+                layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6) }
+                setOnClickListener { view ->
+                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    selectTheme(theme)
+                }
+            }
+            themeButtons[theme.id] = button
+            themeApplier.styleThemeButton(button, theme.id == activeTheme.id)
+            themeRow.addView(button)
+        }
+        content.addView(themeRow)
         fun settingSwitch(label: String, checked: Boolean, update: (Boolean) -> CompanionStagePreferences) {
             content.addView(androidx.appcompat.widget.SwitchCompat(this).apply {
                 text = label
                 isChecked = checked
+                minHeight = dp(48)
                 setPadding(0, dp(8), 0, dp(8))
                 setOnCheckedChangeListener { _, enabled -> saveCompanionStagePreferences(update(enabled)) }
             })

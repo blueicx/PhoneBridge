@@ -32,9 +32,16 @@ const { PairingManager } = require('./pairing');
 const { prepareConversation } = require('./session-context');
 const { buildCompanionSummary } = require('./companion-summary');
 const { loadTlsOptions, pairingTransport, pairingAvailabilityError, buildPairingQrPayload } = require('./tls-config');
+const { DEFAULT_THEME_ID, UI_THEMES, buildThemeCss } = require('./ui-themes');
+const { browserRendererScript } = require('./web-stage');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+
+const WEB_THEME_CSS = buildThemeCss();
+const WEB_THEME_IDS = JSON.stringify(UI_THEMES.map(theme => theme.id));
+const WEB_THEME_OPTIONS = UI_THEMES.map(theme => `<option value="${theme.id}">${theme.label}</option>`).join('');
+const MOTE_STAGE_SCRIPT = browserRendererScript();
 
 const PORT = process.env.PHONEBRIDGE_PORT || 9501;
 const BIND_HOST = process.env.PHONEBRIDGE_BIND || '127.0.0.1';
@@ -1750,18 +1757,32 @@ document.getElementById('loginForm').onsubmit = async (e) => {
 </script>`;
 }
 
-const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mote · PhoneBridge</title>
+const html = `<!doctype html><html lang="zh-CN" data-theme="${DEFAULT_THEME_ID}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Mote · PhoneBridge</title>
+<script>try{const ids=${WEB_THEME_IDS};const saved=localStorage.getItem('phonebridge:web:theme');document.documentElement.dataset.theme=ids.includes(saved)?saved:'${DEFAULT_THEME_ID}'}catch(_){document.documentElement.dataset.theme='${DEFAULT_THEME_ID}'}</script>
 <style>
-:root{--bg:#07100D;--panel:#101E18;--line:#28453A;--mint:#8FF0C4;--amber:#FFC86B;--coral:#FF6B6B;--text:#EAF7F1;--muted:#88A296}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-.wrap{max-width:1280px;margin:auto;padding:22px}.top{display:flex;align-items:center;gap:18px}.logo{font-size:32px;font-weight:800;color:#F2F7F2}.sub{color:var(--muted);font-size:12px}.pill{border:1px solid var(--line);background:#0d1b15;border-radius:99px;padding:7px 13px;font-size:12px}
-.grid{display:grid;grid-template-columns:minmax(280px,380px) minmax(340px,1fr);gap:16px;margin-top:18px}.panel{background:linear-gradient(160deg,#101e18,#0a1511);border:1px solid #24352c;border-radius:18px;padding:16px}.panel h2{font-size:15px;margin:0 0 12px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.metric{background:#0d1913;border-radius:12px;padding:11px}.metric b{display:block;color:var(--mint)}.metric span{font-size:11px;color:var(--muted)}
-.tabs{display:flex;gap:6px;margin-bottom:10px}.tabs button{flex:1;background:#10201a;color:#d8f5e7;border:1px solid #2c483c;border-radius:9px;height:33px;cursor:pointer}.tabs button.active{background:#183326;color:var(--amber)}
-#log,#tasks,#sensors{height:min(48vh,430px);overflow:auto;padding-right:6px}.item{border-left:2px solid #33584a;padding:6px 9px;margin-bottom:6px;background:#081209;white-space:pre-wrap}.taskbar{height:4px;background:#20342b;margin-top:5px}.taskbar i{display:block;height:100%;background:var(--mint)}.row{display:flex;gap:8px;margin-top:10px}input,button,select{background:#0c1712;border:1px solid #2c483c;color:#effaf4;border-radius:10px;padding:9px;font:inherit}button{cursor:pointer}button.primary{background:#183326;border-color:#40705b;color:#ffdfa3}#frame{width:100%;aspect-ratio:3/2;object-fit:cover;border-radius:16px;border:2px solid var(--mint)}textarea{width:100%;min-height:110px;background:#081209;color:#cde8da;border:1px solid #24352c;border-radius:12px;padding:10px;font:12px ui-monospace}
-.routine-goal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}.workspace-card{min-width:0;background:#0b1711;border:1px solid var(--line);border-radius:14px;padding:12px}.workspace-card h3{margin:0 0 8px;font-size:14px;color:var(--mint)}.workspace-card input,.workspace-card textarea{max-width:100%}.workspace-card textarea{min-height:64px;resize:vertical}.routine-actions,.goal-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.routine-actions button,.goal-actions button{padding:6px 9px;font-size:12px}.goal-step{border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0}.goal-step input,.goal-step textarea{width:100%;margin-top:6px}.privacy-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;margin-top:10px}.privacy-check{display:flex;align-items:center;gap:8px;background:#0b1711;border:1px solid var(--line);border-radius:9px;padding:8px}.privacy-check input{accent-color:#8FF0C4}.status-note{min-height:18px;margin-top:6px;color:var(--amber);font-size:12px;white-space:pre-wrap}.status-note.error{color:var(--coral)}
-@media(max-width:850px){.grid{grid-template-columns:1fr}}
-@media(max-width:650px){.routine-goal-grid{grid-template-columns:1fr}.wrap{padding:12px}}
-</style><div class="wrap"><div class="top"><div><div class="logo">Mote</div><div class="sub">PhoneBridge · sensory familiar</div></div><div style="margin-left:auto;display:flex;gap:12px;align-items:center"><div class="pill" id="status">loading</div><button onclick="logout()" style="padding:4px 12px;font-size:12px;background:#0d1b15">退出</button></div></div>
+${WEB_THEME_CSS}
+:root{--bg:var(--background-top);--line:var(--stroke);--mint:var(--success);--amber:var(--warning);--coral:var(--danger);--text:var(--text-primary);--muted:var(--text-secondary)}
+*{box-sizing:border-box}[hidden]{display:none!important}html,body{min-height:100%;margin:0;background:linear-gradient(155deg,var(--background-top),var(--background-bottom));color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}body{min-height:100svh}.app-shell{min-height:100svh;overflow:hidden}.app-top{height:72px;max-width:1440px;margin:auto;padding:12px 26px;display:flex;align-items:center;gap:12px;position:relative;z-index:2}.brand{display:flex;align-items:baseline;gap:12px}.logo{font-size:23px;font-weight:750;letter-spacing:.08em;color:var(--text-primary)}.sub{color:var(--muted);font-size:12px}.pill{border:1px solid var(--line);background:var(--panel);border-radius:99px;padding:7px 13px;font-size:12px;white-space:nowrap}.header-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+button,input,select,textarea{font:inherit}button,select,input{min-height:44px;background:var(--button-fill);border:1px solid var(--line);color:var(--button-text);border-radius:12px;padding:9px 13px}button{cursor:pointer;transition:transform 140ms ease-out,border-color 160ms ease-out,background-color 160ms ease-out}button:active{transform:scale(.98)}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.primary{background:var(--accent);border-color:var(--accent);color:var(--background-top);font-weight:700}.quiet-button{background:transparent}.wrap{max-width:1280px;margin:auto;padding:0 8px 20px}.grid{display:grid;grid-template-columns:minmax(280px,380px) minmax(340px,1fr);gap:16px;margin-top:14px}.panel{min-width:0;background:linear-gradient(160deg,var(--panel),color-mix(in srgb,var(--panel) 82%,var(--background-top)));border:1px solid var(--line);border-radius:18px;padding:16px}.panel h2{font-size:15px;margin:0 0 12px;color:var(--text-primary)}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.metric{min-width:0;background:var(--card);border-radius:12px;padding:11px}.metric b{display:block;color:var(--accent)}.metric span{font-size:11px;color:var(--muted)}
+.tabs{display:flex;gap:6px;margin-bottom:10px}.tabs button{flex:1;background:var(--card);color:var(--button-text);border:1px solid var(--line);border-radius:9px}.tabs button.active{background:var(--button-pressed);color:var(--accent)}
+#log,#tasks,#sensors{height:min(48vh,430px);overflow:auto;padding-right:6px}.item{border-left:2px solid var(--accent);padding:6px 9px;margin-bottom:6px;background:var(--card);white-space:pre-wrap}.taskbar{height:4px;background:var(--card);margin-top:5px}.taskbar i{display:block;height:100%;background:var(--success)}.row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}input,select{min-width:0}textarea{width:100%;min-height:110px;background:var(--input);color:var(--text-primary);border:1px solid var(--line);border-radius:12px;padding:10px;font:12px ui-monospace}#frame{width:100%;aspect-ratio:3/2;object-fit:cover;border-radius:16px;border:2px solid var(--accent)}
+.routine-goal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}.workspace-card{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}.workspace-card h3{margin:0 0 8px;font-size:14px;color:var(--accent)}.workspace-card input,.workspace-card textarea{max-width:100%}.workspace-card textarea{min-height:64px;resize:vertical}.routine-actions,.goal-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.routine-actions button,.goal-actions button{padding:6px 9px}.goal-step{border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0}.goal-step input,.goal-step textarea{width:100%;margin-top:6px}.privacy-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;margin-top:10px}.privacy-check{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:8px}.privacy-check input{accent-color:var(--accent)}.status-note{min-height:18px;margin-top:6px;color:var(--warning);font-size:12px;white-space:pre-wrap}.status-note.error{color:var(--danger)}
+.immersive-stage{height:calc(100svh - 72px);min-height:460px;max-height:900px;position:relative;isolation:isolate;display:grid;place-items:center;overflow:hidden;background:radial-gradient(ellipse at 50% 54%,color-mix(in srgb,var(--accent) 13%,transparent),transparent 44%),linear-gradient(180deg,transparent 58%,color-mix(in srgb,var(--secondary) 7%,transparent));}.stage-horizon{position:absolute;inset:12% 5% 5%;border:1px solid color-mix(in srgb,var(--accent) 13%,transparent);border-radius:50%;transform:perspective(420px) rotateX(67deg);box-shadow:0 0 80px color-mix(in srgb,var(--accent) 8%,transparent);pointer-events:none}.stage-radar{position:absolute;width:min(76vw,620px);aspect-ratio:1;border:1px solid color-mix(in srgb,var(--secondary) 17%,transparent);border-radius:50%;opacity:.72;pointer-events:none;background:repeating-radial-gradient(circle,transparent 0 19%,color-mix(in srgb,var(--secondary) 7%,transparent) 19.15% 19.35%);mask-image:linear-gradient(to bottom,transparent 8%,black 36%,transparent 91%)}.stage-radar:after{content:"";position:absolute;inset:6%;border-radius:50%;border-top:1px solid color-mix(in srgb,var(--accent) 48%,transparent);transform:rotate(-28deg)}.stage-copy{position:absolute;left:clamp(20px,7vw,110px);top:clamp(24px,8vh,84px);z-index:1;max-width:min(360px,38vw)}.stage-eyebrow{color:var(--accent);font-size:11px;letter-spacing:.22em;text-transform:uppercase}.stage-copy h1{margin:8px 0 3px;font-size:clamp(26px,4vw,42px);letter-spacing:.04em}.stage-copy p{margin:0;color:var(--muted)}.stage-status{margin-top:14px;display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border:1px solid var(--line);border-radius:99px;background:var(--panel);font-size:12px}.status-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 12px currentColor}.stage-status[data-online="false"] .status-dot{background:var(--warning)}.stage-offline{display:block;max-width:300px;margin-top:9px;color:var(--warning);font-size:12px}.mote-visual{position:relative;z-index:1;width:min(65vw,600px);height:min(66vh,510px);display:grid;place-items:center;animation:mote-drift 5s ease-in-out infinite;filter:drop-shadow(0 0 24px color-mix(in srgb,var(--mote-primary,var(--accent)) 18%,transparent))}.mote-svg{width:100%;height:100%;overflow:visible}.mote-silhouette{transform-origin:240px 180px;animation:mote-breathe 3.6s ease-in-out infinite;transform:translateY(calc(var(--motion-intensity)*-1px))}.stage-actions{position:absolute;bottom:clamp(24px,6vh,58px);left:0;right:0;display:flex;justify-content:center;gap:10px;z-index:2}.stage-actions button{min-width:132px}.stage-help{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:var(--muted);font-size:11px;pointer-events:none}
+.drawer-scrim{position:fixed;z-index:4;inset:0;border:0;border-radius:0;background:rgba(0,0,0,.55);opacity:0;transition:opacity 220ms ease-out}body.drawer-open .drawer-scrim{opacity:1}.command-drawer{position:fixed;z-index:5;top:16px;right:16px;bottom:16px;width:min(760px,calc(100vw - 32px));overflow:auto;overscroll-behavior:contain;padding:18px;background:color-mix(in srgb,var(--background-top) 94%,transparent);border:1px solid var(--line);border-radius:20px;box-shadow:0 24px 90px rgba(0,0,0,.56);visibility:hidden;transform:translateX(calc(100% + 22px));transition:transform 240ms cubic-bezier(.32,.72,0,1),visibility 240ms}.command-drawer.open{visibility:visible;transform:translateX(0)}.drawer-bar{display:flex;align-items:center;gap:14px;position:sticky;top:-18px;z-index:3;margin:-18px -18px 12px;padding:12px 18px;background:var(--background-top);border-bottom:1px solid var(--line)}.drawer-bar h1{margin:0;font-size:18px}.drawer-bar p{margin:0;color:var(--muted);font-size:12px}.drawer-close{margin-left:auto;min-width:48px}.appearance-settings{scroll-margin-top:74px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}.appearance-settings h2{margin:0 0 8px;font-size:14px}.appearance-settings label{display:flex;align-items:center;gap:10px;margin-top:8px;color:var(--muted)}.appearance-settings input[type=checkbox]{width:20px;min-width:20px;min-height:20px;accent-color:var(--accent)}.appearance-settings .sub{display:block;margin-top:5px}
+@keyframes mote-drift{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}@keyframes mote-breathe{0%,100%{scale:1}50%{scale:1.025}}.mote-silhouette[data-motion="active"]{animation-duration:2.8s}.mote-silhouette[data-motion="steady"]{animation-duration:3.7s}.mote-silhouette[data-motion="soft"]{animation-duration:4.7s}
+.appearance-settings label{min-height:44px}
+button{transition:transform 140ms cubic-bezier(.23,1,.32,1),border-color 160ms ease,background-color 160ms ease}.drawer-scrim{transition:opacity 220ms cubic-bezier(.23,1,.32,1)}
+@media(max-width:850px){.grid{grid-template-columns:1fr}.immersive-stage{min-height:420px}.stage-copy{left:6vw;top:5vh;max-width:48vw}.mote-visual{width:min(90vw,540px);height:min(62vh,460px)}.command-drawer{inset:0;width:100%;border-radius:0;border:0;padding:14px}.drawer-bar{top:-14px;margin:-14px -14px 12px;padding:12px 14px}}
+@media(max-width:600px){.app-top{height:64px;padding:8px 12px}.brand{display:block}.logo{font-size:18px;line-height:1.15}.brand .sub{font-size:10px}.header-actions{gap:5px}.header-actions button{padding-inline:9px}.pill{padding:6px 9px;font-size:11px}.immersive-stage{height:calc(100svh - 64px);min-height:420px}.stage-copy{left:18px;top:22px;max-width:70vw}.stage-copy h1{font-size:28px}.stage-radar{width:104vw;top:18%}.mote-visual{width:104vw;height:min(60vh,420px);transform:translateY(28px)}.stage-actions{bottom:34px}.stage-actions button{min-width:0;flex:1;max-width:165px;padding-inline:9px}.stage-help{bottom:10px}.wrap{padding:0 0 18px}.panel{padding:13px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.routine-goal-grid{grid-template-columns:1fr}.command-drawer .row>*{max-width:100%}}
+@media(max-width:370px){.header-actions #status{display:none}.stage-actions{gap:7px}.stage-actions button{font-size:12px}}
+@media(prefers-reduced-motion:reduce){.mote-visual,.mote-silhouette{animation:none!important}.drawer-scrim{transition:opacity 120ms ease-out!important}.command-drawer{opacity:0;transform:translateX(0)!important;transition:opacity 120ms ease-out,visibility 0s linear 120ms!important}.command-drawer.open{opacity:1;transition:opacity 120ms ease-out,visibility 0s!important}button{transition:background-color 120ms ease-out,border-color 120ms ease-out!important}button:active{transform:none}}
+:root[data-reduce-motion="true"] .mote-visual,:root[data-reduce-motion="true"] .mote-silhouette{animation:none!important}
+@media(hover:hover) and (pointer:fine){button:hover{border-color:var(--focus)}}
+body.keyboard-action .drawer-scrim,body.keyboard-action .command-drawer,body.keyboard-action button{transition:none!important}
+</style><div class="app-shell">
+<header class="app-top"><div class="brand"><div class="logo">Mote</div><div class="sub">PhoneBridge · 感官同伴</div></div><div class="header-actions"><div class="pill" id="status" aria-live="polite">连接中</div><button id="appearanceButton" class="quiet-button" aria-label="打开外观设置">外观</button><button id="openDrawer" class="primary" aria-haspopup="dialog" aria-controls="commandDrawer">指挥台</button><button onclick="logout()" class="quiet-button">退出</button></div></header>
+<main class="immersive-stage" id="moteStage" role="region" aria-labelledby="stageName"><div class="stage-horizon" aria-hidden="true"></div><div class="stage-radar" aria-hidden="true"></div><div class="stage-copy"><div class="stage-eyebrow">PHONEBRIDGE · COMPANION LINK</div><h1 id="stageName">星核</h1><p id="stageVoice">正在读取伙伴状态…</p><div class="stage-status" id="stageConnection" data-online="false"><span class="status-dot" aria-hidden="true"></span><span id="stageConnectionText">连接中</span></div><span class="stage-offline" id="stageOffline" role="status" aria-live="polite" hidden></span></div><div class="mote-visual" id="moteVisual" aria-hidden="true"></div><div class="stage-actions"><button class="primary" id="stageChatButton">打开指挥台</button><button id="stageAppearanceButton" class="quiet-button">外观与动效</button></div><div class="stage-help">伙伴舞台 · 控制与复杂操作收在指挥台中</div></main>
+<button class="drawer-scrim" id="drawerScrim" aria-label="关闭指挥台" hidden></button><aside class="command-drawer" id="commandDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true" inert><div class="drawer-bar"><div><h1 id="drawerTitle">指挥台</h1><p>任务、设备、探索与伙伴设置</p></div><button id="closeDrawer" class="drawer-close" aria-label="关闭指挥台">关闭</button></div><section class="appearance-settings" id="appearanceSettings" aria-labelledby="appearanceTitle"><h2 id="appearanceTitle">外观与动效</h2><label for="themeSelect">主题</label><select id="themeSelect" aria-label="选择主题">${WEB_THEME_OPTIONS}</select><label><input id="reduceMotionToggle" type="checkbox">减弱舞台动画</label><span class="sub">主题与动效偏好只保存在此浏览器；系统减弱动态效果设置始终生效。</span></section><div class="wrap">
 <div class="grid"><div class="panel"><h2>实时感官</h2><img id="frame"><div class="metrics" style="margin-top:12px"><div class="metric"><b id="cpu">-</b><span>手机 CPU</span></div><div class="metric"><b id="mem">-</b><span>内存</span></div><div class="metric"><b id="bat">-</b><span>电量</span></div><div class="metric"><b id="temp">-</b><span>温度</span></div></div><div class="row"><button class="primary" onclick="device('camera_on')">开眼</button><button onclick="device('camera_front')">前眼</button><button onclick="device('camera_back')">后眼</button><button onclick="device('listen_on')">监听</button><button onclick="say()">说话</button></div><div class="row"><input id="speech" placeholder="输入要在手机上播放的话" style="flex:1"></div><div class=row><select id=idleTimeout title="空闲断流时间"><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5 selected>5 分钟</option><option value=10>10 分钟</option><option value=30>30 分钟</option></select><button onclick=setIdleTimeout()>空闲断流</button></div><div class=row><select id=screenOffTimeout title="息屏自动退出时间"><option value=0>不自动退出</option><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5>5 分钟</option><option value=10 selected>10 分钟</option><option value=30>30 分钟</option><option value=60>60 分钟</option></select><button onclick=setScreenOffTimeout()>息屏退出</button></div></div>
 <div class="panel"><h2>指挥台</h2><div class="tabs"><button class="active" data-tab="tasks">任务</button><button data-tab="log">日志</button><button data-tab="sensors">传感器</button><button data-tab="frame">画面</button></div><div id="tasks"></div><div id="log" hidden></div><div id="sensors" hidden></div><div id="framebox" hidden><img id="frame2"></div><div class="row"><input id="cmd" placeholder="help / ping 8.8.8.8 / screenshot / ps / say 你好" style="flex:1"><button class="primary" onclick="sendCmd()">执行</button></div><textarea id="detail" readonly placeholder="选中任务的输出会出现在这里"></textarea></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div>
@@ -1770,9 +1791,11 @@ const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name
 <div class="panel" id="realityPanel" style="grid-column:1/-1"><h2>现实探索</h2><div class="sub">只输入粗区域 ID，不上传精确位置；例如 <code>cell:1561:6073</code>。</div><div class="row"><input id="realityRegion" placeholder="粗区域 ID" style="flex:1"><button class="primary" onclick="refreshReality()">刷新事件</button></div><div id="realitySummary" class="sub" style="margin-top:8px">尚未加载现实事件</div></div>
 <div class="panel" style="grid-column:1/-1"><h2>探索记录</h2><div id="realityLogStatus" class="status-note" role="status" aria-live="polite">探索记录加载中…</div><div id="realityLogList" aria-label="分页探索记录"></div><div class="row"><button id="realityLogMore" onclick="refreshRealityLog({cursor:realityLogCursor})" hidden>加载更早记录</button></div><div id="realityLogDetail" class="workspace-card" style="margin-top:10px" aria-live="polite">选择一条记录查看安全收据详情。</div></div>
 <div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div id="privacyCategories" class="privacy-checklist" aria-label="选择要处理的数据类别"></div><div id="privacyMigration" class="sub" role="status" style="margin-top:8px"></div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。请在上方逐项勾选类别；日常与个人目标可单独导出或删除。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出选定类别</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
-<script>
+</div></aside></div>
+<script>${MOTE_STAGE_SCRIPT}</script><script>
 let selected='';
 let companionSummaryRevision = '';
+let currentCompanionSummary = null;
 let providerOptionsRevision = '';
 let privacyCategoryIds = [];
 let dailyRoutineSnapshot = { catalog: [], current: [], history: [], privacyRevision: 0, migrationRequired: false };
@@ -1812,6 +1835,127 @@ async function api(p,o={}){
   if(method==='GET' && etag) etags.set(p,etag);
   return response.json();
 }
+const webThemeIds=${WEB_THEME_IDS};
+const themeSelect=document.getElementById('themeSelect');
+const reduceMotionToggle=document.getElementById('reduceMotionToggle');
+function applyWebTheme(id,persist=true){
+  const theme=webThemeIds.includes(id)?id:'${DEFAULT_THEME_ID}';
+  document.documentElement.dataset.theme=theme;
+  if(themeSelect)themeSelect.value=theme;
+  if(persist){try{localStorage.setItem('phonebridge:web:theme',theme)}catch(_){}}
+}
+applyWebTheme(document.documentElement.dataset.theme,false);
+themeSelect?.addEventListener('change',()=>applyWebTheme(themeSelect.value));
+function applyReducedMotion(enabled,persist=true){
+  document.documentElement.dataset.reduceMotion=enabled?'true':'false';
+  if(reduceMotionToggle)reduceMotionToggle.checked=enabled;
+  if(persist){try{localStorage.setItem('phonebridge:web:reduce-motion',enabled?'true':'false')}catch(_){}}
+}
+let savedReduceMotion=null;
+try{savedReduceMotion=localStorage.getItem('phonebridge:web:reduce-motion')}catch(_){}
+applyReducedMotion(savedReduceMotion==='true');
+reduceMotionToggle?.addEventListener('change',()=>applyReducedMotion(reduceMotionToggle.checked));
+const commandDrawer=document.getElementById('commandDrawer');
+const drawerScrim=document.getElementById('drawerScrim');
+let lastDrawerTrigger=null;
+function setCommandDrawer(open,trigger=document.activeElement,focusAppearance=false){
+  if(open){
+    lastDrawerTrigger=trigger;
+    drawerScrim.hidden=false;
+    commandDrawer.inert=false;
+    commandDrawer.setAttribute('aria-hidden','false');
+    commandDrawer.classList.add('open');
+    document.body.classList.add('drawer-open');
+    const focusWhenVisible=()=>{
+      if(!commandDrawer.classList.contains('open'))return;
+      if(getComputedStyle(commandDrawer).visibility!=='visible'){requestAnimationFrame(focusWhenVisible);return;}
+      if(focusAppearance)document.getElementById('appearanceSettings').scrollIntoView({block:'start'});
+      (focusAppearance?themeSelect:document.getElementById('closeDrawer')).focus();
+    };
+    requestAnimationFrame(focusWhenVisible);
+    return;
+  }
+  commandDrawer.classList.remove('open');
+  commandDrawer.setAttribute('aria-hidden','true');
+  commandDrawer.inert=true;
+  document.body.classList.remove('drawer-open');
+  setTimeout(()=>{if(!commandDrawer.classList.contains('open'))drawerScrim.hidden=true},245);
+  if(lastDrawerTrigger?.isConnected)lastDrawerTrigger.focus();
+}
+document.getElementById('openDrawer').addEventListener('click',event=>setCommandDrawer(true,event.currentTarget));
+document.getElementById('stageChatButton').addEventListener('click',event=>setCommandDrawer(true,event.currentTarget));
+document.getElementById('appearanceButton').addEventListener('click',event=>setCommandDrawer(true,event.currentTarget,true));
+document.getElementById('stageAppearanceButton').addEventListener('click',event=>setCommandDrawer(true,event.currentTarget,true));
+document.getElementById('closeDrawer').addEventListener('click',()=>setCommandDrawer(false));
+drawerScrim.addEventListener('click',()=>setCommandDrawer(false));
+document.addEventListener('pointerdown',()=>document.body.classList.remove('keyboard-action'),true);
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape'||((event.key==='Enter'||event.key===' ')&&event.target?.closest?.('button,a,[role="button"]')))document.body.classList.add('keyboard-action');
+  if(!commandDrawer.classList.contains('open'))return;
+  if(event.key==='Escape'){event.preventDefault();setCommandDrawer(false);return}
+  if(event.key!=='Tab')return;
+  const items=[...commandDrawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')]
+    .filter(item=>item.offsetParent!==null);
+  if(!items.length)return;
+  const first=items[0],last=items[items.length-1];
+  if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}
+  else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
+});
+const MOTE_STAGE_CACHE_KEY='phonebridge:web:stage:v1';
+const DEFAULT_STAGE_PROFILE={id:'mote',name:'星核',voice:'理性稳重',visualPreset:'star-core',colors:{primary:'#8ea7ff',secondary:'#d8e2ff'}};
+function readMoteStageCache(){
+  try{const value=JSON.parse(localStorage.getItem(MOTE_STAGE_CACHE_KEY)||'null');return value&&value.version===1&&value.profile?value:null}catch(_){return null}
+}
+let moteStageCache=readMoteStageCache();
+let moteStageSignature='';
+function renderMoteStage(profile,behavior,summary,offline,usedCache=false,initial=false){
+  const safeProfile=profile||DEFAULT_STAGE_PROFILE;
+  const level=Math.max(1,Number(summary?.mote?.level)||1);
+  const online=summary?.connection?.online===true;
+  const connection=document.getElementById('stageConnection');
+  connection.dataset.online=online?'true':'false';
+  document.getElementById('stageConnectionText').textContent=initial?'正在检查节点':online?'PhoneBridge 在线':'节点离线';
+  document.getElementById('stageName').textContent=safeProfile.name||'星核';
+  document.getElementById('stageVoice').textContent=(safeProfile.voice||'伙伴')+' · Lv.'+level;
+  const offlineNote=document.getElementById('stageOffline');
+  offlineNote.hidden=!offline||initial;
+  offlineNote.textContent=offline?(usedCache?'连接暂不可用 · 正在显示上次缓存的伙伴状态':'节点暂时不可用 · 伙伴舞台仍可查看'):'';
+  const renderer=window.renderMoteStageSvg;
+  const stageKey=JSON.stringify([safeProfile,behavior,level,online,offline]);
+  if(renderer&&moteStageSignature!==stageKey){
+    document.getElementById('moteVisual').innerHTML=renderer(safeProfile,behavior||{});
+    moteStageSignature=stageKey;
+  }
+}
+renderMoteStage(moteStageCache?.profile||DEFAULT_STAGE_PROFILE,moteStageCache?.behavior||{},moteStageCache?.summary||null,true,Boolean(moteStageCache),true);
+async function refreshMoteStage(){
+  const cached=moteStageCache;
+  const results=await Promise.allSettled([
+    api('/api/motes'),api('/api/motes/behavior')
+  ]);
+  const fresh=(index)=>results[index].status==='fulfilled'&&results[index].value?results[index].value:null;
+  const motesResponse=fresh(0),behaviorResponse=fresh(1);
+  const summary=currentCompanionSummary||cached?.summary||null;
+  const roster=motesResponse?.roster;
+  const activeId=summary?.mote?.id||motesResponse?.state?.activeId||cached?.profile?.id;
+  const profile=roster?.find(item=>item.id===activeId)||roster?.find(item=>item.active)||(cached?.profile?.id===activeId?cached.profile:null)||DEFAULT_STAGE_PROFILE;
+  const behavior=(behaviorResponse?behaviorResponse.behavior:null)||motesResponse?.behavior||cached?.behavior||{};
+  const requestsUnavailable=results.every(result=>result.status==='rejected');
+  const offline=requestsUnavailable||!summary||summary.connection?.online!==true;
+  const anyFresh=[motesResponse,behaviorResponse].some(value=>value&&value._status!==304);
+  if(anyFresh&&profile){
+    const snapshot={version:1,savedAt:Date.now(),profile:{id:profile.id,name:profile.name,voice:profile.voice,visualPreset:profile.visualPreset,colors:profile.colors},summary:summary?{mote:summary.mote,connection:summary.connection}:null,behavior};
+    moteStageCache=snapshot;
+    try{localStorage.setItem(MOTE_STAGE_CACHE_KEY,JSON.stringify(snapshot))}catch(_){}
+  }
+  const cacheUnavailable=requestsUnavailable&&Boolean(cached);
+  renderMoteStage(profile,behavior,summary,offline,cacheUnavailable);
+  if(results.every(result=>result.status==='rejected')&&!cached){
+    renderMoteStage(DEFAULT_STAGE_PROFILE,{},null,true,false);
+  }
+}
+refreshMoteStage();
+setInterval(refreshMoteStage,5000);
 async function logout(){
   await fetch('/logout', { method: 'POST' });
   location.reload();
@@ -1869,6 +2013,7 @@ async function refreshCompanionSummary(){
     const response=await api('/api/companion/summary');
     if(response._status===304 || !response.summary) return;
     const s=response.summary;
+    currentCompanionSummary=s;
     const signature=JSON.stringify(s);
     if(companionSummaryRevision!==signature){
       companionSummaryRevision=signature;

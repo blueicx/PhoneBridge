@@ -34,20 +34,6 @@
         app:layout_constraintStart_toStartOf="@id/titleText"
         app:layout_constraintTop_toBottomOf="@id/titleText" />
 
-    <LinearLayout
-        android:id="@+id/themeSwitcher"
-        android:layout_width="wrap_content"
-        android:layout_height="27dp"
-        android:layout_marginEnd="8dp"
-        android:orientation="horizontal"
-        app:layout_constraintEnd_toStartOf="@id/statusChip"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <Button android:id="@+id/themeGlass" style="@style/PetAction" android:minWidth="0dp" android:layout_height="match_parent" android:paddingHorizontal="10dp" android:text="玻璃" android:textSize="10sp"/>
-        <Button android:id="@+id/themeLiquid" style="@style/PetAction" android:minWidth="0dp" android:layout_height="match_parent" android:paddingHorizontal="10dp" android:text="流光" android:textSize="10sp"/>
-        <Button android:id="@+id/themeNoir" style="@style/PetAction" android:minWidth="0dp" android:layout_height="match_parent" android:paddingHorizontal="10dp" android:text="夜芯" android:textSize="10sp"/>
-    </LinearLayout>
-
     <TextView
         android:id="@+id/statusChip"
         android:layout_width="wrap_content"
@@ -291,8 +277,8 @@
         <Button
             android:id="@+id/focusExit"
             style="@style/PetAction"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:layout_marginEnd="16dp"
             android:layout_marginBottom="16dp"
             android:minWidth="0dp"
@@ -309,7 +295,7 @@
         <LinearLayout
             android:id="@+id/focusToolbar"
             android:layout_width="0dp"
-            android:layout_height="36dp"
+            android:layout_height="48dp"
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
             android:layout_marginBottom="12dp"
@@ -323,7 +309,7 @@
             <Button
                 android:id="@+id/focusToolsToggle"
                 style="@style/PetAction"
-                android:layout_width="34dp"
+                android:layout_width="48dp"
                 android:layout_height="match_parent"
                 android:contentDescription="展开沉浸工具栏"
                 android:minWidth="0dp"
@@ -378,7 +364,7 @@
         <LinearLayout
             android:id="@+id/focusInputRow"
             android:layout_width="0dp"
-            android:layout_height="46dp"
+            android:layout_height="52dp"
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
             android:layout_marginBottom="14dp"
@@ -408,7 +394,7 @@
             <Button
                 android:id="@+id/focusSendButton"
                 style="@style/PetAction"
-                android:layout_width="42dp"
+                android:layout_width="48dp"
                 android:layout_height="match_parent"
                 android:layout_marginStart="7dp"
                 android:contentDescription="发送消息"

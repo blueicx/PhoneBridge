@@ -51,8 +51,12 @@ android {
         jvmTarget = '17'
     }
     sourceSets {
+        main {
+            assets.srcDir "$rootDir/../shared"
+        }
         test {
             resources.srcDir "$rootDir/../protocol-fixtures"
+            resources.srcDir "$rootDir/../shared"
         }
         androidTest {
             assets.srcDir "$rootDir/../protocol-fixtures"
