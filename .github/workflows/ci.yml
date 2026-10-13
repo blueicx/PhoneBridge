@@ -10,8 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    runs-on: ubuntu-latest
+  node:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,64 +20,119 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: server/package-lock.json
-      - name: Install server dependencies
-        run: npm ci --prefix server
-      - name: Node tests
-        shell: bash
+      - run: npm ci --prefix server
+      - name: Node tests and protocol compatibility
         run: node --test server/*.test.js
-      - name: Secret scan
+      - name: Sensitive scan and performance budget
         shell: pwsh
-        run: ./scripts/scan_secrets.ps1
-      - name: Protocol compatibility
-        shell: bash
-        run: node --test server/workspace-timeline.test.js server/workspace-api.test.js
-      - name: Workspace performance budget
-        shell: pwsh
-        run: ./scripts/bench_workspace.ps1
-      - name: Android unit tests
+        run: |
+          ./scripts/scan_secrets.ps1
+          ./scripts/bench_workspace.ps1
+          ./scripts/test_android_ci_workflow.ps1
+      - run: git diff --check
+
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+      - name: Android unit tests, lint and debug build
         working-directory: android
-        run: bash ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
-      - name: Android emulator workflow shell contract
+        run: bash ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon --console=plain
+      - name: APK signing and release manifest
         shell: pwsh
-        run: ./scripts/test_android_ci_workflow.ps1
+        run: |
+          ./scripts/test_apk_signer_output.ps1
+          ./scripts/verify_release_gates.ps1 -ApkPath android/app/build/outputs/apk/debug/app-debug.apk -Channel internal-debug -AllowProtectedBranch -RequireClean -ManifestPath "$env:RUNNER_TEMP/phonebridge-release-manifest.json"
+      - name: Save Android reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            android/app/build/reports/
+            android/app/build/test-results/
+      - name: Stage debug build
+        uses: actions/upload-artifact@v4
+        with:
+          name: phonebridge-build-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            ${{ runner.temp }}/phonebridge-release-manifest.json
+
+  emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+      - name: Cache API 34 system image and AVD
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/avd
+            /usr/local/lib/android/sdk/system-images/android-34
+          key: avd-api34-x86_64-google-apis-v1
+      - name: Enable emulator hardware acceleration
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
       - name: Android Room migration tests (emulator)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
           arch: x86_64
           target: google_apis
+          avd-name: phonebridge-api34
+          force-avd-creation: false
           disable-animations: true
           script: cd android && bash ./gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain
-      - name: Android lint
-        working-directory: android
-        run: |
-          lint_status=0
-          bash ./gradlew :app:lintDebug --no-daemon --console=plain || lint_status=$?
-          report="app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt"
-          if [[ -f "$report" ]]; then
-            echo "Android lint error details:"
-            grep -n -B 2 -A 4 " Error:" "$report" || true
-          fi
-          exit "$lint_status"
-      - name: Android debug build
-        working-directory: android
-        run: bash ./gradlew :app:assembleDebug --no-daemon --console=plain
-      - name: Android signing metadata parser
-        shell: pwsh
-        run: ./scripts/test_apk_signer_output.ps1
-      - name: Release gate manifest
-        shell: pwsh
-        run: ./scripts/verify_release_gates.ps1 -ApkPath android/app/build/outputs/apk/debug/app-debug.apk -Channel internal-debug -AllowProtectedBranch -RequireClean -ManifestPath "$env:RUNNER_TEMP/phonebridge-release-manifest.json"
-      - name: Upload debug APK and manifest
+      - name: Save emulator reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-reports-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            android/app/build/reports/androidTests/
+            android/app/build/outputs/androidTest-results/
+
+  verify:
+    needs: [node, android, emulator]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: phonebridge-build-${{ github.sha }}
+          path: ${{ runner.temp }}/phonebridge-build
+      - name: Upload verified debug APK and manifest
         uses: actions/upload-artifact@v4
         with:
           name: phonebridge-debug-${{ github.sha }}
           if-no-files-found: error
-          path: |
-            android/app/build/outputs/apk/debug/app-debug.apk
-            ${{ runner.temp }}/phonebridge-release-manifest.json
-      - name: Diff whitespace
-        run: git diff --check
+          path: ${{ runner.temp }}/phonebridge-build/
       - name: Release worktree clean
-        shell: bash
         run: test -z "$(git status --porcelain)"

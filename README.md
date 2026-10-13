@@ -51,6 +51,16 @@
 - Web 控制台多视图与深链：增加收件箱/进行中/历史任务视图、任务与聊天上下文关联、Attention/通知深链数据属性、增量时间线与诊断摘要更新；304/无关事件跳过重绘。
 - Android 统一投影底座：新增 `WorkspaceTimeline.kt`（StateFlow 投影更新、任务卡片协议、深链协议、断线缓存间隙恢复、GPS 占位输入底座）与 `AiProvider.kt`（脱敏配置、离线本地回退解析器），保持既有 Canvas 渲染形态分支不变。
 
+## 2026-10-13 大版本深化·批次 1：加载、后台与 CI
+
+- Web 用 `WebRequestCoordinator` 合并同一 GET、在页面隐藏/离开时取消读取；`WebRefreshScheduler` 按页面可见性、抽屉、显式画面预览和 WebSocket 状态调度工作。WebSocket 在线时实体事件触发合并刷新；任务、日常和诊断只在抽屉打开且推送不可用时周期回退。实时画面需用户显式开启，抽屉关闭或页面隐藏即停止刷新。
+- Android 先绘制本地伙伴舞台，再启动常驻服务和节点连接；Activity 不在前台或舞台不可见时跳过逐秒舞台更新，后台且传感器空闲时将遥测间隔放宽到 15 秒，传感器仍活动时保持 2.5 秒。
+- GitHub Actions 拆分 Node、Android 单测/Lint/Debug 构建、Room emulator migration 和最终 artifact 门禁并行运行；保存诊断报告，所有必需 job 成功后才发布 Debug APK artifact。
+- 本机验证：Node **250/250**；无头 Chromium 的 WebSocket/回退轮询、隐藏页、抽屉、显式画面预览、窄屏及脚本异常检查通过；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 成功。敏感扫描、Android CI 脚本契约、`node --check` 与 `git diff --check` 通过。
+- 推送后以该批实现提交对应的 GitHub Actions 全量结果为准；本轮未连接 ADB、未安装或操作 Xperia，也未测量真实冷启动和帧耗时，设备性能目标仍待实机记录。
+
+实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+
 ## PhoneBridge 2.0 持续增强
 
 当前分支正在推进 2.0 四批增强。已落地的基础能力包括：

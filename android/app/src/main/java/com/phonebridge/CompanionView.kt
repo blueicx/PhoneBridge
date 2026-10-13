@@ -155,7 +155,15 @@ class CompanionView @JvmOverloads constructor(
         }
     }
 
+    private var hostActive = true
+
+    fun setHostActive(active: Boolean) {
+        hostActive = active
+        restartAnimationIfEligible()
+    }
+
     private fun animationsEnabled(): Boolean =
+        hostActive &&
         isAttachedToWindow &&
             windowVisibility == View.VISIBLE &&
             isShown &&

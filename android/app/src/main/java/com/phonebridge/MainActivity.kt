@@ -505,10 +505,15 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 getSharedPreferences("phonebridge", Context.MODE_PRIVATE).getBoolean("auto_connect", true)
 
         DeviceCommandBus.setReceiver { action -> runOnUiThread { applyDeviceCommand(action) } }
-        startResident()
-        if (autoConnect) connectSavedServer()
         renderPet()
-        startTelemetryLoop()
+        // Let the cached local stage draw before starting node/service work.
+        rootLayout.post {
+            if (!destroyed) {
+                startResident()
+                if (autoConnect) connectSavedServer()
+                startTelemetryLoop()
+            }
+        }
         pendingAutoCare?.let { kind -> interact(kind) }
         pendingAutoCare = null
         rootLayout.post { enterAdaptiveImmersiveMode() }
@@ -8026,15 +8031,17 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         telemetryJob = appScope.launch {
             while (isActive) {
                 val sensorsIdle = !cameraRunning && !micRunning && !pttActive
-                delay(if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) || !sensorsIdle) 2500L else 15000L)
+                delay(StageWorkPolicy.telemetryInterval(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED), !sensorsIdle))
                 runCatching { refreshTelemetry() }.onFailure { Log.w(TAG, "telemetry failed", it) }
             }
         }
         appScope.launch {
             while (isActive) {
                 delay(1000)
-                renderPet()
-                fpsCounter.set(0)
+                if (StageWorkPolicy.renderStage(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED), companionView.isShown)) {
+                    renderPet()
+                    fpsCounter.set(0)
+                }
             }
         }
     }
@@ -8119,6 +8126,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     }
 
     override fun onPause() {
+        if (::companionView.isInitialized) companionView.setHostActive(false)
         if (::arCoreRenderView.isInitialized) arCoreRenderView.onHostPause()
         ambientSoundController.stop()
         super.onPause()
@@ -8143,6 +8151,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     override fun onResume() {
         super.onResume()
+        if (::companionView.isInitialized) companionView.setHostActive(true)
         updateAmbientSound()
         refreshExplorationLog()
         if (::arCoreRenderView.isInitialized) {

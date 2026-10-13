@@ -34,6 +34,7 @@ const { buildCompanionSummary } = require('./companion-summary');
 const { loadTlsOptions, pairingTransport, pairingAvailabilityError, buildPairingQrPayload } = require('./tls-config');
 const { DEFAULT_THEME_ID, UI_THEMES, buildThemeCss } = require('./ui-themes');
 const { browserRendererScript } = require('./web-stage');
+const { browserRuntimeScript } = require('./web-runtime');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -42,6 +43,7 @@ const WEB_THEME_CSS = buildThemeCss();
 const WEB_THEME_IDS = JSON.stringify(UI_THEMES.map(theme => theme.id));
 const WEB_THEME_OPTIONS = UI_THEMES.map(theme => `<option value="${theme.id}">${theme.label}</option>`).join('');
 const MOTE_STAGE_SCRIPT = browserRendererScript();
+const WEB_RUNTIME_SCRIPT = browserRuntimeScript();
 
 const PORT = process.env.PHONEBRIDGE_PORT || 9501;
 const BIND_HOST = process.env.PHONEBRIDGE_BIND || '127.0.0.1';
@@ -689,7 +691,8 @@ function broadcast(payload) {
   } catch (_) {}
   wss.clients.forEach((socket) => {
     if (socket.readyState === socket.OPEN) {
-      socket.send(text);
+      socket.send(isSnapshot && socket.clientRole === 'web' && !socket.webDetailActive
+        ? JSON.stringify({ ...JSON.parse(summaryPayload()), type: 'snapshot' }) : text);
       if (timelineEvent) socket.send(JSON.stringify({ type: 'workspace.timeline', revision: timelineEvent.revision, event: timelineEvent }));
     }
   });
@@ -1250,7 +1253,7 @@ function handleCommand(raw) {
 
 function statsSnapshot() {
   return {
-    clients: wss.clients.size,
+    clients: [...wss.clients].filter(socket => socket.isPhone).length,
     frames: frameCount,
     audioChunks: audioCount,
     recording: isRecording,
@@ -1702,7 +1705,7 @@ async function runWorkspaceMessage(sessionId, message, taskId, memories, remembe
 
 function getLoginHtml() {
   const uptime = Math.max(0, Math.round((Date.now() - startedAt) / 60000));
-  const clientCount = wss ? wss.clients.size : 0;
+  const clientCount = wss ? [...wss.clients].filter(socket => socket.isPhone).length : 0;
   const statusBadge = clientCount > 0 ? '🟢 设备已连接' : '⚪ 设备待连接';
   const uptimeStr = uptime >= 60 ? `${Math.floor(uptime / 60)}小时${uptime % 60}分` : `${uptime}分钟`;
 
@@ -1777,6 +1780,7 @@ button{transition:transform 140ms cubic-bezier(.23,1,.32,1),border-color 160ms e
 @media(max-width:370px){.header-actions #status{display:none}.stage-actions{gap:7px}.stage-actions button{font-size:12px}}
 @media(prefers-reduced-motion:reduce){.mote-visual,.mote-silhouette{animation:none!important}.drawer-scrim{transition:opacity 120ms ease-out!important}.command-drawer{opacity:0;transform:translateX(0)!important;transition:opacity 120ms ease-out,visibility 0s linear 120ms!important}.command-drawer.open{opacity:1;transition:opacity 120ms ease-out,visibility 0s!important}button{transition:background-color 120ms ease-out,border-color 120ms ease-out!important}button:active{transform:none}}
 :root[data-reduce-motion="true"] .mote-visual,:root[data-reduce-motion="true"] .mote-silhouette{animation:none!important}
+:root[data-page-hidden="true"] *{animation-play-state:paused!important}
 @media(hover:hover) and (pointer:fine){button:hover{border-color:var(--focus)}}
 body.keyboard-action .drawer-scrim,body.keyboard-action .command-drawer,body.keyboard-action button{transition:none!important}
 </style><div class="app-shell">
@@ -1792,7 +1796,7 @@ body.keyboard-action .drawer-scrim,body.keyboard-action .command-drawer,body.key
 <div class="panel" style="grid-column:1/-1"><h2>探索记录</h2><div id="realityLogStatus" class="status-note" role="status" aria-live="polite">探索记录加载中…</div><div id="realityLogList" aria-label="分页探索记录"></div><div class="row"><button id="realityLogMore" onclick="refreshRealityLog({cursor:realityLogCursor})" hidden>加载更早记录</button></div><div id="realityLogDetail" class="workspace-card" style="margin-top:10px" aria-live="polite">选择一条记录查看安全收据详情。</div></div>
 <div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div id="privacyCategories" class="privacy-checklist" aria-label="选择要处理的数据类别"></div><div id="privacyMigration" class="sub" role="status" style="margin-top:8px"></div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。请在上方逐项勾选类别；日常与个人目标可单独导出或删除。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出选定类别</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
 </div></aside></div>
-<script>${MOTE_STAGE_SCRIPT}</script><script>
+<script>${MOTE_STAGE_SCRIPT}${WEB_RUNTIME_SCRIPT}</script><script>
 let selected='';
 let companionSummaryRevision = '';
 let currentCompanionSummary = null;
@@ -1817,11 +1821,17 @@ function webEventId(prefix){const random=globalThis.crypto?.randomUUID?.()||Date
 function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 function jsAttr(s){return JSON.stringify(String(s??'')).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function sel(id){selected=id;let t=(window.TASKS||{})[id];detail.value=t?t.detail:''}
-function tab(name,b){document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active');['tasks','log','sensors','frame'].forEach(x=>document.getElementById(x).hidden=x!==name)}
+function tab(name,b){document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active');['tasks','log','sensors','frame'].forEach(x=>document.getElementById(x==='frame'?'framebox':x).hidden=x!==name);webRefresh.update({framesVisible:!frame.hidden||name==='frame'});if(name!=='frame')frame2.removeAttribute('src')}
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>tab(b.dataset.tab,b));
 
 const etags = new Map();
-async function api(p,o={}){
+const webRequests=new window.WebRequestCoordinator();
+const webRefresh=new window.WebRefreshScheduler();
+const pushCache=new Map();
+const refreshTimers=[];
+let pushSocket=null,pushReconnect=null,pushGeneration=0,pushDelay=1000,pushRefreshTimer=null;
+function scheduleRefresh(name,operation,mode,interval){webRefresh.register(name,operation,mode);refreshTimers.push(setInterval(()=>webRefresh.tick(name),interval))}
+async function readApi(p,o={}){
   const options={...o};
   const method=String(options.method||'GET').toUpperCase();
   const headers=new Headers(options.headers||{});
@@ -1834,6 +1844,12 @@ async function api(p,o={}){
   const etag=response.headers.get('etag');
   if(method==='GET' && etag) etags.set(p,etag);
   return response.json();
+}
+function api(p,o={}){
+  const method=String(o.method||'GET').toUpperCase();
+  if(method!=='GET')return readApi(p,o).then(result=>{pushCache.clear();return result});
+  if(webRefresh.state.pushOnline&&pushCache.has(p))return Promise.resolve(pushCache.get(p));
+  return webRequests.run(p,signal=>readApi(p,{...o,signal}));
 }
 const webThemeIds=${WEB_THEME_IDS};
 const themeSelect=document.getElementById('themeSelect');
@@ -1859,7 +1875,10 @@ const commandDrawer=document.getElementById('commandDrawer');
 const drawerScrim=document.getElementById('drawerScrim');
 let lastDrawerTrigger=null;
 function setCommandDrawer(open,trigger=document.activeElement,focusAppearance=false){
+  webRefresh.update({drawerOpen:open});
+  if(pushSocket?.readyState===WebSocket.OPEN)pushSocket.send(JSON.stringify({type:'snapshot',view:open?'full':'summary'}));
   if(open){
+    refresh();refreshWorkspace();refreshDailyWorkspace();refreshPrivacy();refreshDiagnosticsAndTimeline();
     lastDrawerTrigger=trigger;
     drawerScrim.hidden=false;
     commandDrawer.inert=false;
@@ -1945,8 +1964,8 @@ async function refreshMoteStage(){
   const anyFresh=[motesResponse,behaviorResponse].some(value=>value&&value._status!==304);
   if(anyFresh&&profile){
     const snapshot={version:1,savedAt:Date.now(),profile:{id:profile.id,name:profile.name,voice:profile.voice,visualPreset:profile.visualPreset,colors:profile.colors},summary:summary?{mote:summary.mote,connection:summary.connection}:null,behavior};
-    moteStageCache=snapshot;
-    try{localStorage.setItem(MOTE_STAGE_CACHE_KEY,JSON.stringify(snapshot))}catch(_){}
+    const changed=JSON.stringify([cached?.profile,cached?.summary,cached?.behavior])!==JSON.stringify([snapshot.profile,snapshot.summary,snapshot.behavior]);
+    if(changed){moteStageCache=snapshot;try{localStorage.setItem(MOTE_STAGE_CACHE_KEY,JSON.stringify(snapshot))}catch(_){}}
   }
   const cacheUnavailable=requestsUnavailable&&Boolean(cached);
   renderMoteStage(profile,behavior,summary,offline,cacheUnavailable);
@@ -1955,7 +1974,7 @@ async function refreshMoteStage(){
   }
 }
 refreshMoteStage();
-setInterval(refreshMoteStage,5000);
+scheduleRefresh('mote',refreshMoteStage,'stage',5000);
 async function logout(){
   await fetch('/logout', { method: 'POST' });
   location.reload();
@@ -1963,12 +1982,19 @@ async function logout(){
 async function sendCmd(){let c=cmd.value.trim();if(!c)return;await api('/api/command',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:c})});cmd.value='';refresh()}
 async function device(a){await api('/api/device',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:a})})}
 async function say(){let t=speech.value.trim();if(t)await api('/say?text='+encodeURIComponent(t))}
-setInterval(()=>{frame.src='/frame?'+Date.now();frame2.src='/frame?'+Date.now()},140);
-setInterval(refresh,3000);setInterval(poll,3000);
+const previewToggle=document.createElement('button');previewToggle.textContent='显示实时画面';previewToggle.setAttribute('aria-pressed','false');
+frame.hidden=true;frame.before(previewToggle);
+previewToggle.onclick=()=>{frame.hidden=!frame.hidden;previewToggle.setAttribute('aria-pressed',String(!frame.hidden));previewToggle.textContent=frame.hidden?'显示实时画面':'关闭实时画面';webRefresh.update({framesVisible:!frame.hidden||!document.getElementById('framebox').hidden});if(frame.hidden)frame.removeAttribute('src')};
+scheduleRefresh('frames',()=>{
+  if(!frame.hidden&&frame.complete)frame.src='/frame?'+Date.now();
+  if(!document.getElementById('framebox').hidden&&frame2.complete)frame2.src='/frame?'+Date.now();
+},'frames',140);
+scheduleRefresh('legacy',refresh,'drawer',3000);scheduleRefresh('detail',poll,'drawer',3000);
 async function refresh(){
   try{
     let s=await api('/api/state');
     if(s._status===304) return;
+    if(!s.telemetry||!s.logs)return;
     const sensor=s.stats.sensors||{};
     window.TASKS={};s.tasks.forEach(x=>{TASKS[x.id]=x});
     status.textContent='手机 ' + s.stats.clients + ' · 帧 ' + s.stats.frames + ' · 音频 ' + s.stats.audioChunks + ' · 空闲 ' + s.stats.idleSeconds + 's';
@@ -2005,8 +2031,7 @@ async function refreshDiagnosticsAndTimeline() {
     }
   } catch (_) {}
 }
-setInterval(refreshDiagnosticsAndTimeline, 5000);
-refreshDiagnosticsAndTimeline();
+scheduleRefresh('diagnostics',refreshDiagnosticsAndTimeline,'drawer',5000);
 
 async function refreshCompanionSummary(){
   try{
@@ -2023,7 +2048,9 @@ async function refreshCompanionSummary(){
       const clueCount=Number(clues.location||0)+Number(clues.object||0)+Number(clues.light||0);
       companionSummary.textContent=(s.mote.name||'Mote')+' Lv.'+s.mote.level+' · 探索 Lv.'+(growth.level||1)+' · 今日线索 '+clueCount+'/3 · '+(s.connection.online?'在线':'离线')+' · 任务 '+s.tasks.running+'/'+s.tasks.total+' · 待确认 '+s.tasks.needsConfirmation+' · 提醒 '+s.attention.open+' · 现实 '+s.reality.eventCount+' · AI '+s.ai.providerName+' · 记忆 '+s.ai.memoryCount+' · '+(s.safety.emergencyStop?'急停中':'自治 '+s.safety.autonomyLevel);
     }
+    if(!webRefresh.state.drawerOpen)return;
     const providers=await api('/api/ai/providers');
+    if(providers._status===304)return;
     const providerSignature=JSON.stringify(providers.providers||[]);
     if(providerOptionsRevision!==providerSignature){
       providerOptionsRevision=providerSignature;
@@ -2278,17 +2305,15 @@ function refreshDailyWorkspace(){
   }).finally(()=>{dailyRefreshPromise=null});
   return dailyRefreshPromise;
 }
-setInterval(renderRoutineTimers,1000);
-setInterval(refreshDailyWorkspace,10000);
-refreshDailyWorkspace();
-refreshPrivacy();
+scheduleRefresh('routineTimer',renderRoutineTimers,'local',1000);
+scheduleRefresh('daily',refreshDailyWorkspace,'drawer',10000);
 async function probeSelectedProvider(){
   const id=aiProviderSelect.value;
   if(!id) return;
   try{ const result=await api('/api/ai/providers/'+encodeURIComponent(id)+'/probe',{method:'POST'}); aiProbeResult.textContent='正常 · '+result.latencyMs+'ms'; }
   catch(error){ aiProbeResult.textContent='失败 · '+error.message; }
 }
-setInterval(refreshCompanionSummary, 5000);
+scheduleRefresh('companion',refreshCompanionSummary,'stage',5000);
 refreshCompanionSummary();
 
 async function refreshReality(){
@@ -2490,6 +2515,39 @@ async function approveApproval(id){await api('/api/autonomy/approvals/'+encodeUR
 let workspaceRefreshFrame=0;
 function refreshWorkspace(){if(workspaceRefreshFrame)return;workspaceRefreshFrame=requestAnimationFrame(()=>{workspaceRefreshFrame=0;refreshWorkspaceNow()})}
 refreshWorkspace();
+function connectWebPush(){
+  if(document.hidden)return;
+  if(pushSocket&&(pushSocket.readyState===WebSocket.CONNECTING||pushSocket.readyState===WebSocket.OPEN))return;
+  const generation=++pushGeneration;
+  pushSocket=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/?role=web');
+  pushSocket.onopen=()=>{if(generation!==pushGeneration)return;pushDelay=1000;webRefresh.update({pushOnline:true});pushSocket.send(JSON.stringify({type:'snapshot',view:webRefresh.state.drawerOpen?'full':'summary'}))};
+  pushSocket.onmessage=event=>{
+    if(generation!==pushGeneration||document.hidden)return;
+    let payload;try{payload=JSON.parse(event.data)}catch(_){return}
+    if(payload.type==='snapshot'){
+      pushCache.set('/api/state?view=summary',payload);
+      if(payload.telemetry&&payload.logs)pushCache.set('/api/state',payload);
+      if(payload.companionSummary)pushCache.set('/api/companion/summary',{summary:payload.companionSummary});
+      if(payload.motes){pushCache.set('/api/motes',payload.motes);pushCache.set('/api/motes/behavior',{behavior:payload.motes.behavior})}
+      refreshCompanionSummary().then(refreshMoteStage);
+      if(webRefresh.state.drawerOpen){refreshWorkspace();refresh()}
+    }else if(/^(mote\.|task\.|attention\.|reality\.|workspace\.)/.test(payload.type||'')){
+      pushCache.clear();clearTimeout(pushRefreshTimer);
+      pushRefreshTimer=setTimeout(()=>{if(!document.hidden){refreshCompanionSummary().then(refreshMoteStage);if(webRefresh.state.drawerOpen){refreshWorkspace();refresh();refreshDailyWorkspace();refreshDiagnosticsAndTimeline()}}},80);
+    }
+  };
+  pushSocket.onclose=event=>{if(generation!==pushGeneration)return;webRefresh.update({pushOnline:false});pushCache.clear();if(event.code===4401){location.reload();return}if(!document.hidden){pushReconnect=setTimeout(connectWebPush,pushDelay);pushDelay=Math.min(30000,pushDelay*2)}};
+  pushSocket.onerror=()=>{};
+}
+function suspendWebRuntime(){
+  webRefresh.update({visible:false,pushOnline:false});webRequests.abortReads();pushCache.clear();
+  clearTimeout(pushReconnect);clearTimeout(pushRefreshTimer);pushGeneration++;pushSocket?.close();
+  frame.removeAttribute('src');frame2.removeAttribute('src');document.documentElement.dataset.pageHidden='true';
+}
+document.addEventListener('visibilitychange',()=>{if(document.hidden)suspendWebRuntime();else{document.documentElement.dataset.pageHidden='false';webRefresh.update({visible:true});connectWebPush();webRefresh.tickAll()}});
+window.addEventListener('pagehide',suspendWebRuntime);
+window.addEventListener('pageshow',event=>{if(event.persisted){document.documentElement.dataset.pageHidden='false';webRefresh.update({visible:true});connectWebPush()}});
+connectWebPush();
 refreshRealityLog();
 </script>`;
 
@@ -3635,7 +3693,8 @@ wss.on('connection', (ws, req) => {
     return;
   }
   ws.isAlive = true;
-  ws.send(snapshotPayload());
+  ws.clientRole = new URL(req.url, 'http://localhost').searchParams.get('role') === 'web' ? 'web' : 'device';
+  ws.send(ws.clientRole === 'web' ? JSON.stringify({ ...JSON.parse(summaryPayload()), type: 'snapshot' }) : snapshotPayload());
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (data, isBinary) => {
     try {
@@ -3660,6 +3719,11 @@ wss.on('connection', (ws, req) => {
         }
         switch(json.type) {
           case 'snapshot': {
+            if (ws.clientRole === 'web') {
+              ws.webDetailActive = json.view === 'full';
+              ws.send(ws.webDetailActive ? snapshotPayload() : JSON.stringify({ ...JSON.parse(summaryPayload()), type: 'snapshot' }));
+              break;
+            }
             const since = Number(json.since || 0);
             if (since > 0) ws.send(JSON.stringify({ type: 'workspace.events', revision: workspaceStore.eventRevision, events: workspaceStore.eventsAfter(since) }));
             else ws.send(snapshotPayload());

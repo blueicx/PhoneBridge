@@ -1,4 +1,15 @@
-# PhoneBridge 交接文档（Round 63 收口 / 当前状态）
+# PhoneBridge 交接文档（当前状态）
+
+## 当前交接覆盖（2026-10-13）
+
+- 当前实施位于 `F:\CodexApps\PhoneBridge-worktrees\integrated-enhancement` 的 `feature/integrated-enhancement`，以 `11b5510` 为基线；本轮大版本深化按六批进行，不修改 `main`。本节优先于下方旧日期交接记录。
+- 批次 1 已完成本地实现：Web 请求去重/取消、WebSocket 优先与抽屉离线回退、显式画面预览门控；Android 缓存舞台优先、不可见时停舞台更新并按后台/传感器状态降频；CI 拆成并行 Node、Android、Room emulator 与最终 artifact 验证任务。
+- 本地证据：Node **250/250**；无头 Chromium 检查通过（在线 push 无周期轮询、离线回退/隐藏页抑制、实时画面显式启停、窄屏无横向溢出且无页面脚本异常）；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 成功；密钥扫描、CI workflow shell contract、Node 语法和差异空白检查通过。
+- 批次提交推送后，以对应实现 SHA 的 GitHub Actions 全量结果与最终 APK artifact 为准；必须确认所有 job 对应同一 SHA 全绿，不能用本地成功替代远端验收。
+- 本轮没有连接 ADB、没有安装/启动/操作手机或授权权限。Xperia 冷启动时延、舞台帧耗时、两小时稳定性等指标未测，不宣称已达标；设备恢复后按计划单独验收。正式 Release 签名仍遵守独立加密恢复副本门禁。
+- 后续按批次 2→6 继续，逐批更新 README/HANDOFF、验证、提交并推送；最终总验收仍覆盖 Node、Android JVM/Lint/Debug、Room migration、协议/敏感扫描、浏览器、性能和实际可用设备证据。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+
+更新时间：2026-10-13（本节为当前状态；下面 2026-10-03 及更早内容为历史交接）
 
 ## 当前交接覆盖（2026-10-03）
 

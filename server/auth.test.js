@@ -96,7 +96,7 @@ test('PhoneBridge Authentication Flow', async (t) => {
     assert.doesNotMatch(draftFlow, /\/accept/, 'draft generation must not accept or create tasks');
     assert.match(appScript, /error\.code=problem\.code/);
     assert.match(appScript, /routineRetryPayloads\.set\(routineId,payload\)/);
-    assert.match(appScript, /setInterval\(refreshDailyWorkspace,10000\)/);
+    assert.match(appScript, /scheduleRefresh\('daily',refreshDailyWorkspace,'drawer',10000\)/);
   });
 
   await t.test('immersive Mote stage leads the page and keeps controls in an accessible drawer', async () => {
@@ -176,6 +176,18 @@ test('PhoneBridge Authentication Flow', async (t) => {
         if (code === 4401) reject(new Error('Rejected token incorrectly'));
       });
     });
+  });
+
+  await t.test('Web subscribers receive a lightweight snapshot without counting as a phone', async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/?role=web`, { headers: { Cookie: 'phonebridge_token=' + token } });
+    try {
+      const payload = await new Promise((resolve, reject) => { ws.once('message', data => resolve(JSON.parse(data))); ws.once('error', reject); });
+      assert.equal(payload.type, 'snapshot');
+      assert.equal(payload.view, 'summary');
+      assert.equal(payload.stats.clients, 0);
+      assert.equal(payload.logs, undefined);
+      assert.ok(payload.companionSummary);
+    } finally { ws.close(); }
   });
 
   child.kill('SIGTERM');
