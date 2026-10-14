@@ -43,6 +43,7 @@ class CompanionView @JvmOverloads constructor(
         fun onCompanionLongPressed()
         fun onCompanionLongPressReleased()
         fun onDecorationTouched(decorationId: String) {}
+        fun onDecorationMoved(decorationId: String, x: Float, y: Float) {}
     }
 
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -74,6 +75,8 @@ class CompanionView @JvmOverloads constructor(
 
     private var state = PetState()
     private var stageState = CompanionStageEngine.resolve(CompanionStageInput(hourOfDay = 12, energy = 82))
+    private var habitatEditMode = false
+    private var draggedDecorationId: String? = null
     private var characterCue: MoteCharacterCue? = null
     private var displayedEmotion = PetEmotion()
     private var accentColor = Color.parseColor("#8FF0C4")
@@ -482,6 +485,12 @@ class CompanionView @JvmOverloads constructor(
         requestRedraw()
     }
 
+    fun setHabitatEditMode(enabled: Boolean) {
+        habitatEditMode = enabled
+        if (!enabled) draggedDecorationId = null
+        requestRedraw()
+    }
+
     fun setCharacterCue(value: MoteCharacterCue) {
         if (characterCue == value) return
         characterCue = value
@@ -655,33 +664,85 @@ class CompanionView @JvmOverloads constructor(
     }
 
     private fun drawHabitatDecorations(canvas: Canvas, w: Float, h: Float, radius: Float) {
-        stageState.decorations.take(4).forEachIndexed { index, decoration ->
-            val x = w * (0.16f + index * .225f)
-            val y = h * .79f
+        stageState.decorations.take(12).forEachIndexed { index, decoration ->
+            val x = w * decoration.x.coerceIn(0f, 1f)
+            val y = h * decoration.y.coerceIn(0f, 1f)
             val size = radius * .15f
             val color = if (index % 2 == 0) accentColor else secondaryColor
             stageAtmospherePaint.color = Color.argb(88, Color.red(color), Color.green(color), Color.blue(color))
             canvas.drawCircle(x, y - size * .45f, size * 1.2f, stageAtmospherePaint)
             stageGridPaint.color = Color.argb(178, Color.red(color), Color.green(color), Color.blue(color))
             stageGridPaint.strokeWidth = max(1.5f, radius * .018f)
-            when {
-                decoration.name.contains("灯") -> {
+            val saved = canvas.save()
+            canvas.rotate(decoration.rotation, x, y)
+            when (decoration.visualType) {
+                "star-lamp" -> {
                     canvas.drawCircle(x, y - size, size * .34f, stageAtmospherePaint)
                     canvas.drawLine(x, y - size * .64f, x, y + size * .25f, stageGridPaint)
                     canvas.drawLine(x - size * .4f, y + size * .27f, x + size * .4f, y + size * .27f, stageGridPaint)
                 }
-                decoration.name.contains("芽") || decoration.name.contains("苔") || decoration.name.contains("花") -> {
-                    canvas.drawLine(x, y + size * .2f, x, y - size * .7f, stageGridPaint)
-                    canvas.drawCircle(x - size * .3f, y - size * .45f, size * .3f, stageAtmospherePaint)
-                    canvas.drawCircle(x + size * .3f, y - size * .68f, size * .3f, stageAtmospherePaint)
+                "moss-stone" -> {
+                    canvas.drawCircle(x - size * .25f, y - size * .22f, size * .43f, stageAtmospherePaint)
+                    canvas.drawCircle(x + size * .22f, y - size * .16f, size * .54f, stageAtmospherePaint)
+                    canvas.drawArc(x - size * .48f, y - size * .54f, x + size * .5f, y + size * .18f, 195f, 150f, false, stageGridPaint)
                 }
-                else -> {
-                    rect.set(x - size * .65f, y - size * .45f, x + size * .65f, y + size * .15f)
-                    canvas.drawRoundRect(rect, size * .2f, size * .2f, stageAtmospherePaint)
-                    canvas.drawLine(x - size * .65f, y + size * .15f, x - size * .65f, y + size * .38f, stageGridPaint)
-                    canvas.drawLine(x + size * .65f, y + size * .15f, x + size * .65f, y + size * .38f, stageGridPaint)
+                "cloud-platform" -> {
+                    rect.set(x - size * .72f, y - size * .05f, x + size * .72f, y + size * .3f)
+                    canvas.drawRoundRect(rect, size * .16f, size * .16f, stageAtmospherePaint)
+                    canvas.drawLine(x - size * .58f, y + size * .3f, x - size * .58f, y + size * .45f, stageGridPaint)
+                    canvas.drawLine(x + size * .58f, y + size * .3f, x + size * .58f, y + size * .45f, stageGridPaint)
+                    canvas.drawCircle(x - size * .3f, y - size * .12f, size * .21f, stageAtmospherePaint)
+                    canvas.drawCircle(x, y - size * .22f, size * .28f, stageAtmospherePaint)
+                    canvas.drawCircle(x + size * .3f, y - size * .12f, size * .21f, stageAtmospherePaint)
+                }
+                "wind-chime" -> {
+                    canvas.drawLine(x, y - size * .58f, x, y + size * .35f, stageGridPaint)
+                    canvas.drawLine(x - size * .38f, y - size * .2f, x + size * .38f, y - size * .2f, stageGridPaint)
+                    canvas.drawLine(x - size * .3f, y - size * .2f, x - size * .3f, y + size * .15f, stageGridPaint)
+                    canvas.drawLine(x + size * .3f, y - size * .2f, x + size * .3f, y + size * .15f, stageGridPaint)
+                    canvas.drawCircle(x, y + size * .34f, size * .12f, stageAtmospherePaint)
+                }
+                "moon-pool" -> {
+                    rect.set(x - size * .72f, y - size * .15f, x + size * .72f, y + size * .34f)
+                    canvas.drawOval(rect, stageAtmospherePaint)
+                    rect.inset(size * .22f, size * .1f)
+                    canvas.drawOval(rect, stageGridPaint)
+                    canvas.drawArc(x - size * .42f, y - size * .48f, x + size * .42f, y + size * .35f, 200f, 130f, false, stageGridPaint)
+                }
+                "flower-rack" -> {
+                    canvas.drawLine(x, y + size * .2f, x, y - size * .7f, stageGridPaint)
+                    canvas.drawCircle(x - size * .3f, y - size * .45f, size * .22f, stageAtmospherePaint)
+                    canvas.drawCircle(x + size * .3f, y - size * .68f, size * .22f, stageAtmospherePaint)
+                    canvas.drawCircle(x, y - size * .28f, size * .2f, stageAtmospherePaint)
+                    canvas.drawLine(x - size * .3f, y + size * .18f, x + size * .3f, y + size * .18f, stageGridPaint)
+                }
+                "crystal-cluster" -> {
+                    canvas.drawLine(x, y - size * .72f, x - size * .35f, y + size * .22f, stageGridPaint)
+                    canvas.drawLine(x, y - size * .72f, x + size * .35f, y + size * .22f, stageGridPaint)
+                    canvas.drawLine(x - size * .35f, y + size * .22f, x + size * .35f, y + size * .22f, stageGridPaint)
+                    canvas.drawLine(x - size * .15f, y - size * .26f, x + size * .3f, y - size * .12f, stageGridPaint)
+                }
+                "warm-hearth" -> {
+                    rect.set(x - size * .5f, y - size * .28f, x + size * .5f, y + size * .42f)
+                    canvas.drawRoundRect(rect, size * .22f, size * .22f, stageAtmospherePaint)
+                    canvas.drawArc(x - size * .22f, y - size * .38f, x + size * .22f, y + size * .2f, 190f, 160f, false, stageGridPaint)
+                    canvas.drawLine(x - size * .27f, y + size * .42f, x + size * .27f, y + size * .42f, stageGridPaint)
+                }
+                "sand-dune" -> {
+                    canvas.drawArc(x - size * .72f, y - size * .5f, x + size * .05f, y + size * .3f, 195f, 150f, false, stageGridPaint)
+                    canvas.drawArc(x - size * .08f, y - size * .35f, x + size * .7f, y + size * .36f, 195f, 150f, false, stageGridPaint)
+                    canvas.drawLine(x - size * .52f, y + size * .32f, x + size * .5f, y + size * .32f, stageGridPaint)
+                }
+                "feather-curtain" -> {
+                    canvas.drawLine(x - size * .5f, y - size * .55f, x + size * .5f, y - size * .55f, stageGridPaint)
+                    for (feather in -1..1) {
+                        val featherX = x + feather * size * .3f
+                        canvas.drawLine(featherX, y - size * .52f, featherX - size * .1f, y + size * .28f, stageGridPaint)
+                        canvas.drawCircle(featherX - size * .1f, y + size * .28f, size * .09f, stageAtmospherePaint)
+                    }
                 }
             }
+            canvas.restoreToCount(saved)
         }
     }
 
@@ -707,9 +768,9 @@ class CompanionView @JvmOverloads constructor(
         if (!isImmersiveStage(width, height)) return null
         val radius = min(w, h) * .215f
         val hitRadius = radius * .24f
-        return stageState.decorations.take(4).mapIndexedNotNull { index, decoration ->
-            val centerX = w * (0.16f + index * .225f)
-            val centerY = h * .79f - radius * .07f
+        return stageState.decorations.take(12).mapNotNull { decoration ->
+            val centerX = w * decoration.x.coerceIn(0f, 1f)
+            val centerY = h * decoration.y.coerceIn(0f, 1f) - radius * .07f
             decoration.id.takeIf { kotlin.math.hypot((x - centerX).toDouble(), (y - centerY).toDouble()) <= hitRadius }
         }.firstOrNull()
     }
@@ -2313,6 +2374,15 @@ class CompanionView @JvmOverloads constructor(
         gazeTargetY = ((event.y / height.toFloat()) - .5f) * 2f
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (habitatEditMode) {
+                    draggedDecorationId = decorationAt(event.x, event.y)
+                    if (draggedDecorationId != null) {
+                        touchActive = true
+                        touchPulse = .45f
+                        requestRedraw()
+                        return true
+                    }
+                }
                 touchActive = true
                 touchPulse = .55f
                 longPressFired = false
@@ -2326,6 +2396,16 @@ class CompanionView @JvmOverloads constructor(
                 touchHandler.postDelayed(longPressRunnable, 420L)
             }
             MotionEvent.ACTION_MOVE -> {
+                val draggedId = draggedDecorationId
+                if (draggedId != null && width > 0 && height > 0) {
+                    val nextX = (event.x / width.toFloat()).coerceIn(0f, 1f)
+                    val nextY = (event.y / height.toFloat()).coerceIn(0f, 1f)
+                    stageState = stageState.copy(decorations = stageState.decorations.map { decoration ->
+                        if (decoration.id == draggedId) decoration.copy(x = nextX, y = nextY) else decoration
+                    })
+                    requestRedraw()
+                    return true
+                }
                 val movedPastSlop = abs(event.x - touchStartX) > longPressSlopPx ||
                     abs(event.y - touchStartY) > longPressSlopPx
                 if (movedPastSlop) {
@@ -2365,7 +2445,17 @@ class CompanionView @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> {
                 touchActive = false
                 touchHandler.removeCallbacks(longPressRunnable)
-                if (longPressFired) {
+                val draggedId = draggedDecorationId
+                if (draggedId != null) {
+                    draggedDecorationId = null
+                    if (width > 0 && height > 0) {
+                        listener?.onDecorationMoved(
+                            draggedId,
+                            (event.x / width.toFloat()).coerceIn(0f, 1f),
+                            (event.y / height.toFloat()).coerceIn(0f, 1f),
+                        )
+                    }
+                } else if (longPressFired) {
                     listener?.onCompanionLongPressReleased()
                 } else {
                     val decorationId = if (!petting) decorationAt(event.x, event.y) else null
@@ -2381,6 +2471,7 @@ class CompanionView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_CANCEL -> {
                 touchHandler.removeCallbacks(longPressRunnable)
+                draggedDecorationId = null
                 petting = false
                 touchActive = false
                 gazeTargetX = 0f

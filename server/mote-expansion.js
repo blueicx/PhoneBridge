@@ -32,8 +32,8 @@ class MoteRelationshipStore {
     if (!key) throw new Error('eventId is required');
     if (this.state.seenEventIds.includes(key)) return { duplicate: true, ...this.snapshot() };
     const eventIds = [...new Set([...this.state.seenEventIds, key])];
-    const durableRewardReceipts = eventIds.filter(id => DURABLE_STORY_REWARD_RECEIPTS.has(id));
-    const recentInteractions = eventIds.filter(id => !DURABLE_STORY_REWARD_RECEIPTS.has(id)).slice(-512);
+    const durableRewardReceipts = eventIds.filter(id => DURABLE_STORY_REWARD_RECEIPTS.has(id) || id.startsWith('routine:'));
+    const recentInteractions = eventIds.filter(id => !DURABLE_STORY_REWARD_RECEIPTS.has(id) && !id.startsWith('routine:')).slice(-512);
     this.state.seenEventIds = [...durableRewardReceipts, ...recentInteractions];
     this.state.xp += Math.max(0, Math.round(Number(amount) || 0));
     this.state.interactions += 1;

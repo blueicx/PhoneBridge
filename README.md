@@ -82,6 +82,17 @@
 
 实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 
+## 2026-10-14 大版本深化·批次 4：家园与成长
+
+- 家园目录为每件摆件提供显式视觉和交互类型；服务端保存版本化 12 件布局及坐标，Web 舞台支持拖动、方向键微调、移除和恢复默认，Android Canvas 使用同一布局并支持拖放保存。旧 ID/无坐标存档会安全迁移，旧式添加 API 仍兼容。
+- 选取 12 件现有道具实现明确效果：限时 XP/线索/遭遇增益、额外材料和家园舒适度；服务端验证持有、消耗、装备类型与幂等事件，并在探索结算时实际应用增益。配方展示材料拥有量、缺口和来源；成长记录注明 XP、关系变化及日常/探索来源。
+- 专注、散步观察和睡前回顾只有完成时发放幂等奖励；暂停、中断、跳过不奖励。跨 ledger 的重复完成仍可补齐遗漏的成长或关系收据。
+- Web 与 Android 为道具使用/制作的响应丢失保留原 `eventId`；即使服务端已扣除材料或库存，重开页面/面板仍能重试确认而不重复发放或扣除。
+- 本地验收：Node **297/297**；Android JVM **196/196**，`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 成功；本地服务 + Chromium 交互通过；内部 Debug APK 门禁、秘密扫描、脚本语法和 `git diff --check` 通过。性能预算 `elapsedMs=1.686`、完整快照 **1694 bytes**、摘要 **48 bytes**、缓存命中 **10000**、突发广播 **1**。最新 SHA 的 GitHub Actions 在推送后复核。
+- 本批未执行 Xperia 家园拖放/触控及长时运行，浏览器与自动化结果不代替实机验收；正式签名仍受独立加密恢复副本门禁约束。
+
+实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+
 ## PhoneBridge 2.0 持续增强
 
 当前分支正在推进 2.0 四批增强。已落地的基础能力包括：

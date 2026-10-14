@@ -142,6 +142,11 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.match(html, /privacyMigration/);
     assert.match(html, /privacy\/migration\/resolve/);
     assert.match(html, /privacyCategoryIds/);
+    assert.match(html, /id="habitatInventory"/);
+    assert.match(html, /id="habitatCrafting"/);
+    assert.match(html, /id="habitatGrowthLog"/);
+    assert.match(html, /StageHabitatController/);
+    assert.match(html, /pendingCrafts/);
     for (const match of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)) {
       assert.doesNotThrow(() => new vm.Script(match[1]), 'embedded Web script must parse');
     }
@@ -172,6 +177,41 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
       updatedAt: startedRoutine.body.entry.updatedAt,
     });
     assert.equal(Object.hasOwn(activitySummary.body.workspace.activities[0], 'reflection'), false);
+
+    const finishPayload = {
+      eventId: 'stage-routine-finish', action: 'finish',
+      occurredAt: new Date(Date.parse(startedRoutine.body.entry.startedAt) + 1000).toISOString(),
+      elapsedSeconds: 600, privacyRevision: 0,
+    };
+    const completedRoutine = await request('/api/routines/focus-timer/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(finishPayload),
+    });
+    assert.equal(completedRoutine.response.status, 200);
+    assert.equal(completedRoutine.body.entry.status, 'finished');
+    assert.equal(completedRoutine.body.growth.receipt.xpDelta, 4);
+    assert.equal(completedRoutine.body.growth.receipt.relationshipDelta, 1);
+    const replayedFinish = await request('/api/routines/focus-timer/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(finishPayload),
+    });
+    assert.equal(replayedFinish.body.duplicate, true);
+    assert.equal(replayedFinish.body.growth.duplicate, true);
+    assert.equal(replayedFinish.body.relationship.duplicate, true);
+    const realityProgress = await request('/api/reality/progress');
+    assert.equal(realityProgress.body.progress.growthRecords.length, 1);
+    assert.equal(realityProgress.body.progress.realityXp, 4);
+
+    const walkStartedAt = Date.parse(finishPayload.occurredAt) + 1000;
+    await request('/api/routines/walk-observation/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ eventId: 'stage-walk-start', action: 'start', occurredAt: new Date(walkStartedAt).toISOString(), privacyRevision: 0 }),
+    });
+    const interruptedRoutine = await request('/api/routines/walk-observation/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ eventId: 'stage-walk-interrupt', action: 'interrupt', occurredAt: new Date(walkStartedAt + 1000).toISOString(), elapsedSeconds: 0, privacyRevision: 0 }),
+    });
+    assert.equal(interruptedRoutine.body.entry.status, 'interrupted');
+    assert.equal(interruptedRoutine.body.growth, null);
+    assert.equal((await request('/api/reality/progress')).body.progress.growthRecords.length, 1);
 
     const proactive = await request('/api/proactive');
     assert.equal(proactive.response.status, 200);
@@ -346,13 +386,13 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     });
     assert.equal(questClaim.response.status, 201);
     const relationshipAfterQuest = await request('/api/motes/relationship');
-    assert.equal(relationshipAfterQuest.body.relationship.xp, 15);
+    assert.equal(relationshipAfterQuest.body.relationship.xp, 16);
     const questDuplicate = await request('/api/motes/quests/daily-observer/claim', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: 'api-quest-1' }),
     });
     assert.equal(questDuplicate.body.duplicate, true);
     const relationshipAfterDuplicate = await request('/api/motes/relationship');
-    assert.equal(relationshipAfterDuplicate.body.relationship.xp, 15);
+    assert.equal(relationshipAfterDuplicate.body.relationship.xp, 16);
     const approvalRequest = await request('/api/autonomy/approvals', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ toolId: 'device.telemetry', args: {} }),
     });
@@ -767,6 +807,61 @@ test('configured provider streams live chat deltas and remember=false excludes m
     child.kill();
     if (child.exitCode === null) await new Promise(resolve => child.once('exit', resolve));
     await new Promise(resolve => upstream.close(resolve));
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('habitat API supports versioned layout edits while preserving the legacy decoration request', { timeout: 20_000 }, async () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phonebridge-habitat-api-test-'));
+  const child = spawn(process.execPath, ['index.js'], {
+    cwd: __dirname,
+    env: { ...process.env, PHONEBRIDGE_PORT: String(PORT), PHONEBRIDGE_TOKEN: TOKEN, PHONEBRIDGE_RUNTIME_DIR: runtimeDir, PHONEBRIDGE_LOCK_FILE: path.join(runtimeDir, 'node.lock') },
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  try {
+    await waitForServer(child);
+    const patchHabitat = payload => request('/api/reality/habitat', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const added = await patchHabitat({ decorationId: 'decor_01' });
+    assert.equal(added.response.status, 200);
+    assert.equal(added.body.state.habitat.layoutVersion, 2);
+    assert.deepEqual(added.body.state.habitat.decorations, ['decor_01']);
+
+    const moved = await patchHabitat({ action: 'move', decorationId: 'decor_01', x: 0.61, y: 0.44, rotation: -15 });
+    assert.equal(moved.response.status, 200);
+    assert.deepEqual(moved.body.state.habitat.layout[0], { id: 'decor_01', x: 0.61, y: 0.44, rotation: -15 });
+
+    const removed = await patchHabitat({ action: 'remove', decorationId: 'decor_01' });
+    assert.equal(removed.response.status, 200);
+    assert.deepEqual(removed.body.state.habitat.decorations, []);
+    const rejected = await patchHabitat({ action: 'move', decorationId: 'missing', x: 0.5, y: 0.5 });
+    assert.equal(rejected.response.status, 400);
+    assert.deepEqual(rejected.body.state, undefined);
+
+    const catalog = await request('/api/reality/catalog');
+    assert.equal(catalog.response.status, 200);
+    assert.equal(catalog.body.catalog.items.filter(item => item.useEffect || item.equipmentEffect).length, 12);
+    assert.equal(catalog.body.catalog.items.find(item => item.id === 'item_21').useEffect.durationMs, 30 * 60 * 1000);
+
+    const preview = await request('/api/reality/crafting?recipeId=recipe_01');
+    assert.equal(preview.response.status, 200);
+    assert.equal(preview.body.preview.canCraft, false);
+    assert.deepEqual(preview.body.preview.missing, ['item_01', 'item_08']);
+    assert.ok(preview.body.preview.ingredients.every(item => item.sources.length > 0));
+    const unknownPreview = await request('/api/reality/crafting?recipeId=unknown');
+    assert.equal(unknownPreview.response.status, 404);
+
+    const unavailableItem = await request('/api/reality/items/use', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ eventId: 'web-use-unowned', itemId: 'item_21' }),
+    });
+    assert.equal(unavailableItem.response.status, 400);
+    assert.match(unavailableItem.body.error, /not owned/i);
+  } finally {
+    child.kill();
+    if (child.exitCode === null) await new Promise(resolve => child.once('exit', resolve));
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
 });

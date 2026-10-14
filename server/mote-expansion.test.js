@@ -13,6 +13,19 @@ test('relationship rewards are idempotent and level changes behavior', () => {
   assert.equal(store.recordInteraction({ eventId: 'tap-2', kind: 'task', amount: 90 }).level, 2);
 });
 
+test('routine relationship receipts remain durable beyond the recent interaction window', () => {
+  const store = new MoteRelationshipStore();
+  store.recordInteraction({ eventId: 'routine:finished-focus', kind: 'routine', amount: 1 });
+  for (let index = 0; index < 520; index += 1) {
+    store.recordInteraction({ eventId: `tap-${index}`, kind: 'tap', amount: 1 });
+  }
+  const xpBeforeReplay = store.snapshot().xp;
+  const replay = store.recordInteraction({ eventId: 'routine:finished-focus', kind: 'routine', amount: 1 });
+  assert.equal(replay.duplicate, true);
+  assert.equal(store.snapshot().xp, xpBeforeReplay);
+  assert.ok(store.snapshot().seenEventIds.includes('routine:finished-focus'));
+});
+
 test('quest claim is idempotent', () => {
   const store = new MoteQuestStore({ quests: [{ id: 'q1', title: 'one', reward: 5 }] });
   assert.equal(store.claim('q1', 'event-q1').duplicate, false);

@@ -4,7 +4,15 @@ enum class StageLighting { DAY, DUSK, NIGHT }
 
 enum class CompanionStageActivity { IDLE, FOCUS, REST, OBSERVE, INTERACTION }
 
-data class StageDecoration(val id: String, val name: String)
+data class StageDecoration(
+    val id: String,
+    val name: String,
+    val visualType: String = "star-lamp",
+    val interaction: String = "tap-glow",
+    val x: Float = 0.16f,
+    val y: Float = 0.79f,
+    val rotation: Float = 0f,
+)
 
 data class CompanionStageInput(
     val hourOfDay: Int,

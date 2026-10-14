@@ -36,6 +36,7 @@ const { DEFAULT_THEME_ID, UI_THEMES, buildThemeCss } = require('./ui-themes');
 const { browserRendererScript } = require('./web-stage');
 const { browserStageCardsScript } = require('./web-stage-cards');
 const { browserStageChatScript } = require('./web-stage-chat');
+const { browserStageHabitatScript } = require('./web-stage-habitat');
 const { browserRuntimeScript } = require('./web-runtime');
 const fs = require('fs');
 const path = require('path');
@@ -47,6 +48,7 @@ const WEB_THEME_OPTIONS = UI_THEMES.map(theme => `<option value="${theme.id}">${
 const MOTE_STAGE_SCRIPT = browserRendererScript();
 const WEB_STAGE_CARDS_SCRIPT = browserStageCardsScript();
 const WEB_STAGE_CHAT_SCRIPT = browserStageChatScript();
+const WEB_STAGE_HABITAT_SCRIPT = browserStageHabitatScript();
 const WEB_RUNTIME_SCRIPT = browserRuntimeScript();
 
 const PORT = process.env.PHONEBRIDGE_PORT || 9501;
@@ -1818,6 +1820,7 @@ button,input,select,textarea{font:inherit}button,select,input{min-height:44px;ba
 .immersive-stage{height:calc(100svh - 72px);min-height:460px;max-height:900px;position:relative;isolation:isolate;display:grid;place-items:center;overflow:hidden;background:radial-gradient(ellipse at 50% 54%,color-mix(in srgb,var(--accent) 13%,transparent),transparent 44%),linear-gradient(180deg,transparent 58%,color-mix(in srgb,var(--secondary) 7%,transparent));}.stage-horizon{position:absolute;inset:12% 5% 5%;border:1px solid color-mix(in srgb,var(--accent) 13%,transparent);border-radius:50%;transform:perspective(420px) rotateX(67deg);box-shadow:0 0 80px color-mix(in srgb,var(--accent) 8%,transparent);pointer-events:none}.stage-radar{position:absolute;width:min(76vw,620px);aspect-ratio:1;border:1px solid color-mix(in srgb,var(--secondary) 17%,transparent);border-radius:50%;opacity:.72;pointer-events:none;background:repeating-radial-gradient(circle,transparent 0 19%,color-mix(in srgb,var(--secondary) 7%,transparent) 19.15% 19.35%);mask-image:linear-gradient(to bottom,transparent 8%,black 36%,transparent 91%)}.stage-radar:after{content:"";position:absolute;inset:6%;border-radius:50%;border-top:1px solid color-mix(in srgb,var(--accent) 48%,transparent);transform:rotate(-28deg)}.stage-copy{position:absolute;left:clamp(20px,7vw,110px);top:clamp(24px,8vh,84px);z-index:1;max-width:min(360px,38vw)}.stage-eyebrow{color:var(--accent);font-size:11px;letter-spacing:.22em;text-transform:uppercase}.stage-copy h1{margin:8px 0 3px;font-size:clamp(26px,4vw,42px);letter-spacing:.04em}.stage-copy p{margin:0;color:var(--muted)}.stage-status{margin-top:14px;display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border:1px solid var(--line);border-radius:99px;background:var(--panel);font-size:12px}.status-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 12px currentColor}.stage-status[data-online="false"] .status-dot{background:var(--warning)}.stage-offline{display:block;max-width:300px;margin-top:9px;color:var(--warning);font-size:12px}.mote-visual{position:relative;z-index:1;width:min(65vw,600px);height:min(66vh,510px);display:grid;place-items:center;animation:mote-drift 5s ease-in-out infinite;filter:drop-shadow(0 0 24px color-mix(in srgb,var(--mote-primary,var(--accent)) 18%,transparent))}.mote-svg{width:100%;height:100%;overflow:visible}.mote-silhouette{transform-origin:240px 180px;animation:mote-breathe 3.6s ease-in-out infinite;transform:translateY(calc(var(--motion-intensity)*-1px))}.stage-actions{position:absolute;bottom:clamp(24px,6vh,58px);left:0;right:0;display:flex;justify-content:center;gap:10px;z-index:2}.stage-actions button{min-width:132px}.stage-help{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:var(--muted);font-size:11px;pointer-events:none}
 .stage-quick-cards{position:absolute;z-index:3;top:clamp(112px,18vh,164px);right:clamp(18px,7vw,110px);width:min(320px,31vw);display:grid;gap:7px}.stage-quick-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;min-height:54px;padding:8px 9px 8px 12px;border:1px solid color-mix(in srgb,var(--accent) 42%,transparent);border-left:2px solid var(--accent);border-radius:12px;background:color-mix(in srgb,var(--panel) 92%,var(--background-top));backdrop-filter:blur(12px);box-shadow:0 8px 26px rgba(0,0,0,.22)}.stage-card-copy{min-width:0}.stage-card-copy strong,.stage-card-copy span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.stage-card-copy strong{font-size:12px;color:var(--text-primary)}.stage-card-copy span{font-size:11px;color:var(--muted)}.stage-quick-card button{min-height:44px;padding:7px 10px;font-size:12px}.stage-feedback{display:inline-block;margin-top:8px;color:var(--secondary);font-size:12px}.stage-chat-bubble{position:absolute;z-index:3;left:50%;bottom:108px;transform:translateX(-50%);width:min(520px,calc(100% - 36px));max-height:112px;overflow:hidden;padding:10px 14px;border:1px solid color-mix(in srgb,var(--secondary) 28%,transparent);border-left:2px solid var(--secondary);border-radius:14px;background:color-mix(in srgb,var(--bubble) 94%,var(--background-top));backdrop-filter:blur(14px);box-shadow:0 12px 32px rgba(0,0,0,.3);color:var(--text-primary);font-size:13px;white-space:pre-wrap}.stage-chat-bubble[data-generating="true"]{animation:signal-breathe 2.6s ease-in-out infinite}.stage-chat-state{display:block;margin-bottom:2px;color:var(--secondary);font-size:10px;letter-spacing:.08em}.stage-chat-reply{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}.stage-chat-bubble button{min-height:36px;margin-top:3px;padding:4px 8px;font-size:11px}.stage-chat-dock{position:absolute;z-index:3;left:50%;bottom:52px;transform:translateX(-50%);width:min(560px,calc(100% - 36px));display:flex;gap:7px;padding:5px;border:1px solid var(--line);border-radius:15px;background:color-mix(in srgb,var(--panel) 96%,var(--background-top));backdrop-filter:blur(15px);box-shadow:0 10px 32px rgba(0,0,0,.28)}.stage-chat-dock input{flex:1;width:100%;min-width:0;min-height:44px;padding:9px 12px;border:0;background:transparent;color:var(--text-primary)}.stage-chat-dock button{min-width:68px;min-height:44px;padding:8px 12px}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.stage-chat-history{margin-bottom:14px}.stage-chat-history h2{margin:0 0 10px;font-size:15px}.stage-chat-history-list{max-height:36vh;overflow:auto}.stage-chat-message{padding:9px 11px;margin:7px 0;border-left:2px solid var(--secondary);background:var(--card);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}.stage-chat-message[data-role="user"]{border-left-color:var(--accent)}.stage-chat-message small{display:block;margin-bottom:3px;color:var(--muted);font-size:10px}
 .stage-chat-dock input:focus-visible{outline:3px solid var(--focus);outline-offset:0}.stage-chat-bubble[data-error="true"]{border-left-color:var(--danger)}.mote-visual[role="button"]{cursor:pointer}.mote-visual[data-touched="true"]{filter:drop-shadow(0 0 34px color-mix(in srgb,var(--secondary) 36%,transparent))}
+.stage-decoration{position:absolute;z-index:2;width:48px;height:48px;min-width:44px;min-height:44px;padding:0;border:1px solid color-mix(in srgb,currentColor 58%,transparent);border-radius:50%;background:color-mix(in srgb,var(--panel) 78%,transparent);backdrop-filter:blur(8px);box-shadow:0 0 24px color-mix(in srgb,currentColor 38%,transparent);font-size:24px;line-height:1;pointer-events:auto;touch-action:none}.stage-decoration[data-editing="true"]{border-style:dashed;outline:1px solid color-mix(in srgb,var(--focus) 52%,transparent);cursor:move}.stage-decoration:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.habitat-item-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:54px;padding:5px 0;border-bottom:1px solid var(--line)}.habitat-item-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.habitat-item-actions button{min-width:44px;min-height:44px;padding:5px 8px}.stage-habitat[data-editing="true"] .stage-decoration{box-shadow:0 0 0 2px color-mix(in srgb,var(--focus) 24%,transparent),0 0 18px color-mix(in srgb,currentColor 30%,transparent)}
 @keyframes signal-breathe{0%,100%{box-shadow:0 12px 32px rgba(0,0,0,.3)}50%{box-shadow:0 12px 32px color-mix(in srgb,var(--secondary) 18%,rgba(0,0,0,.3))}}
 .drawer-scrim{position:fixed;z-index:4;inset:0;border:0;border-radius:0;background:rgba(0,0,0,.55);opacity:0;transition:opacity 220ms ease-out}body.drawer-open .drawer-scrim{opacity:1}.command-drawer{position:fixed;z-index:5;top:16px;right:16px;bottom:16px;width:min(760px,calc(100vw - 32px));overflow:auto;overscroll-behavior:contain;padding:18px;background:color-mix(in srgb,var(--background-top) 94%,transparent);border:1px solid var(--line);border-radius:20px;box-shadow:0 24px 90px rgba(0,0,0,.56);visibility:hidden;transform:translateX(calc(100% + 22px));transition:transform 240ms cubic-bezier(.32,.72,0,1),visibility 240ms}.command-drawer.open{visibility:visible;transform:translateX(0)}.drawer-bar{display:flex;align-items:center;gap:14px;position:sticky;top:-18px;z-index:3;margin:-18px -18px 12px;padding:12px 18px;background:var(--background-top);border-bottom:1px solid var(--line)}.drawer-bar h1{margin:0;font-size:18px}.drawer-bar p{margin:0;color:var(--muted);font-size:12px}.drawer-close{margin-left:auto;min-width:48px}.appearance-settings{scroll-margin-top:74px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}.appearance-settings h2{margin:0 0 8px;font-size:14px}.appearance-settings label{display:flex;align-items:center;gap:10px;margin-top:8px;color:var(--muted)}.appearance-settings input[type=checkbox]{width:20px;min-width:20px;min-height:20px;accent-color:var(--accent)}.appearance-settings .sub{display:block;margin-top:5px}
 @keyframes mote-drift{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}@keyframes mote-breathe{0%,100%{scale:1}50%{scale:1.025}}.mote-silhouette[data-motion="active"]{animation-duration:2.8s}.mote-silhouette[data-motion="steady"]{animation-duration:3.7s}.mote-silhouette[data-motion="soft"]{animation-duration:4.7s}
@@ -1834,7 +1837,7 @@ body.keyboard-action .drawer-scrim,body.keyboard-action .command-drawer,body.key
 .stage-chat-resume{margin:0 0 9px;padding:8px 10px;border-left:2px solid var(--accent);border-radius:7px;background:var(--card);color:var(--muted);font-size:11px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 </style><div class="app-shell">
 <header class="app-top"><div class="brand"><div class="logo">Mote</div><div class="sub">PhoneBridge · 感官同伴</div></div><div class="header-actions"><div class="pill" id="status" aria-live="polite">连接中</div><button id="appearanceButton" class="quiet-button" aria-label="打开外观设置">外观</button><button id="openDrawer" class="primary" aria-haspopup="dialog" aria-controls="commandDrawer">指挥台</button><button onclick="logout()" class="quiet-button">退出</button></div></header>
-<main class="immersive-stage" id="moteStage" role="region" aria-labelledby="stageName"><div class="stage-horizon" aria-hidden="true"></div><div class="stage-radar" aria-hidden="true"></div><div class="stage-copy"><div class="stage-eyebrow">PHONEBRIDGE · COMPANION LINK</div><h1 id="stageName">星核</h1><p id="stageVoice">正在读取伙伴状态…</p><div class="stage-status" id="stageConnection" data-online="false"><span class="status-dot" aria-hidden="true"></span><span id="stageConnectionText">连接中</span></div><span class="stage-offline" id="stageOffline" role="status" aria-live="polite" hidden></span><span class="stage-feedback" id="stageFeedback" role="status" aria-live="polite" hidden></span></div><div class="mote-visual" id="moteVisual" role="button" tabindex="0" aria-label="触碰当前 Mote" aria-hidden="false"></div><div class="stage-quick-cards" id="stageQuickCards" aria-label="当前任务和提醒" aria-live="polite" hidden></div><div class="stage-chat-bubble" id="stageChatBubble" aria-live="polite" hidden><span class="stage-chat-state" id="stageChatState"></span><span class="stage-chat-reply" id="stageChatReply"></span><button id="stageChatExpand" type="button" class="quiet-button" hidden>查看完整对话</button></div><form class="stage-chat-dock" id="stageChatForm"><label class="sr-only" for="stageChatInput">和 Mote 聊聊</label><input id="stageChatInput" maxlength="2000" autocomplete="off" placeholder="和 Mote 聊聊…" aria-label="和 Mote 聊聊"><button class="primary" id="stageChatSend" type="submit" aria-label="发送消息">发送</button></form><div class="stage-actions"><button class="quiet-button" id="stageChatButton" type="button">对话记录</button><button id="stageAppearanceButton" class="quiet-button" type="button">外观与动效</button></div></main>
+<main class="immersive-stage" id="moteStage" role="region" aria-labelledby="stageName"><div class="stage-horizon" aria-hidden="true"></div><div class="stage-radar" aria-hidden="true"></div><div class="stage-copy"><div class="stage-eyebrow">PHONEBRIDGE · COMPANION LINK</div><h1 id="stageName">星核</h1><p id="stageVoice">正在读取伙伴状态…</p><div class="stage-status" id="stageConnection" data-online="false"><span class="status-dot" aria-hidden="true"></span><span id="stageConnectionText">连接中</span></div><span class="stage-offline" id="stageOffline" role="status" aria-live="polite" hidden></span><span class="stage-feedback" id="stageFeedback" role="status" aria-live="polite" hidden></span></div><div class="mote-visual" id="moteVisual" role="button" tabindex="0" aria-label="触碰当前 Mote" aria-hidden="false"></div><div id="stageHabitat" class="stage-habitat" role="group" aria-label="伙伴家园摆件" style="position:absolute;inset:0;z-index:2;pointer-events:none"></div><div class="stage-quick-cards" id="stageQuickCards" aria-label="当前任务和提醒" aria-live="polite" hidden></div><div class="stage-chat-bubble" id="stageChatBubble" aria-live="polite" hidden><span class="stage-chat-state" id="stageChatState"></span><span class="stage-chat-reply" id="stageChatReply"></span><button id="stageChatExpand" type="button" class="quiet-button" hidden>查看完整对话</button></div><form class="stage-chat-dock" id="stageChatForm"><label class="sr-only" for="stageChatInput">和 Mote 聊聊</label><input id="stageChatInput" maxlength="2000" autocomplete="off" placeholder="和 Mote 聊聊…" aria-label="和 Mote 聊聊"><button class="primary" id="stageChatSend" type="submit" aria-label="发送消息">发送</button></form><div class="stage-actions"><button class="quiet-button" id="stageChatButton" type="button">对话记录</button><button id="stageAppearanceButton" class="quiet-button" type="button">外观与动效</button></div></main>
 <button class="drawer-scrim" id="drawerScrim" aria-label="关闭指挥台" hidden></button><aside class="command-drawer" id="commandDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true" inert><div class="drawer-bar"><div><h1 id="drawerTitle">指挥台</h1><p>任务、设备、探索与伙伴设置</p></div><button id="closeDrawer" class="drawer-close" aria-label="关闭指挥台">关闭</button></div><section class="workspace-card stage-chat-history" id="stageChatHistory" aria-labelledby="stageChatHistoryTitle"><h2 id="stageChatHistoryTitle">伙伴对话</h2><p id="stageChatResume" class="stage-chat-resume" role="status" hidden></p><div id="stageChatHistoryList" role="log" aria-live="polite">还没有消息。</div></section><section class="appearance-settings" id="appearanceSettings" aria-labelledby="appearanceTitle"><h2 id="appearanceTitle">外观与动效</h2><label for="themeSelect">主题</label><select id="themeSelect" aria-label="选择主题">${WEB_THEME_OPTIONS}</select><label><input id="reduceMotionToggle" type="checkbox">减弱舞台动画</label><span class="sub">主题与动效偏好只保存在此浏览器；系统减弱动态效果设置始终生效。</span></section><div class="wrap">
 <div class="grid"><div class="panel"><h2>实时感官</h2><img id="frame"><div class="metrics" style="margin-top:12px"><div class="metric"><b id="cpu">-</b><span>手机 CPU</span></div><div class="metric"><b id="mem">-</b><span>内存</span></div><div class="metric"><b id="bat">-</b><span>电量</span></div><div class="metric"><b id="temp">-</b><span>温度</span></div></div><div class="row"><button class="primary" onclick="device('camera_on')">开眼</button><button onclick="device('camera_front')">前眼</button><button onclick="device('camera_back')">后眼</button><button onclick="device('listen_on')">监听</button><button onclick="say()">说话</button></div><div class="row"><input id="speech" placeholder="输入要在手机上播放的话" style="flex:1"></div><div class=row><select id=idleTimeout title="空闲断流时间"><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5 selected>5 分钟</option><option value=10>10 分钟</option><option value=30>30 分钟</option></select><button onclick=setIdleTimeout()>空闲断流</button></div><div class=row><select id=screenOffTimeout title="息屏自动退出时间"><option value=0>不自动退出</option><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5>5 分钟</option><option value=10 selected>10 分钟</option><option value=30>30 分钟</option><option value=60>60 分钟</option></select><button onclick=setScreenOffTimeout()>息屏退出</button></div></div>
 <div class="panel"><h2>指挥台</h2><div class="tabs"><button class="active" data-tab="tasks">任务</button><button data-tab="log">日志</button><button data-tab="sensors">传感器</button><button data-tab="frame">画面</button></div><div id="tasks"></div><div id="log" hidden></div><div id="sensors" hidden></div><div id="framebox" hidden><img id="frame2"></div><div class="row"><input id="cmd" placeholder="help / ping 8.8.8.8 / screenshot / ps / say 你好" style="flex:1"><button class="primary" onclick="sendCmd()">执行</button></div><textarea id="detail" readonly placeholder="选中任务的输出会出现在这里"></textarea></div></div>
@@ -1842,10 +1845,11 @@ body.keyboard-action .drawer-scrim,body.keyboard-action .command-drawer,body.key
 <div id="dailyWorkspace" class="routine-goal-grid"><section class="workspace-card"><h3>日常与习惯</h3><div id="routineStatus" class="status-note" role="status" aria-live="polite">日常记录加载中…</div><div id="routineList"></div></section><section class="workspace-card"><h3>个人目标</h3><label class="sub" for="goalTitle">写下一个想推进的目标</label><div class="row"><input id="goalTitle" maxlength="120" placeholder="例如：完成一个小型作品" style="flex:1;min-width:0"></div><textarea id="goalDescription" maxlength="2000" placeholder="可选说明；仅在点击生成草案时发给当前 provider"></textarea><div class="goal-actions"><button id="goalCreateButton" class="primary" onclick="createGoalFromWeb()">创建目标</button><button onclick="refreshDailyWorkspace()">刷新日常与目标</button></div><div id="goalStatus" class="status-note" role="status" aria-live="polite">目标加载中…</div><div id="goalList"></div></section></div><div id="goalDraftPanel" class="workspace-card" style="margin-top:12px" hidden></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>手机安全配对</h2><div class="row"><button onclick="startPairing()">生成五分钟二维码</button><span id="pairingStatus" class="sub" aria-live="polite">在手机“节点”中选择“扫码配对”</span></div><img id="pairingQr" alt="手机配对二维码" style="display:none;width:min(300px,100%);margin-top:12px;background:white;border-radius:12px;padding:8px"></div>
 <div class="panel" id="realityPanel" style="grid-column:1/-1"><h2>现实探索</h2><div class="sub">只输入粗区域 ID，不上传精确位置；例如 <code>cell:1561:6073</code>。</div><div class="row"><input id="realityRegion" placeholder="粗区域 ID" style="flex:1"><button class="primary" onclick="refreshReality()">刷新事件</button></div><div id="realitySummary" class="sub" style="margin-top:8px">尚未加载现实事件</div></div>
+<div class="panel" id="habitatPanel" style="grid-column:1/-1"><h2>伙伴家园</h2><div id="habitatStatus" class="status-note" role="status" aria-live="polite">加载家园布局…</div><div class="row"><select id="habitatCatalogSelect" aria-label="选择家园摆件" style="flex:1;min-width:180px"></select><button class="primary" id="habitatAddButton" type="button">添加</button><button id="habitatEditButton" type="button">编辑舞台</button><button id="habitatResetButton" type="button">恢复默认</button></div><div id="habitatItemList" role="list" aria-label="已布置摆件"></div><h3>背包与装备</h3><div id="habitatInventory" aria-live="polite"><p class="sub">加载背包…</p></div><h3>配方与材料来源</h3><div id="habitatCrafting" aria-label="配方与材料预览"><p class="sub">加载配方…</p></div><h3>成长记录</h3><div id="habitatGrowthLog" aria-live="polite"><p class="sub">暂无完成记录。</p></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>探索记录</h2><div id="realityLogStatus" class="status-note" role="status" aria-live="polite">探索记录加载中…</div><div id="realityLogList" aria-label="分页探索记录"></div><div class="row"><button id="realityLogMore" onclick="refreshRealityLog({cursor:realityLogCursor})" hidden>加载更早记录</button></div><div id="realityLogDetail" class="workspace-card" style="margin-top:10px" aria-live="polite">选择一条记录查看安全收据详情。</div></div>
 <div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div id="privacyCategories" class="privacy-checklist" aria-label="选择要处理的数据类别"></div><div id="privacyMigration" class="sub" role="status" style="margin-top:8px"></div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。请在上方逐项勾选类别；日常与个人目标可单独导出或删除。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出选定类别</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
 </div></aside></div>
-<script>${MOTE_STAGE_SCRIPT}${WEB_STAGE_CARDS_SCRIPT}${WEB_STAGE_CHAT_SCRIPT}${WEB_RUNTIME_SCRIPT}</script><script>
+<script>${MOTE_STAGE_SCRIPT}${WEB_STAGE_CARDS_SCRIPT}${WEB_STAGE_CHAT_SCRIPT}${WEB_STAGE_HABITAT_SCRIPT}${WEB_RUNTIME_SCRIPT}</script><script>
 let selected='';
 let companionSummaryRevision = '';
 let currentCompanionSummary = null;
@@ -1908,6 +1912,9 @@ function api(p,o={}){
   if(webRefresh.state.pushOnline&&pushCache.has(p))return Promise.resolve(pushCache.get(p));
   return webRequests.run(p,signal=>readApi(p,{...o,signal}));
 }
+let habitatStorage=null;try{habitatStorage=window.localStorage}catch(_){}
+const habitatController=new window.StageHabitatController({document,api,storage:habitatStorage,onFeedback:stageStatus});
+habitatController.load();
 const webThemeIds=${WEB_THEME_IDS};
 const themeSelect=document.getElementById('themeSelect');
 const reduceMotionToggle=document.getElementById('reduceMotionToggle');
@@ -2711,13 +2718,24 @@ function connectWebPush(){
       if(payload.telemetry&&payload.logs)pushCache.set('/api/state',payload);
       if(payload.companionSummary)pushCache.set('/api/companion/summary',{summary:payload.companionSummary});
       if(payload.motes){pushCache.set('/api/motes',payload.motes);pushCache.set('/api/motes/behavior',{behavior:payload.motes.behavior})}
+      habitatController.load();
       renderStageCards(payload.workspace||{});
       if(Array.isArray(payload.chat))stageChat.hydrate(payload.chat,payload.chatResume);
       refreshCompanionSummary().then(refreshMoteStage);
       if(webRefresh.state.drawerOpen){refreshWorkspace();refresh()}
+    }else if(payload.type==='reality.habitat'&&payload.state){
+      habitatController.updateFromState(payload.state);
+      pushCache.clear();clearTimeout(pushRefreshTimer);
+      pushRefreshTimer=setTimeout(()=>{if(!document.hidden){refreshCompanionSummary().then(refreshMoteStage);refreshStageCardsNow();if(webRefresh.state.drawerOpen){refreshWorkspace();refresh();refreshDailyWorkspace();refreshDiagnosticsAndTimeline()}}},80);
+    }else if(['reality.inventory','reality.loadout'].includes(payload.type)&&payload.state){
+      habitatController.updateFromState(payload.state);
+      habitatController.refreshCrafting();
+      pushCache.clear();clearTimeout(pushRefreshTimer);
+      pushRefreshTimer=setTimeout(()=>{if(!document.hidden){refreshCompanionSummary().then(refreshMoteStage);if(webRefresh.state.drawerOpen){refreshWorkspace();refreshDailyWorkspace();refreshDiagnosticsAndTimeline()}}},80);
     }else if(['chat_delta','chat','chat_error','chat_cancelled'].includes(payload.type)){
       stageChat.handle(payload);
     }else if(/^(mote\.|task\.|attention\.|reality\.|workspace\.)/.test(payload.type||'')){
+      if(payload.type==='reality.growth'&&payload.state)habitatController.updateFromState(payload.state);
       pushCache.clear();clearTimeout(pushRefreshTimer);
       pushRefreshTimer=setTimeout(()=>{if(!document.hidden){refreshCompanionSummary().then(refreshMoteStage);refreshStageCardsNow();if(webRefresh.state.drawerOpen){refreshWorkspace();refresh();refreshDailyWorkspace();refreshDiagnosticsAndTimeline()}}},80);
     }
@@ -2978,6 +2996,19 @@ const handleHttpRequest = async (req, res) => {
           return sendJson(res, 409, { ok: false, code, error: 'routine event privacy revision does not match the current category revision', retryable: true, requiredPrivacyRevision: categoryRevision });
         }
         const result = dailyRoutinesStore.recordEvent(routineId, payload);
+        let growth = null;
+        let relationship = null;
+        if (payload.action === 'finish' && result.entry?.status === 'finished') {
+          const completionId = `routine:${crypto.createHash('sha256').update(`${routineId}:${payload.eventId}`).digest('hex')}`;
+          growth = realityEngine.recordActivityCompletion({
+            eventId: completionId,
+            routineId,
+            elapsedSeconds: result.entry.elapsedSeconds,
+          });
+          relationship = moteRelationshipStore.recordInteraction({ eventId: completionId, kind: 'routine', amount: 1 });
+          if (!growth.duplicate) broadcast({ type: 'reality.growth', receipt: growth.receipt, state: growth.state });
+          if (!relationship.duplicate) broadcast({ type: 'mote.relationship', relationship });
+        }
         const status = result.duplicate ? 200 : result.action === 'start' ? 201 : 200;
         if (!result.duplicate) broadcast({
           type: 'workspace.routine',
@@ -2988,7 +3019,7 @@ const handleHttpRequest = async (req, res) => {
             updatedAt: result.entry?.updatedAt || null,
           },
         });
-        return sendJson(res, status, { ok: true, ...result });
+        return sendJson(res, status, { ok: true, ...result, growth, relationship });
       } catch (error) {
         return sendJson(res, error.statusCode || 400, { ok: false, code: error.code || 'invalid_event', error: error.message });
       }
@@ -3391,6 +3422,14 @@ const handleHttpRequest = async (req, res) => {
     if (parsedUrl.pathname === '/api/reality/catalog' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, catalog: realityEngine.catalog() });
     }
+    if (parsedUrl.pathname === '/api/reality/crafting' && req.method === 'GET') {
+      try {
+        const recipeId = parsedUrl.searchParams.get('recipeId');
+        return recipeId
+          ? sendJson(res, 200, { ok: true, preview: realityEngine.previewRecipe(recipeId) })
+          : sendJson(res, 200, { ok: true, recipes: realityEngine.catalog().recipes.map(recipe => realityEngine.previewRecipe(recipe.id)) });
+      } catch (error) { return sendJson(res, 404, { ok: false, error: error.message }); }
+    }
     if (parsedUrl.pathname === '/api/reality/log' && req.method === 'GET') {
       try {
         const moteProfiles = { activeId: moteStore.getState().activeId, profiles: MOTE_PROFILES };
@@ -3409,7 +3448,10 @@ const handleHttpRequest = async (req, res) => {
       }
     }
     if (parsedUrl.pathname === '/api/reality/state' && req.method === 'GET') {
-      return sendJson(res, 200, { ok: true, state: realityEngine.snapshot() });
+      const state = realityEngine.snapshot();
+      state.equipmentEffects = realityEngine.equipmentEffects();
+      state.effectiveHabitatComfort = realityEngine.effectiveHabitatComfort();
+      return sendJson(res, 200, { ok: true, state });
     }
     if (parsedUrl.pathname === '/api/reality/progress' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, progress: buildRealityProgress() });
@@ -3466,16 +3508,35 @@ const handleHttpRequest = async (req, res) => {
         return sendJson(res, status, { ok: true, ...result });
       } catch (error) { return sendJson(res, /expired|invalid|region|clue/i.test(error.message) ? 409 : 400, { ok: false, error: error.message }); }
     }
+    if (parsedUrl.pathname === '/api/reality/items/use' && req.method === 'POST') {
+      try {
+        const result = realityEngine.useItem(await readJson(req));
+        broadcast({ type: 'reality.inventory', state: result.state, itemUse: result.receipt });
+        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
+      } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
     if (parsedUrl.pathname === '/api/reality/crafting' && req.method === 'POST') {
-      try { const result = realityEngine.craft((await readJson(req)).recipeId); broadcast({ type: 'reality.inventory', state: result.state }); return sendJson(res, 201, { ok: true, ...result }); }
+      try {
+        const payload = await readJson(req);
+        const result = realityEngine.craft(payload.recipeId, payload.eventId);
+        broadcast({ type: 'reality.inventory', state: result.state, receipt: result.receipt });
+        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result });
+      }
       catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
     if (parsedUrl.pathname === '/api/reality/loadout' && req.method === 'PATCH') {
-      try { const state = realityEngine.setLoadout((await readJson(req)).items); broadcast({ type: 'reality.loadout', state }); return sendJson(res, 200, { ok: true, state }); }
+      try { const state = realityEngine.setLoadout((await readJson(req)).items); broadcast({ type: 'reality.loadout', state, equipmentEffects: realityEngine.equipmentEffects() }); return sendJson(res, 200, { ok: true, state, equipmentEffects: realityEngine.equipmentEffects() }); }
       catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
     if (parsedUrl.pathname === '/api/reality/habitat' && req.method === 'PATCH') {
-      try { const state = realityEngine.decorate((await readJson(req)).decorationId); broadcast({ type: 'reality.habitat', state }); return sendJson(res, 200, { ok: true, state }); }
+      try {
+        const payload = await readJson(req);
+        const state = payload.action
+          ? realityEngine.updateHabitat(payload)
+          : realityEngine.decorate(payload.decorationId);
+        broadcast({ type: 'reality.habitat', state });
+        return sendJson(res, 200, { ok: true, state });
+      }
       catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
     if (parsedUrl.pathname === '/api/motes/quests' && req.method === 'GET') {

@@ -195,6 +195,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var ambientSoundController: AmbientSoundController
     private var stagePreferences = CompanionStagePreferences()
     private var stageDecorations = emptyList<StageDecoration>()
+    private var habitatEditing = false
     private var stageMessage: String? = null
     private var stageMessageExpiresAtMs = 0L
     private lateinit var pttButton: Button
@@ -7965,11 +7966,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         val json = org.json.JSONArray(
             getSharedPreferences("companion_stage", Context.MODE_PRIVATE).getString("decorations", "[]")
         )
-        List(json.length()) { index ->
-            json.optJSONObject(index)?.let {
-                StageDecoration(it.optString("id"), it.optString("name"))
-            } ?: StageDecoration("", "")
-        }.filter { it.id.isNotBlank() && it.name.isNotBlank() }.take(4)
+        HabitatLayoutProtocol.parseCached(json)
     }.getOrDefault(emptyList())
 
     private fun saveCompanionStagePreferences(value: CompanionStagePreferences) {
@@ -8096,7 +8093,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun openHabitatDecorationPicker() {
         if (!BridgeLink.isOnline) {
-            Toast.makeText(this, "家园摆件需要连接节点后布置；已布置的摆件仍会显示。", Toast.LENGTH_LONG).show()
+            openRealityInventory()
             return
         }
         workspaceRequest(
@@ -8108,34 +8105,37 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                     "/api/reality/state",
                     onSuccess = { stateResponse ->
                         val habitat = stateResponse.optJSONObject("state")?.optJSONObject("habitat")
-                        val placedIds = habitat?.optJSONArray("decorations") ?: org.json.JSONArray()
-                        val placed = (0 until placedIds.length()).map { placedIds.optString(it) }.toSet()
-                        val available = (0 until catalog.length()).mapNotNull { index ->
-                            catalog.optJSONObject(index)?.let {
-                                StageDecoration(it.optString("id"), it.optString("name"))
-                            }
-                        }.filter { it.id.isNotBlank() && it.name.isNotBlank() && it.id !in placed }
-                        if (available.isEmpty()) {
-                            Toast.makeText(this, "家园已布置所有可用摆件。", Toast.LENGTH_SHORT).show()
-                        } else {
-                            AlertDialog.Builder(this)
-                                .setTitle("选择一个家园摆件")
-                                .setItems(available.map { it.name }.toTypedArray()) { _, index ->
-                                    val selected = available[index]
-                                    workspaceRequest(
-                                        "/api/reality/habitat",
-                                        "PATCH",
-                                        JSONObject().put("decorationId", selected.id),
-                                        onSuccess = {
-                                            refreshStageHabitat()
-                                            say("${selected.name}已经安放在家园里了。")
-                                        },
-                                        onError = { error -> Toast.makeText(this, "布置失败：$error", Toast.LENGTH_LONG).show() },
-                                    )
-                                }
-                                .setNegativeButton("取消", null)
-                                .show()
+                        val placed = HabitatLayoutProtocol.parse(catalog, habitat)
+                        val actions = buildList {
+                            add("背包、配方与成长")
+                            add("添加摆件")
+                            if (placed.isNotEmpty()) add("拖动摆件调整位置")
+                            if (placed.isNotEmpty()) add("移除摆件")
+                            if (placed.isNotEmpty()) add("恢复默认布局")
+                            if (habitatEditing) add("结束摆放编辑")
                         }
+                        AlertDialog.Builder(this)
+                            .setTitle("家园布置 · ${placed.size}/12")
+                            .setItems(actions.toTypedArray()) { _, index ->
+                                when (actions[index]) {
+                                    "背包、配方与成长" -> openRealityInventory()
+                                    "添加摆件" -> showHabitatAddPicker(catalog, placed)
+                                    "拖动摆件调整位置" -> {
+                                        habitatEditing = true
+                                        companionView.setHabitatEditMode(true)
+                                        Toast.makeText(this, "拖动舞台上的摆件；松手后自动保存。", Toast.LENGTH_LONG).show()
+                                    }
+                                    "移除摆件" -> showHabitatRemovePicker(placed)
+                                    "恢复默认布局" -> mutateHabitat(JSONObject().put("action", "reset"), "已恢复家园默认布局")
+                                    "结束摆放编辑" -> {
+                                        habitatEditing = false
+                                        companionView.setHabitatEditMode(false)
+                                        Toast.makeText(this, "家园摆放编辑已结束", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            .setNegativeButton("取消", null)
+                            .show()
                     },
                     onError = { error -> Toast.makeText(this, "家园读取失败：$error", Toast.LENGTH_LONG).show() },
                 )
@@ -8149,25 +8149,319 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         workspaceRequest("/api/reality/catalog", onSuccess = { catalogResponse ->
             val catalog = catalogResponse.optJSONObject("catalog")?.optJSONArray("decorations")
                 ?: return@workspaceRequest
-            val names = (0 until catalog.length()).mapNotNull { index ->
-                catalog.optJSONObject(index)?.let { it.optString("id") to it.optString("name") }
-            }.toMap()
             workspaceRequest("/api/reality/state", onSuccess = { stateResponse ->
-                val ids = stateResponse.optJSONObject("state")?.optJSONObject("habitat")
-                    ?.optJSONArray("decorations") ?: org.json.JSONArray()
-                val values = (0 until ids.length()).mapNotNull { index ->
-                    val id = ids.optString(index)
-                    names[id]?.takeIf { id.isNotBlank() && it.isNotBlank() }?.let { StageDecoration(id, it) }
-                }.take(4)
+                val habitat = stateResponse.optJSONObject("state")?.optJSONObject("habitat")
+                val values = HabitatLayoutProtocol.parse(catalog, habitat)
                 stageDecorations = values
                 val serialized = org.json.JSONArray().apply {
-                    values.forEach { put(JSONObject().put("id", it.id).put("name", it.name)) }
+                    values.forEach { decoration ->
+                        put(JSONObject()
+                            .put("id", decoration.id)
+                            .put("name", decoration.name)
+                            .put("visualType", decoration.visualType)
+                            .put("interaction", decoration.interaction)
+                            .put("x", decoration.x)
+                            .put("y", decoration.y)
+                            .put("rotation", decoration.rotation))
+                    }
                 }
                 getSharedPreferences("companion_stage", Context.MODE_PRIVATE).edit()
                     .putString("decorations", serialized.toString()).apply()
                 renderPet()
             })
         })
+    }
+
+    private fun showHabitatAddPicker(catalog: org.json.JSONArray, placed: List<StageDecoration>) {
+        if (placed.size >= 12) {
+            Toast.makeText(this, "家园最多布置 12 件摆件。", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val placedIds = placed.map { it.id }.toSet()
+        val available = (0 until catalog.length()).mapNotNull { catalog.optJSONObject(it) }
+            .filter { it.optString("id") !in placedIds }
+        if (available.isEmpty()) {
+            Toast.makeText(this, "没有可添加的摆件。", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("选择一个家园摆件")
+            .setItems(available.map { it.optString("name") }.toTypedArray()) { _, index ->
+                val selected = available[index]
+                mutateHabitat(JSONObject().put("decorationId", selected.optString("id")), "${selected.optString("name")}已经安放在家园里了。")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showHabitatRemovePicker(placed: List<StageDecoration>) {
+        if (placed.isEmpty()) return
+        AlertDialog.Builder(this)
+            .setTitle("选择要移除的摆件")
+            .setItems(placed.map { it.name }.toTypedArray()) { _, index ->
+                val selected = placed[index]
+                mutateHabitat(JSONObject().put("action", "remove").put("decorationId", selected.id), "${selected.name}已收起。")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun mutateHabitat(payload: JSONObject, successMessage: String) {
+        workspaceRequest(
+            "/api/reality/habitat", "PATCH", payload,
+            onSuccess = { refreshStageHabitat(); Toast.makeText(this, successMessage, Toast.LENGTH_SHORT).show() },
+            onError = { Toast.makeText(this, "家园未更新：$it", Toast.LENGTH_LONG).show() },
+        )
+    }
+
+    private fun openRealityInventory() {
+        if (!BridgeLink.isOnline) {
+            val cached = runCatching {
+                getSharedPreferences("reality_panel", Context.MODE_PRIVATE)
+                    .getString("snapshot", null)?.let(::JSONObject)
+            }.getOrNull()
+            if (cached == null) {
+                Toast.makeText(this, "离线且没有家园/背包缓存；连接节点后可查看。", Toast.LENGTH_LONG).show()
+            } else showRealityInventoryDialog(cached, offline = true)
+            return
+        }
+        workspaceRequest("/api/reality/progress", onSuccess = { progressResponse ->
+            val progress = progressResponse.optJSONObject("progress") ?: JSONObject()
+            workspaceRequest("/api/reality/catalog", onSuccess = { catalogResponse ->
+                val items = catalogResponse.optJSONObject("catalog")?.optJSONArray("items") ?: JSONArray()
+                workspaceRequest("/api/reality/crafting", onSuccess = { craftingResponse ->
+                    val snapshot = JSONObject()
+                        .put("progress", progress)
+                        .put("items", items)
+                        .put("recipes", craftingResponse.optJSONArray("recipes") ?: JSONArray())
+                    getSharedPreferences("reality_panel", Context.MODE_PRIVATE).edit()
+                        .putString("snapshot", snapshot.toString()).apply()
+                    showRealityInventoryDialog(snapshot, offline = false)
+                }, onError = { error -> showCachedRealityInventory("配方加载失败：$error") })
+            }, onError = { error -> showCachedRealityInventory("图鉴读取失败：$error") })
+        }, onError = { error -> showCachedRealityInventory("状态读取失败：$error") })
+    }
+
+    private fun showCachedRealityInventory(prefix: String) {
+        val cached = runCatching {
+            getSharedPreferences("reality_panel", Context.MODE_PRIVATE)
+                .getString("snapshot", null)?.let(::JSONObject)
+        }.getOrNull()
+        if (cached == null) Toast.makeText(this, prefix, Toast.LENGTH_LONG).show()
+        else showRealityInventoryDialog(cached, offline = true, notice = prefix)
+    }
+
+    private fun showRealityInventoryDialog(snapshot: JSONObject, offline: Boolean, notice: String = "") {
+        val progress = snapshot.optJSONObject("progress") ?: JSONObject()
+        var dialog: androidx.appcompat.app.AlertDialog? = null
+        val items = RealityInventoryProtocol.parseItems(
+            snapshot.optJSONArray("items"),
+            progress.optJSONObject("inventory"),
+            progress.optJSONArray("loadout"),
+        )
+        val pendingOperations = getSharedPreferences("reality_operation_outbox", Context.MODE_PRIVATE).all.keys
+        val recipes = RealityInventoryProtocol.parseRecipes(snapshot.optJSONArray("recipes"))
+        val growth = RealityInventoryProtocol.parseGrowthRecords(progress.optJSONArray("growthRecords"))
+        val density = resources.displayMetrics.density
+        val scroll = android.widget.ScrollView(this).apply { isFillViewport = true }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((18 * density).toInt(), (12 * density).toInt(), (18 * density).toInt(), (18 * density).toInt())
+        }
+        fun heading(text: String) {
+            content.addView(TextView(this).apply {
+                this.text = text
+                textSize = 16f
+                setTextColor(Color.rgb(143, 240, 196))
+                setPadding(0, (14 * density).toInt(), 0, (6 * density).toInt())
+            }, LinearLayout.LayoutParams(-1, -2))
+        }
+        fun note(text: String) {
+            content.addView(TextView(this).apply {
+                this.text = text
+                textSize = 13f
+                setTextColor(Color.rgb(185, 204, 194))
+                setPadding(0, (4 * density).toInt(), 0, (6 * density).toInt())
+            }, LinearLayout.LayoutParams(-1, -2))
+        }
+        if (notice.isNotBlank()) note(notice)
+        if (offline) note("离线缓存 · 仅查看；使用、制作和装备需要节点确认。")
+
+        heading("背包与装备")
+        val owned = items.filter { item ->
+            item.quantity > 0 || (item.usable && RealityInventoryProtocol.shouldShowUseItem(
+                quantity = item.quantity,
+                hasPendingReceipt = "use:${item.id}" in pendingOperations,
+            ))
+        }
+        if (owned.isEmpty()) note("背包目前为空；现实线索和遭遇可以获得材料。")
+        owned.forEach { item ->
+            val pendingUse = "use:${item.id}" in pendingOperations
+            note("${item.name} ×${item.quantity}${if (item.equipped) " · 已装备" else ""}${if (pendingUse) " · 使用结果待确认" else ""}${item.effectLabel.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}")
+            if (pendingUse) note("重试会复用原操作 ID；服务端已处理时不会重复扣除。")
+            if (item.effectDescription.isNotBlank()) note(item.effectDescription)
+            if (!offline && (item.usable || item.kind == "equipment")) {
+                val action = Button(this).apply {
+                    text = if (item.usable) RealityInventoryProtocol.useActionLabel(pendingUse) else if (item.equipped) "卸下" else "装备"
+                    minHeight = (48 * density).toInt()
+                    setOnClickListener { button ->
+                        button.isEnabled = false
+                        if (item.usable) {
+                            val eventId = pendingRealityOperationEventId("use", item.id)
+                            workspaceRequest(
+                                "/api/reality/items/use", "POST",
+                                JSONObject().put("eventId", eventId).put("itemId", item.id),
+                                onSuccess = { response ->
+                                    if (!response.optBoolean("ok")) {
+                                        button.isEnabled = true
+                                        (button as? Button)?.text = RealityInventoryProtocol.useActionLabel(hasPendingReceipt = true)
+                                        Toast.makeText(this@MainActivity, "道具未结算：${response.optString("error")}", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        clearPendingRealityOperation("use", item.id)
+                                        dialog?.dismiss()
+                                        Toast.makeText(this@MainActivity, response.optJSONObject("receipt")?.optJSONObject("effect")?.optString("description") ?: "道具已由节点确认", Toast.LENGTH_SHORT).show()
+                                        openRealityInventory()
+                                    }
+                                },
+                                onError = { error ->
+                                    val statusCode = Regex("HTTP (\\d{3}):").find(error)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    if (RealityInventoryProtocol.shouldKeepPendingReceipt(statusCode)) {
+                                        button.isEnabled = true
+                                        (button as? Button)?.text = RealityInventoryProtocol.useActionLabel(hasPendingReceipt = true)
+                                        Toast.makeText(this@MainActivity, "道具未同步，结果待确认；可用相同操作重试：$error", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        clearPendingRealityOperation("use", item.id)
+                                        button.isEnabled = true
+                                        (button as? Button)?.text = RealityInventoryProtocol.useActionLabel(hasPendingReceipt = false)
+                                        Toast.makeText(this@MainActivity, "节点明确拒绝该操作（HTTP $statusCode）；已清除待确认项，请关闭后刷新状态。", Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                            )
+                        } else {
+                            val loadout = jsonStringList(progress.optJSONArray("loadout")).toMutableList()
+                            if (item.equipped) {
+                                loadout.remove(item.id)
+                            } else if (loadout.size >= 4) {
+                                button.isEnabled = true
+                                Toast.makeText(this@MainActivity, "最多同时装备 4 件。", Toast.LENGTH_SHORT).show()
+                                return@setOnClickListener
+                            } else {
+                                loadout.add(item.id)
+                            }
+                            val loadoutPayload = JSONObject().put("items", JSONArray(loadout))
+                            workspaceRequest(
+                                path = "/api/reality/loadout",
+                                method = "PATCH",
+                                payload = loadoutPayload,
+                                onSuccess = { response ->
+                                    if (!response.optBoolean("ok")) {
+                                        button.isEnabled = true
+                                        Toast.makeText(this@MainActivity, "装备状态未确认。", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        dialog?.dismiss(); openRealityInventory()
+                                    }
+                                },
+                                onError = { error -> button.isEnabled = true; Toast.makeText(this@MainActivity, "装备未同步：$error", Toast.LENGTH_LONG).show() },
+                            )
+                        }
+                    }
+                }
+                content.addView(action, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (3 * density).toInt() })
+            }
+        }
+        val equipment = progress.optJSONObject("equipmentEffects") ?: JSONObject()
+        val effectsSummary = buildList {
+            if (equipment.optInt("xpBonus") > 0) add("探索 +${equipment.optInt("xpBonus")} XP")
+            if (equipment.optInt("lightXpBonus") > 0) add("光线 +${equipment.optInt("lightXpBonus")} XP")
+            if (equipment.optInt("extraItem") > 0) add("材料 +${equipment.optInt("extraItem")}")
+            if (equipment.optInt("homeComfort") > 0) add("家园舒适度 +${equipment.optInt("homeComfort")}")
+        }
+        note("当前装备效果：${effectsSummary.takeIf { it.isNotEmpty() }?.joinToString("、") ?: "暂无"}；家园舒适度 ${progress.optInt("effectiveHabitatComfort")}")
+        val activeEffects = progress.optJSONArray("activeItemEffects") ?: JSONArray()
+        for (index in 0 until activeEffects.length()) {
+            val effect = activeEffects.optJSONObject(index) ?: continue
+            val remaining = ((effect.optLong("expiresAt") - System.currentTimeMillis()).coerceAtLeast(0L) / 60_000L).coerceAtLeast(1L)
+            note("生效中：${effect.optString("label", "道具效果")} · 剩余约 ${remaining} 分钟")
+        }
+
+        heading("配方与材料来源")
+        if (recipes.isEmpty()) note("配方暂不可用。")
+        recipes.forEach { recipe ->
+            val ingredientText = recipe.ingredients.joinToString(" + ") { "${it.name} ${it.owned}/${it.required}" }
+            val missingNames = recipe.ingredients.filter { it.missing > 0 }.map { it.name }
+            val sources = recipe.ingredients.flatMap { it.sources }.distinct()
+            note("${recipe.name}：$ingredientText → ${recipe.outputName.ifBlank { "成品" }}")
+            val pendingCraft = "craft:${recipe.id}" in pendingOperations
+            note("${if (pendingCraft) "制作结果待确认 · 重试将复用原操作 ID" else if (missingNames.isEmpty()) "材料齐全" else "缺少 ${missingNames.joinToString("、")}"} · 来源：${sources.ifEmpty { listOf("现实探索") }.joinToString("、")}")
+            if (!offline) {
+                val craft = Button(this).apply {
+                    text = RealityInventoryProtocol.craftActionLabel(pendingCraft)
+                    isEnabled = RealityInventoryProtocol.canSubmitCraft(recipe.canCraft, pendingCraft)
+                    minHeight = (48 * density).toInt()
+                    setOnClickListener { button ->
+                        button.isEnabled = false
+                        val eventId = pendingRealityOperationEventId("craft", recipe.id)
+                        workspaceRequest(
+                            "/api/reality/crafting", "POST",
+                            JSONObject().put("recipeId", recipe.id).put("eventId", eventId),
+                            onSuccess = { response ->
+                                if (!response.optBoolean("ok")) {
+                                    button.isEnabled = true
+                                    (button as? Button)?.text = RealityInventoryProtocol.craftActionLabel(hasPendingReceipt = true)
+                                    Toast.makeText(this@MainActivity, "制作未结算：${response.optString("error")}", Toast.LENGTH_LONG).show()
+                                } else {
+                                    clearPendingRealityOperation("craft", recipe.id)
+                                    dialog?.dismiss()
+                                    Toast.makeText(this@MainActivity, "${recipe.name}已由节点确认制作。", Toast.LENGTH_SHORT).show()
+                                    openRealityInventory()
+                                }
+                            },
+                            onError = { error ->
+                                val statusCode = Regex("HTTP (\\d{3}):").find(error)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                if (RealityInventoryProtocol.shouldKeepPendingReceipt(statusCode)) {
+                                    button.isEnabled = true
+                                    (button as? Button)?.text = RealityInventoryProtocol.craftActionLabel(hasPendingReceipt = true)
+                                    Toast.makeText(this@MainActivity, "制作结果待确认；可用相同操作重试：$error", Toast.LENGTH_LONG).show()
+                                } else {
+                                    clearPendingRealityOperation("craft", recipe.id)
+                                    button.isEnabled = true
+                                    (button as? Button)?.text = RealityInventoryProtocol.craftActionLabel(hasPendingReceipt = false)
+                                    Toast.makeText(this@MainActivity, "节点明确拒绝制作（HTTP $statusCode）；已清除待确认项，请关闭后刷新状态。", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                        )
+                    }
+                }
+                content.addView(craft, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (3 * density).toInt() })
+            }
+        }
+
+        heading("成长记录")
+        if (growth.isEmpty()) note("完成日常活动会记录经验来源；中断活动不会扣成长。")
+        growth.takeLast(12).asReversed().forEach { record ->
+            note("${record.title} · +${record.xpDelta} XP · 关系 +${record.relationshipDelta} · 来源：${if (record.source == "daily_activity") "日常完成" else "现实探索"}")
+        }
+
+        scroll.addView(content)
+        dialog = AlertDialog.Builder(this)
+            .setTitle(if (offline) "背包与成长 · 缓存" else "背包、配方与成长")
+            .setView(scroll)
+            .setPositiveButton("关闭", null)
+            .create()
+        dialog.show()
+    }
+
+    private fun pendingRealityOperationEventId(operation: String, itemId: String): String {
+        val preferences = getSharedPreferences("reality_operation_outbox", Context.MODE_PRIVATE)
+        val key = "$operation:$itemId"
+        return preferences.getString(key, null) ?: "android-$operation-${UUID.randomUUID()}".also {
+            check(preferences.edit().putString(key, it).commit()) { "无法持久化待重试的现实操作 ID" }
+        }
+    }
+
+    private fun clearPendingRealityOperation(operation: String, itemId: String) {
+        getSharedPreferences("reality_operation_outbox", Context.MODE_PRIVATE)
+            .edit().remove("$operation:$itemId").apply()
     }
 
     private fun renderFocusTools() {
@@ -8486,11 +8780,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 else editor.putString("server_fingerprint", offer.fingerprint)
                 check(editor.commit()) { "配对设置无法写入本机存储" }
             } catch (error: Exception) {
-                preferences.edit()
+                val rollbackCommitted = preferences.edit()
                     .putString("server", previousServer)
                     .putString("server_fingerprint", previousFingerprint)
                     .putBoolean("auto_connect", previousAutoConnect)
                     .commit()
+                if (!rollbackCommitted) Log.w(TAG, "pairing preferences rollback failed")
                 runCatching { secureTokenStore.put(previousToken) }
                 setStatus("配对凭据保存失败")
                 Toast.makeText(this@MainActivity, "凭据未能安全保存；请重新生成二维码后重试", Toast.LENGTH_LONG).show()
@@ -8592,7 +8887,34 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         companionView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         setMoteMoment(MoteMoment.TOUCH)
         val cue = MoteCharacterizationEngine.resolve(pet.appearance, MoteMoment.TOUCH, moteRelationship.level)
-        say("我喜欢这里的${decoration.name}。${cue.line}")
+        val interaction = when (decoration.interaction) {
+            "tap-glow" -> "星灯随着我的心情亮了一点。"
+            "tap-soothe" -> "摸摸苔石，感觉安心多了。"
+            "tap-sit" -> "我想在云台上歇一会儿。"
+            "tap-chime" -> "风铃响起，像在回应我们。"
+            "tap-ripple" -> "月池荡开了一圈温柔的光。"
+            "tap-bloom" -> "花架上的光点好像开花了。"
+            "tap-pulse" -> "晶簇回应了一个小小的脉冲。"
+            "tap-warm" -> "暖炉边待一会儿，正合适。"
+            "tap-rest" -> "沙丘很软，适合短暂休息。"
+            else -> "羽帘轻轻摆动起来。"
+        }
+        say("$interaction ${cue.line}")
+    }
+
+    override fun onDecorationMoved(decorationId: String, x: Float, y: Float) {
+        stageDecorations = stageDecorations.map { decoration ->
+            if (decoration.id == decorationId) decoration.copy(x = x, y = y) else decoration
+        }
+        workspaceRequest(
+            "/api/reality/habitat", "PATCH",
+            JSONObject().put("action", "move").put("decorationId", decorationId).put("x", x).put("y", y),
+            onSuccess = { refreshStageHabitat() },
+            onError = { error ->
+                refreshStageHabitat()
+                Toast.makeText(this, "位置未保存，已恢复节点布局：$error", Toast.LENGTH_LONG).show()
+            },
+        )
     }
 
     override fun onCompanionLongPressed() {

@@ -14,6 +14,9 @@ test('reality coordinator centralizes clue processing and progress projection', 
   const reality = {
     snapshot: () => ({ updatedAt: 5, inventory: { item_01: 1 }, loadout: [], habitat: { comfort: 0 }, region: 'camera' }),
     setBoosts: value => { boosts = value; },
+    equipmentEffects: () => ({ xpBonus: 0, extraItem: 0, homeComfort: 0, actionXpBonus: 0, lightXpBonus: 0, encounterXpBonus: 0 }),
+    effectiveHabitatComfort: () => 0,
+    listActiveItemEffects: () => [],
   };
   const coordinator = createRealityCoordinator({ moteStore: mote, moteGrowthStore: growth, realityEngine: reality, broadcastMoteState: () => broadcasts++ });
   const result = coordinator.applyMoteClue({ eventId: 'reality-lens:v2:2026-01-01:camera:location', clueType: 'location', region: 'camera' });
@@ -22,6 +25,9 @@ test('reality coordinator centralizes clue processing and progress projection', 
   assert.equal(broadcasts, 1);
   const progress = coordinator.buildProgress();
   assert.equal(progress.inventory.item_01, 1);
+  assert.deepEqual(progress.equipmentEffects, { xpBonus: 0, extraItem: 0, homeComfort: 0, actionXpBonus: 0, lightXpBonus: 0, encounterXpBonus: 0 });
+  assert.equal(progress.effectiveHabitatComfort, 0);
+  assert.deepEqual(progress.activeItemEffects, []);
   assert.equal(progress.revision, 7);
 });
 
