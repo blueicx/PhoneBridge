@@ -24,8 +24,50 @@ with sync_playwright() as playwright:
         page.wait_for_load_state("networkidle")
         page.wait_for_selector(".mote-svg")
         page.wait_for_function("webRefresh.state.pushOnline === true")
+        assert page.locator("#stageChatForm").is_visible(), "chat must be directly available on the stage"
+        page.evaluate("""() => {
+            let browserChatCounter = 0;
+            const testChat = new StageChatController({
+                getSocket: () => ({readyState: 1, send: value => { window.stageSent = JSON.parse(value); }}),
+                createId: () => 'browser-check-' + (++browserChatCounter), onChange: renderStageChat
+            });
+            testChat.send('舞台流式测试');
+            testChat.handle({type:'chat_delta', requestId:window.stageSent.requestId, text:'伙伴回应'});
+            testChat.handle({type:'chat_delta', requestId:window.stageSent.requestId, text:'伙伴回应完成', terminal:true});
+            testChat.send('失败后保留的旧消息');
+            testChat.handle({type:'chat_error', requestId:window.stageSent.requestId, error:'模拟失败'});
+            testChat.send('失败后用户输入的新消息');
+            testChat.handle({type:'chat_delta', requestId:window.stageSent.requestId, text:'新消息已回复', terminal:true});
+            renderStageCards({
+                tasks:[{id:'task-ui',title:'安全卡片',state:'running',progress:37}],
+                approvals:[{id:'approval-ui',taskId:'task-ui',toolId:'read.status',state:'needs_confirmation',args:{secret:'must-not-render'}}],
+                attention:[{id:'attention-ui',title:'第三条不能显示',status:'open'}]
+            });
+            document.getElementById('moteVisual').focus();
+            document.getElementById('moteVisual').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+        }""")
+        assert page.locator("#stageChatReply").inner_text() == "新消息已回复"
+        assert page.locator("#stageChatRetry").is_visible(), "an earlier failed message must remain explicitly retryable"
+        assert "未送达" in page.locator("#stageChatHistoryList").text_content()
+        assert page.locator("#stageQuickCards .stage-quick-card").count() == 2
+        assert page.locator("#stageQuickCards").inner_text().find("must-not-render") < 0
+        assert page.locator("#moteVisual").get_attribute("data-touched") == "true"
+        page.evaluate("renderStageCards({});renderStageChat({messages:[],status:'idle',error:''})")
         assert page.evaluate("() => { const active = pushSocket; connectWebPush(); return pushSocket === active; }"), \
             "repeated page-show callbacks must not create a second WebSocket"
+        created = page.evaluate("""async () => {
+            const response = await fetch('/api/tasks', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:'实时舞台任务',source:'browser-test'})});
+            return {status:response.status,body:await response.json()};
+        }""")
+        assert created["status"] == 201, created
+        page.wait_for_function("document.querySelector('#stageQuickCards')?.innerText.includes('实时舞台任务')")
+        routine = page.evaluate("""async () => {
+            const response = await fetch('/api/routines/focus-timer/events', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({eventId:'browser-routine-'+Date.now(),action:'start',occurredAt:new Date().toISOString(),privacyRevision:0})});
+            return {status:response.status,body:await response.json()};
+        }""")
+        assert routine["status"] == 201, routine
+        page.wait_for_function("document.querySelector('#stageQuickCards')?.innerText.includes('专注计时')")
+        assert page.locator("#stageQuickCards .stage-quick-card").count() == 2
         assert "/frame" not in requests, "closed drawer must not request frames"
         count = requests.count("/api/motes")
         page.wait_for_timeout(5500)

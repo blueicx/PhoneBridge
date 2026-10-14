@@ -149,6 +149,18 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.equal(cachedSummary.status, 304);
     assert.equal(await cachedSummary.text(), '');
 
+    const startedRoutine = await request('/api/routines/focus-timer/events', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ eventId: 'stage-routine-start', action: 'start', occurredAt: new Date().toISOString(), privacyRevision: 0 }),
+    });
+    assert.equal(startedRoutine.response.status, 201);
+    const activitySummary = await request('/api/state?view=summary');
+    assert.deepEqual(activitySummary.body.workspace.activities[0], {
+      routineId: 'focus-timer', title: '专注计时', status: 'active', elapsedSeconds: 0,
+      updatedAt: startedRoutine.body.entry.updatedAt,
+    });
+    assert.equal(Object.hasOwn(activitySummary.body.workspace.activities[0], 'reflection'), false);
+
     const proactive = await request('/api/proactive');
     assert.equal(proactive.response.status, 200);
     assert.equal(proactive.body.policy.maxPerHour, 1);
@@ -311,6 +323,19 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     const socket = opened.socket;
     try {
       assert.equal(opened.firstMessage.type, 'snapshot');
+      const firstChatPromise = nextSocketMessage(socket, message => message.type === 'chat' && message.requestId === 'stage-chat-original');
+      socket.send(JSON.stringify({ type: 'chat', requestId: 'stage-chat-original', source: 'web-stage', text: '检查聊天历史幂等', remember: true }));
+      const firstChat = await firstChatPromise;
+      assert.equal(firstChat.historyRequestId, 'stage-chat-original');
+      const retriedChatPromise = nextSocketMessage(socket, message => message.type === 'chat' && message.requestId === 'stage-chat-retry');
+      socket.send(JSON.stringify({ type: 'chat', requestId: 'stage-chat-retry', retryOfRequestId: 'stage-chat-original', source: 'web-stage', text: '检查聊天历史幂等', remember: true }));
+      const retriedChat = await retriedChatPromise;
+      assert.equal(retriedChat.historyRequestId, 'stage-chat-original');
+      const chatSnapshotPromise = nextSocketMessage(socket, message => message.type === 'snapshot' && Array.isArray(message.chat));
+      socket.send(JSON.stringify({ type: 'snapshot', view: 'full' }));
+      const chatSnapshot = await chatSnapshotPromise;
+      assert.deepEqual(chatSnapshot.chat.filter(item => item.requestId === 'stage-chat-original').map(item => item.role), ['user', 'assistant']);
+
       const invocationRunPromise = nextSocketMessage(socket, message => message.type === 'action.run');
       const invocationResultPromise = nextSocketMessage(socket, message => message.type === 'action.result');
       const invocation = await request('/api/tools/invoke', {

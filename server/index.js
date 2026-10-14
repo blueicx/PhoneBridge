@@ -34,6 +34,8 @@ const { buildCompanionSummary } = require('./companion-summary');
 const { loadTlsOptions, pairingTransport, pairingAvailabilityError, buildPairingQrPayload } = require('./tls-config');
 const { DEFAULT_THEME_ID, UI_THEMES, buildThemeCss } = require('./ui-themes');
 const { browserRendererScript } = require('./web-stage');
+const { browserStageCardsScript } = require('./web-stage-cards');
+const { browserStageChatScript } = require('./web-stage-chat');
 const { browserRuntimeScript } = require('./web-runtime');
 const fs = require('fs');
 const path = require('path');
@@ -43,6 +45,8 @@ const WEB_THEME_CSS = buildThemeCss();
 const WEB_THEME_IDS = JSON.stringify(UI_THEMES.map(theme => theme.id));
 const WEB_THEME_OPTIONS = UI_THEMES.map(theme => `<option value="${theme.id}">${theme.label}</option>`).join('');
 const MOTE_STAGE_SCRIPT = browserRendererScript();
+const WEB_STAGE_CARDS_SCRIPT = browserStageCardsScript();
+const WEB_STAGE_CHAT_SCRIPT = browserStageChatScript();
 const WEB_RUNTIME_SCRIPT = browserRuntimeScript();
 
 const PORT = process.env.PHONEBRIDGE_PORT || 9501;
@@ -1470,6 +1474,7 @@ async function handleChat(text, memories = [], options = {}) {
   const clean = String(text || '').trim().slice(0, 2000);
   if (!clean) throw new Error('empty');
   const requestId = String(options.requestId || `chat_${crypto.randomUUID()}`);
+  const historyRequestId = String(options.retryOfRequestId || requestId);
   const controller = new AbortController();
   const externalSignal = options.signal;
   const abortFromParent = () => controller.abort();
@@ -1479,7 +1484,9 @@ async function handleChat(text, memories = [], options = {}) {
   try {
     if (controller.signal.aborted) throw new Error('AI request cancelled');
     const remember = options.remember !== false;
-    if (remember) chatHistory.push({ role: 'user', text: clean, time: nowTime() });
+    if (remember && !chatHistory.some(item => item.requestId === historyRequestId && item.role === 'user')) {
+      chatHistory.push({ requestId: historyRequestId, role: 'user', text: clean, time: nowTime() });
+    }
     const result = await chatWithModel(clean, remember ? memories : [], {
       remember,
       history: remember ? chatHistory : chatHistory.slice(-16),
@@ -1491,8 +1498,13 @@ async function handleChat(text, memories = [], options = {}) {
     });
     if (controller.signal.aborted) throw new Error('AI request cancelled');
     const reply = result.reply;
-    if (remember) chatHistory.push({ role: 'assistant', text: reply, time: nowTime() });
-    broadcast({ type: 'chat', requestId, source: options.source || 'chat', role: 'assistant', text: reply, time: nowTime() });
+    if (remember) {
+      const assistantIndex = chatHistory.findIndex(item => item.requestId === historyRequestId && item.role === 'assistant');
+      const entry = { requestId: historyRequestId, role: 'assistant', text: reply, time: nowTime() };
+      if (assistantIndex >= 0) chatHistory[assistantIndex] = entry;
+      else chatHistory.push(entry);
+    }
+    broadcast({ type: 'chat', requestId, historyRequestId, source: options.source || 'chat', role: 'assistant', text: reply, time: nowTime() });
     progressMoteStory(`chat:${chatHistory.length}:${clean.slice(0, 48)}`, { conversationCount: 1 });
     addLog('success', `Mote 对话回复：${reply.slice(0, 100)}`);
     return { ok: true, reply };
@@ -1543,6 +1555,13 @@ function buildSummaryPayload() {
   const relationship = moteRelationshipStore.snapshot();
   const motes = buildMoteProjection();
   const autonomy = workspaceStore.getAutonomyPolicy();
+  const activities = dailyRoutinesStore.list({ cursor: 0, limit: 3 }).current.map(entry => ({
+    routineId: entry.routineId,
+    title: entry.title,
+    status: entry.status,
+    elapsedSeconds: entry.elapsedSeconds,
+    updatedAt: entry.updatedAt,
+  }));
   const workspace = {
     eventRevision: workspaceStore.eventRevision,
     emergencyStop: workspaceStore.emergencyStopState(),
@@ -1551,6 +1570,7 @@ function buildSummaryPayload() {
     tasks: workspaceTasks.slice(0, 12),
     attention,
     approvals: approvals.slice(0, 6),
+    activities,
   };
   const summaryInput = {
     tasks,
@@ -1771,22 +1791,25 @@ button,input,select,textarea{font:inherit}button,select,input{min-height:44px;ba
 #log,#tasks,#sensors{height:min(48vh,430px);overflow:auto;padding-right:6px}.item{border-left:2px solid var(--accent);padding:6px 9px;margin-bottom:6px;background:var(--card);white-space:pre-wrap}.taskbar{height:4px;background:var(--card);margin-top:5px}.taskbar i{display:block;height:100%;background:var(--success)}.row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}input,select{min-width:0}textarea{width:100%;min-height:110px;background:var(--input);color:var(--text-primary);border:1px solid var(--line);border-radius:12px;padding:10px;font:12px ui-monospace}#frame{width:100%;aspect-ratio:3/2;object-fit:cover;border-radius:16px;border:2px solid var(--accent)}
 .routine-goal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}.workspace-card{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}.workspace-card h3{margin:0 0 8px;font-size:14px;color:var(--accent)}.workspace-card input,.workspace-card textarea{max-width:100%}.workspace-card textarea{min-height:64px;resize:vertical}.routine-actions,.goal-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.routine-actions button,.goal-actions button{padding:6px 9px}.goal-step{border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0}.goal-step input,.goal-step textarea{width:100%;margin-top:6px}.privacy-checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;margin-top:10px}.privacy-check{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:8px}.privacy-check input{accent-color:var(--accent)}.status-note{min-height:18px;margin-top:6px;color:var(--warning);font-size:12px;white-space:pre-wrap}.status-note.error{color:var(--danger)}
 .immersive-stage{height:calc(100svh - 72px);min-height:460px;max-height:900px;position:relative;isolation:isolate;display:grid;place-items:center;overflow:hidden;background:radial-gradient(ellipse at 50% 54%,color-mix(in srgb,var(--accent) 13%,transparent),transparent 44%),linear-gradient(180deg,transparent 58%,color-mix(in srgb,var(--secondary) 7%,transparent));}.stage-horizon{position:absolute;inset:12% 5% 5%;border:1px solid color-mix(in srgb,var(--accent) 13%,transparent);border-radius:50%;transform:perspective(420px) rotateX(67deg);box-shadow:0 0 80px color-mix(in srgb,var(--accent) 8%,transparent);pointer-events:none}.stage-radar{position:absolute;width:min(76vw,620px);aspect-ratio:1;border:1px solid color-mix(in srgb,var(--secondary) 17%,transparent);border-radius:50%;opacity:.72;pointer-events:none;background:repeating-radial-gradient(circle,transparent 0 19%,color-mix(in srgb,var(--secondary) 7%,transparent) 19.15% 19.35%);mask-image:linear-gradient(to bottom,transparent 8%,black 36%,transparent 91%)}.stage-radar:after{content:"";position:absolute;inset:6%;border-radius:50%;border-top:1px solid color-mix(in srgb,var(--accent) 48%,transparent);transform:rotate(-28deg)}.stage-copy{position:absolute;left:clamp(20px,7vw,110px);top:clamp(24px,8vh,84px);z-index:1;max-width:min(360px,38vw)}.stage-eyebrow{color:var(--accent);font-size:11px;letter-spacing:.22em;text-transform:uppercase}.stage-copy h1{margin:8px 0 3px;font-size:clamp(26px,4vw,42px);letter-spacing:.04em}.stage-copy p{margin:0;color:var(--muted)}.stage-status{margin-top:14px;display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border:1px solid var(--line);border-radius:99px;background:var(--panel);font-size:12px}.status-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 12px currentColor}.stage-status[data-online="false"] .status-dot{background:var(--warning)}.stage-offline{display:block;max-width:300px;margin-top:9px;color:var(--warning);font-size:12px}.mote-visual{position:relative;z-index:1;width:min(65vw,600px);height:min(66vh,510px);display:grid;place-items:center;animation:mote-drift 5s ease-in-out infinite;filter:drop-shadow(0 0 24px color-mix(in srgb,var(--mote-primary,var(--accent)) 18%,transparent))}.mote-svg{width:100%;height:100%;overflow:visible}.mote-silhouette{transform-origin:240px 180px;animation:mote-breathe 3.6s ease-in-out infinite;transform:translateY(calc(var(--motion-intensity)*-1px))}.stage-actions{position:absolute;bottom:clamp(24px,6vh,58px);left:0;right:0;display:flex;justify-content:center;gap:10px;z-index:2}.stage-actions button{min-width:132px}.stage-help{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:var(--muted);font-size:11px;pointer-events:none}
+.stage-quick-cards{position:absolute;z-index:3;top:clamp(112px,18vh,164px);right:clamp(18px,7vw,110px);width:min(320px,31vw);display:grid;gap:7px}.stage-quick-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;min-height:54px;padding:8px 9px 8px 12px;border:1px solid color-mix(in srgb,var(--accent) 42%,transparent);border-left:2px solid var(--accent);border-radius:12px;background:color-mix(in srgb,var(--panel) 92%,var(--background-top));backdrop-filter:blur(12px);box-shadow:0 8px 26px rgba(0,0,0,.22)}.stage-card-copy{min-width:0}.stage-card-copy strong,.stage-card-copy span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.stage-card-copy strong{font-size:12px;color:var(--text-primary)}.stage-card-copy span{font-size:11px;color:var(--muted)}.stage-quick-card button{min-height:44px;padding:7px 10px;font-size:12px}.stage-feedback{display:inline-block;margin-top:8px;color:var(--secondary);font-size:12px}.stage-chat-bubble{position:absolute;z-index:3;left:50%;bottom:108px;transform:translateX(-50%);width:min(520px,calc(100% - 36px));max-height:112px;overflow:hidden;padding:10px 14px;border:1px solid color-mix(in srgb,var(--secondary) 28%,transparent);border-left:2px solid var(--secondary);border-radius:14px;background:color-mix(in srgb,var(--bubble) 94%,var(--background-top));backdrop-filter:blur(14px);box-shadow:0 12px 32px rgba(0,0,0,.3);color:var(--text-primary);font-size:13px;white-space:pre-wrap}.stage-chat-bubble[data-generating="true"]{animation:signal-breathe 2.6s ease-in-out infinite}.stage-chat-state{display:block;margin-bottom:2px;color:var(--secondary);font-size:10px;letter-spacing:.08em}.stage-chat-reply{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}.stage-chat-bubble button{min-height:36px;margin-top:3px;padding:4px 8px;font-size:11px}.stage-chat-dock{position:absolute;z-index:3;left:50%;bottom:52px;transform:translateX(-50%);width:min(560px,calc(100% - 36px));display:flex;gap:7px;padding:5px;border:1px solid var(--line);border-radius:15px;background:color-mix(in srgb,var(--panel) 96%,var(--background-top));backdrop-filter:blur(15px);box-shadow:0 10px 32px rgba(0,0,0,.28)}.stage-chat-dock input{flex:1;width:100%;min-width:0;min-height:44px;padding:9px 12px;border:0;background:transparent;color:var(--text-primary)}.stage-chat-dock button{min-width:68px;min-height:44px;padding:8px 12px}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.stage-chat-history{margin-bottom:14px}.stage-chat-history h2{margin:0 0 10px;font-size:15px}.stage-chat-history-list{max-height:36vh;overflow:auto}.stage-chat-message{padding:9px 11px;margin:7px 0;border-left:2px solid var(--secondary);background:var(--card);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}.stage-chat-message[data-role="user"]{border-left-color:var(--accent)}.stage-chat-message small{display:block;margin-bottom:3px;color:var(--muted);font-size:10px}
+.stage-chat-dock input:focus-visible{outline:3px solid var(--focus);outline-offset:0}.stage-chat-bubble[data-error="true"]{border-left-color:var(--danger)}.mote-visual[role="button"]{cursor:pointer}.mote-visual[data-touched="true"]{filter:drop-shadow(0 0 34px color-mix(in srgb,var(--secondary) 36%,transparent))}
+@keyframes signal-breathe{0%,100%{box-shadow:0 12px 32px rgba(0,0,0,.3)}50%{box-shadow:0 12px 32px color-mix(in srgb,var(--secondary) 18%,rgba(0,0,0,.3))}}
 .drawer-scrim{position:fixed;z-index:4;inset:0;border:0;border-radius:0;background:rgba(0,0,0,.55);opacity:0;transition:opacity 220ms ease-out}body.drawer-open .drawer-scrim{opacity:1}.command-drawer{position:fixed;z-index:5;top:16px;right:16px;bottom:16px;width:min(760px,calc(100vw - 32px));overflow:auto;overscroll-behavior:contain;padding:18px;background:color-mix(in srgb,var(--background-top) 94%,transparent);border:1px solid var(--line);border-radius:20px;box-shadow:0 24px 90px rgba(0,0,0,.56);visibility:hidden;transform:translateX(calc(100% + 22px));transition:transform 240ms cubic-bezier(.32,.72,0,1),visibility 240ms}.command-drawer.open{visibility:visible;transform:translateX(0)}.drawer-bar{display:flex;align-items:center;gap:14px;position:sticky;top:-18px;z-index:3;margin:-18px -18px 12px;padding:12px 18px;background:var(--background-top);border-bottom:1px solid var(--line)}.drawer-bar h1{margin:0;font-size:18px}.drawer-bar p{margin:0;color:var(--muted);font-size:12px}.drawer-close{margin-left:auto;min-width:48px}.appearance-settings{scroll-margin-top:74px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}.appearance-settings h2{margin:0 0 8px;font-size:14px}.appearance-settings label{display:flex;align-items:center;gap:10px;margin-top:8px;color:var(--muted)}.appearance-settings input[type=checkbox]{width:20px;min-width:20px;min-height:20px;accent-color:var(--accent)}.appearance-settings .sub{display:block;margin-top:5px}
 @keyframes mote-drift{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}@keyframes mote-breathe{0%,100%{scale:1}50%{scale:1.025}}.mote-silhouette[data-motion="active"]{animation-duration:2.8s}.mote-silhouette[data-motion="steady"]{animation-duration:3.7s}.mote-silhouette[data-motion="soft"]{animation-duration:4.7s}
 .appearance-settings label{min-height:44px}
 button{transition:transform 140ms cubic-bezier(.23,1,.32,1),border-color 160ms ease,background-color 160ms ease}.drawer-scrim{transition:opacity 220ms cubic-bezier(.23,1,.32,1)}
-@media(max-width:850px){.grid{grid-template-columns:1fr}.immersive-stage{min-height:420px}.stage-copy{left:6vw;top:5vh;max-width:48vw}.mote-visual{width:min(90vw,540px);height:min(62vh,460px)}.command-drawer{inset:0;width:100%;border-radius:0;border:0;padding:14px}.drawer-bar{top:-14px;margin:-14px -14px 12px;padding:12px 14px}}
-@media(max-width:600px){.app-top{height:64px;padding:8px 12px}.brand{display:block}.logo{font-size:18px;line-height:1.15}.brand .sub{font-size:10px}.header-actions{gap:5px}.header-actions button{padding-inline:9px}.pill{padding:6px 9px;font-size:11px}.immersive-stage{height:calc(100svh - 64px);min-height:420px}.stage-copy{left:18px;top:22px;max-width:70vw}.stage-copy h1{font-size:28px}.stage-radar{width:104vw;top:18%}.mote-visual{width:104vw;height:min(60vh,420px);transform:translateY(28px)}.stage-actions{bottom:34px}.stage-actions button{min-width:0;flex:1;max-width:165px;padding-inline:9px}.stage-help{bottom:10px}.wrap{padding:0 0 18px}.panel{padding:13px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.routine-goal-grid{grid-template-columns:1fr}.command-drawer .row>*{max-width:100%}}
+@media(max-width:850px){.grid{grid-template-columns:1fr}.immersive-stage{min-height:420px}.stage-copy{left:6vw;top:5vh;max-width:48vw}.mote-visual{width:min(90vw,540px);height:min(54vh,420px)}.stage-quick-cards{left:18px;right:18px;top:clamp(118px,19vh,155px);width:auto}.stage-chat-bubble{bottom:108px}.stage-chat-dock{bottom:52px}.stage-actions{bottom:7px;left:auto;right:18px}.stage-actions button{min-width:0;min-height:40px;padding:5px 9px;font-size:11px}.command-drawer{inset:0;width:100%;border-radius:0;border:0;padding:14px}.drawer-bar{top:-14px;margin:-14px -14px 12px;padding:12px 14px}}
+@media(max-width:600px){.app-top{height:64px;padding:8px 12px}.brand{display:block}.logo{font-size:18px;line-height:1.15}.brand .sub{font-size:10px}.header-actions{gap:5px}.header-actions button{padding-inline:9px}.pill{padding:6px 9px;font-size:11px}.immersive-stage{height:calc(100svh - 64px);min-height:420px}.stage-copy{left:18px;top:18px;max-width:70vw}.stage-copy h1{font-size:26px}.stage-copy p,.stage-status{font-size:11px}.stage-status{margin-top:8px;padding:5px 9px}.stage-radar{width:104vw;top:18%}.mote-visual{width:104vw;height:min(49vh,370px);transform:translateY(8px)}.stage-quick-cards{top:132px;left:14px;right:14px;gap:5px}.stage-quick-card{min-height:48px;padding:5px 6px 5px 9px;gap:6px}.stage-card-copy strong{font-size:11px}.stage-card-copy span{font-size:10px}.stage-quick-card button{min-height:44px;padding:5px 8px;font-size:11px}.stage-chat-bubble{bottom:108px;max-height:96px;padding:8px 10px;font-size:12px}.stage-chat-dock{bottom:52px;width:calc(100% - 24px);gap:5px}.stage-chat-dock input{padding-inline:9px;font-size:13px}.stage-chat-dock button{min-width:58px;padding-inline:8px;font-size:12px}.stage-actions{bottom:5px;right:12px;gap:5px}.stage-actions button{min-height:40px;flex:0 0 auto;padding-inline:8px;font-size:10px}.wrap{padding:0 0 18px}.panel{padding:13px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.routine-goal-grid{grid-template-columns:1fr}.command-drawer .row>*{max-width:100%}}
 @media(max-width:370px){.header-actions #status{display:none}.stage-actions{gap:7px}.stage-actions button{font-size:12px}}
-@media(prefers-reduced-motion:reduce){.mote-visual,.mote-silhouette{animation:none!important}.drawer-scrim{transition:opacity 120ms ease-out!important}.command-drawer{opacity:0;transform:translateX(0)!important;transition:opacity 120ms ease-out,visibility 0s linear 120ms!important}.command-drawer.open{opacity:1;transition:opacity 120ms ease-out,visibility 0s!important}button{transition:background-color 120ms ease-out,border-color 120ms ease-out!important}button:active{transform:none}}
-:root[data-reduce-motion="true"] .mote-visual,:root[data-reduce-motion="true"] .mote-silhouette{animation:none!important}
+@media(prefers-reduced-motion:reduce){.mote-visual,.mote-silhouette,.stage-chat-bubble{animation:none!important}.drawer-scrim{transition:opacity 120ms ease-out!important}.command-drawer{opacity:0;transform:translateX(0)!important;transition:opacity 120ms ease-out,visibility 0s linear 120ms!important}.command-drawer.open{opacity:1;transition:opacity 120ms ease-out,visibility 0s!important}button{transition:background-color 120ms ease-out,border-color 120ms ease-out!important}button:active{transform:none}}
+:root[data-reduce-motion="true"] .mote-visual,:root[data-reduce-motion="true"] .mote-silhouette,:root[data-reduce-motion="true"] .stage-chat-bubble{animation:none!important}
 :root[data-page-hidden="true"] *{animation-play-state:paused!important}
 @media(hover:hover) and (pointer:fine){button:hover{border-color:var(--focus)}}
 body.keyboard-action .drawer-scrim,body.keyboard-action .command-drawer,body.keyboard-action button{transition:none!important}
 </style><div class="app-shell">
 <header class="app-top"><div class="brand"><div class="logo">Mote</div><div class="sub">PhoneBridge · 感官同伴</div></div><div class="header-actions"><div class="pill" id="status" aria-live="polite">连接中</div><button id="appearanceButton" class="quiet-button" aria-label="打开外观设置">外观</button><button id="openDrawer" class="primary" aria-haspopup="dialog" aria-controls="commandDrawer">指挥台</button><button onclick="logout()" class="quiet-button">退出</button></div></header>
-<main class="immersive-stage" id="moteStage" role="region" aria-labelledby="stageName"><div class="stage-horizon" aria-hidden="true"></div><div class="stage-radar" aria-hidden="true"></div><div class="stage-copy"><div class="stage-eyebrow">PHONEBRIDGE · COMPANION LINK</div><h1 id="stageName">星核</h1><p id="stageVoice">正在读取伙伴状态…</p><div class="stage-status" id="stageConnection" data-online="false"><span class="status-dot" aria-hidden="true"></span><span id="stageConnectionText">连接中</span></div><span class="stage-offline" id="stageOffline" role="status" aria-live="polite" hidden></span></div><div class="mote-visual" id="moteVisual" aria-hidden="true"></div><div class="stage-actions"><button class="primary" id="stageChatButton">打开指挥台</button><button id="stageAppearanceButton" class="quiet-button">外观与动效</button></div><div class="stage-help">伙伴舞台 · 控制与复杂操作收在指挥台中</div></main>
-<button class="drawer-scrim" id="drawerScrim" aria-label="关闭指挥台" hidden></button><aside class="command-drawer" id="commandDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true" inert><div class="drawer-bar"><div><h1 id="drawerTitle">指挥台</h1><p>任务、设备、探索与伙伴设置</p></div><button id="closeDrawer" class="drawer-close" aria-label="关闭指挥台">关闭</button></div><section class="appearance-settings" id="appearanceSettings" aria-labelledby="appearanceTitle"><h2 id="appearanceTitle">外观与动效</h2><label for="themeSelect">主题</label><select id="themeSelect" aria-label="选择主题">${WEB_THEME_OPTIONS}</select><label><input id="reduceMotionToggle" type="checkbox">减弱舞台动画</label><span class="sub">主题与动效偏好只保存在此浏览器；系统减弱动态效果设置始终生效。</span></section><div class="wrap">
+<main class="immersive-stage" id="moteStage" role="region" aria-labelledby="stageName"><div class="stage-horizon" aria-hidden="true"></div><div class="stage-radar" aria-hidden="true"></div><div class="stage-copy"><div class="stage-eyebrow">PHONEBRIDGE · COMPANION LINK</div><h1 id="stageName">星核</h1><p id="stageVoice">正在读取伙伴状态…</p><div class="stage-status" id="stageConnection" data-online="false"><span class="status-dot" aria-hidden="true"></span><span id="stageConnectionText">连接中</span></div><span class="stage-offline" id="stageOffline" role="status" aria-live="polite" hidden></span><span class="stage-feedback" id="stageFeedback" role="status" aria-live="polite" hidden></span></div><div class="mote-visual" id="moteVisual" role="button" tabindex="0" aria-label="触碰当前 Mote" aria-hidden="false"></div><div class="stage-quick-cards" id="stageQuickCards" aria-label="当前任务和提醒" aria-live="polite" hidden></div><div class="stage-chat-bubble" id="stageChatBubble" aria-live="polite" hidden><span class="stage-chat-state" id="stageChatState"></span><span class="stage-chat-reply" id="stageChatReply"></span><button id="stageChatExpand" type="button" class="quiet-button" hidden>查看完整对话</button></div><form class="stage-chat-dock" id="stageChatForm"><label class="sr-only" for="stageChatInput">和 Mote 聊聊</label><input id="stageChatInput" maxlength="2000" autocomplete="off" placeholder="和 Mote 聊聊…" aria-label="和 Mote 聊聊"><button class="primary" id="stageChatSend" type="submit" aria-label="发送消息">发送</button></form><div class="stage-actions"><button class="quiet-button" id="stageChatButton" type="button">对话记录</button><button id="stageAppearanceButton" class="quiet-button" type="button">外观与动效</button></div></main>
+<button class="drawer-scrim" id="drawerScrim" aria-label="关闭指挥台" hidden></button><aside class="command-drawer" id="commandDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true" inert><div class="drawer-bar"><div><h1 id="drawerTitle">指挥台</h1><p>任务、设备、探索与伙伴设置</p></div><button id="closeDrawer" class="drawer-close" aria-label="关闭指挥台">关闭</button></div><section class="workspace-card stage-chat-history" id="stageChatHistory" aria-labelledby="stageChatHistoryTitle"><h2 id="stageChatHistoryTitle">伙伴对话</h2><div id="stageChatHistoryList" role="log" aria-live="polite">还没有消息。</div></section><section class="appearance-settings" id="appearanceSettings" aria-labelledby="appearanceTitle"><h2 id="appearanceTitle">外观与动效</h2><label for="themeSelect">主题</label><select id="themeSelect" aria-label="选择主题">${WEB_THEME_OPTIONS}</select><label><input id="reduceMotionToggle" type="checkbox">减弱舞台动画</label><span class="sub">主题与动效偏好只保存在此浏览器；系统减弱动态效果设置始终生效。</span></section><div class="wrap">
 <div class="grid"><div class="panel"><h2>实时感官</h2><img id="frame"><div class="metrics" style="margin-top:12px"><div class="metric"><b id="cpu">-</b><span>手机 CPU</span></div><div class="metric"><b id="mem">-</b><span>内存</span></div><div class="metric"><b id="bat">-</b><span>电量</span></div><div class="metric"><b id="temp">-</b><span>温度</span></div></div><div class="row"><button class="primary" onclick="device('camera_on')">开眼</button><button onclick="device('camera_front')">前眼</button><button onclick="device('camera_back')">后眼</button><button onclick="device('listen_on')">监听</button><button onclick="say()">说话</button></div><div class="row"><input id="speech" placeholder="输入要在手机上播放的话" style="flex:1"></div><div class=row><select id=idleTimeout title="空闲断流时间"><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5 selected>5 分钟</option><option value=10>10 分钟</option><option value=30>30 分钟</option></select><button onclick=setIdleTimeout()>空闲断流</button></div><div class=row><select id=screenOffTimeout title="息屏自动退出时间"><option value=0>不自动退出</option><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5>5 分钟</option><option value=10 selected>10 分钟</option><option value=30>30 分钟</option><option value=60>60 分钟</option></select><button onclick=setScreenOffTimeout()>息屏退出</button></div></div>
 <div class="panel"><h2>指挥台</h2><div class="tabs"><button class="active" data-tab="tasks">任务</button><button data-tab="log">日志</button><button data-tab="sensors">传感器</button><button data-tab="frame">画面</button></div><div id="tasks"></div><div id="log" hidden></div><div id="sensors" hidden></div><div id="framebox" hidden><img id="frame2"></div><div class="row"><input id="cmd" placeholder="help / ping 8.8.8.8 / screenshot / ps / say 你好" style="flex:1"><button class="primary" onclick="sendCmd()">执行</button></div><textarea id="detail" readonly placeholder="选中任务的输出会出现在这里"></textarea></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div>
@@ -1796,7 +1819,7 @@ body.keyboard-action .drawer-scrim,body.keyboard-action .command-drawer,body.key
 <div class="panel" style="grid-column:1/-1"><h2>探索记录</h2><div id="realityLogStatus" class="status-note" role="status" aria-live="polite">探索记录加载中…</div><div id="realityLogList" aria-label="分页探索记录"></div><div class="row"><button id="realityLogMore" onclick="refreshRealityLog({cursor:realityLogCursor})" hidden>加载更早记录</button></div><div id="realityLogDetail" class="workspace-card" style="margin-top:10px" aria-live="polite">选择一条记录查看安全收据详情。</div></div>
 <div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div id="privacyCategories" class="privacy-checklist" aria-label="选择要处理的数据类别"></div><div id="privacyMigration" class="sub" role="status" style="margin-top:8px"></div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。请在上方逐项勾选类别；日常与个人目标可单独导出或删除。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出选定类别</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
 </div></aside></div>
-<script>${MOTE_STAGE_SCRIPT}${WEB_RUNTIME_SCRIPT}</script><script>
+<script>${MOTE_STAGE_SCRIPT}${WEB_STAGE_CARDS_SCRIPT}${WEB_STAGE_CHAT_SCRIPT}${WEB_RUNTIME_SCRIPT}</script><script>
 let selected='';
 let companionSummaryRevision = '';
 let currentCompanionSummary = null;
@@ -1830,6 +1853,14 @@ const webRefresh=new window.WebRefreshScheduler();
 const pushCache=new Map();
 const refreshTimers=[];
 let pushSocket=null,pushReconnect=null,pushGeneration=0,pushDelay=1000,pushRefreshTimer=null;
+let stageCardSignature='';
+let stageChatHistorySignature='';
+let stageFeedbackTimer=0;
+const stageChat=new window.StageChatController({
+  getSocket:()=>pushSocket,
+  createId:()=>crypto.randomUUID(),
+  onChange:renderStageChat,
+});
 function scheduleRefresh(name,operation,mode,interval){webRefresh.register(name,operation,mode);refreshTimers.push(setInterval(()=>webRefresh.tick(name),interval))}
 async function readApi(p,o={}){
   const options={...o};
@@ -1874,7 +1905,7 @@ reduceMotionToggle?.addEventListener('change',()=>applyReducedMotion(reduceMotio
 const commandDrawer=document.getElementById('commandDrawer');
 const drawerScrim=document.getElementById('drawerScrim');
 let lastDrawerTrigger=null;
-function setCommandDrawer(open,trigger=document.activeElement,focusAppearance=false){
+function setCommandDrawer(open,trigger=document.activeElement,focusAppearance=false,focusChat=false){
   webRefresh.update({drawerOpen:open});
   if(pushSocket?.readyState===WebSocket.OPEN)pushSocket.send(JSON.stringify({type:'snapshot',view:open?'full':'summary'}));
   if(open){
@@ -1889,6 +1920,7 @@ function setCommandDrawer(open,trigger=document.activeElement,focusAppearance=fa
       if(!commandDrawer.classList.contains('open'))return;
       if(getComputedStyle(commandDrawer).visibility!=='visible'){requestAnimationFrame(focusWhenVisible);return;}
       if(focusAppearance)document.getElementById('appearanceSettings').scrollIntoView({block:'start'});
+      if(focusChat)document.getElementById('stageChatHistory').scrollIntoView({block:'start',behavior:document.documentElement.dataset.reduceMotion==='true'?'auto':'smooth'});
       (focusAppearance?themeSelect:document.getElementById('closeDrawer')).focus();
     };
     requestAnimationFrame(focusWhenVisible);
@@ -1902,9 +1934,10 @@ function setCommandDrawer(open,trigger=document.activeElement,focusAppearance=fa
   if(lastDrawerTrigger?.isConnected)lastDrawerTrigger.focus();
 }
 document.getElementById('openDrawer').addEventListener('click',event=>setCommandDrawer(true,event.currentTarget));
-document.getElementById('stageChatButton').addEventListener('click',event=>setCommandDrawer(true,event.currentTarget));
+document.getElementById('stageChatButton').addEventListener('click',openStageChatHistory);
 document.getElementById('appearanceButton').addEventListener('click',event=>setCommandDrawer(true,event.currentTarget,true));
 document.getElementById('stageAppearanceButton').addEventListener('click',event=>setCommandDrawer(true,event.currentTarget,true));
+document.getElementById('stageChatExpand').addEventListener('click',()=>setCommandDrawer(true,document.getElementById('stageChatExpand'),false,true));
 document.getElementById('closeDrawer').addEventListener('click',()=>setCommandDrawer(false));
 drawerScrim.addEventListener('click',()=>setCommandDrawer(false));
 document.addEventListener('pointerdown',()=>document.body.classList.remove('keyboard-action'),true);
@@ -1920,6 +1953,121 @@ document.addEventListener('keydown',event=>{
   if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}
   else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
 });
+function stageStatus(message){
+  const node=document.getElementById('stageFeedback');
+  node.textContent=String(message||'');node.hidden=!message;
+  clearTimeout(stageFeedbackTimer);
+  if(message)stageFeedbackTimer=setTimeout(()=>{node.hidden=true},3200);
+}
+function renderStageChat(state=stageChat.state){
+  const bubble=document.getElementById('stageChatBubble');
+  const reply=document.getElementById('stageChatReply');
+  const stateLabel=document.getElementById('stageChatState');
+  const send=document.getElementById('stageChatSend');
+  const input=document.getElementById('stageChatInput');
+  const expand=document.getElementById('stageChatExpand');
+  const history=document.getElementById('stageChatHistoryList');
+  const messages=Array.isArray(state.messages)?state.messages:[];
+  const failedMessages=Array.isArray(state.failedMessages)?state.failedMessages:[];
+  let retry=document.getElementById('stageChatRetry');
+  if(!retry){retry=document.createElement('button');retry.id='stageChatRetry';retry.type='button';retry.className='quiet-button';retry.addEventListener('click',()=>{if(stageChat.retry())stageStatus('正在重试上一条未送达消息。')});bubble.append(retry)}
+  const latestAssistant=[...messages].reverse().find(item=>item.role==='assistant');
+  const visible=messages.length>0||failedMessages.length>0||Boolean(state.error)||state.status==='generating'||state.status==='stopping';
+  bubble.hidden=!visible;
+  bubble.dataset.generating=String(state.status==='generating'||state.status==='stopping');
+  bubble.dataset.error=String(['error','offline'].includes(state.status));
+  reply.textContent=latestAssistant?.text||state.error||'';
+  const labels={generating:'Mote 正在回应',stopping:'正在停止…',complete:'Mote',error:'回复未完成',offline:'节点离线',stopped:'本轮已停止',idle:''};
+  stateLabel.textContent=labels[state.status]??'';
+  send.textContent=state.status==='generating'?'停止':state.status==='stopping'?'停止中':'发送';
+  send.setAttribute('aria-label',state.status==='generating'?'停止生成':state.status==='stopping'?'停止中':'发送消息');
+  send.disabled=state.status==='stopping';
+  input.disabled=state.status==='generating'||state.status==='stopping';
+  retry.hidden=failedMessages.length===0||Boolean(state.activeRequestId);
+  retry.disabled=state.status==='stopping';
+  retry.textContent=failedMessages.length>1?'重试上一条未送达消息（'+failedMessages.length+'）':'重试未送达消息';
+  retry.setAttribute('aria-label',retry.textContent);
+  expand.hidden=!latestAssistant||((latestAssistant.text||'').length<180&&messages.length<4);
+  const signature=JSON.stringify(messages.map(item=>[item.role,item.text,item.streaming,item.delivery]));
+  if(signature!==stageChatHistorySignature){
+    const wasNearBottom=history.scrollHeight-history.scrollTop-history.clientHeight<44;
+    const fragment=document.createDocumentFragment();
+    if(!messages.length){const empty=document.createElement('p');empty.className='sub';empty.textContent='还没有消息。';fragment.appendChild(empty)}
+    for(const message of messages){
+      const row=document.createElement('article');row.className='stage-chat-message';row.dataset.role=message.role==='assistant'?'assistant':'user';
+      const who=document.createElement('small');who.textContent=message.role==='assistant'?'Mote':message.delivery==='failed'?'你 · 未送达':'你';
+      const text=document.createElement('div');text.textContent=String(message.text||'');
+      row.append(who,text);fragment.appendChild(row);
+    }
+    history.replaceChildren(fragment);stageChatHistorySignature=signature;
+    if(wasNearBottom)history.scrollTop=history.scrollHeight;
+  }
+}
+document.getElementById('stageChatForm').addEventListener('submit',event=>{
+  event.preventDefault();
+  if(stageChat.state.activeRequestId){stageChat.stop();return}
+  const input=document.getElementById('stageChatInput');
+  const text=input.value.trim();if(!text)return;
+  const sent=stageChat.send(text);
+  if(sent||stageChat.state.status==='offline')input.value='';
+});
+function openStageChatHistory(){
+  setCommandDrawer(true,document.getElementById('stageChatButton'),false,true);
+}
+function renderStageCards(workspace={}){
+  const host=document.getElementById('stageQuickCards');
+  const cards=window.selectStageCards(workspace);
+  const signature=JSON.stringify(cards);
+  host.hidden=cards.length===0;
+  if(signature===stageCardSignature)return;
+  stageCardSignature=signature;host.replaceChildren();
+  for(const card of cards){
+    const shell=document.createElement('article');shell.className='stage-quick-card';shell.dataset.kind=card.kind;
+    const copy=document.createElement('div');copy.className='stage-card-copy';
+    const title=document.createElement('strong');title.textContent=card.title;
+    const detail=document.createElement('span');detail.textContent=card.detail;
+    copy.append(title,detail);
+    const action=document.createElement('button');action.type='button';action.className=card.kind==='approval'?'primary':'quiet-button';action.textContent=card.actionLabel;
+    action.setAttribute('aria-label',card.actionLabel+'：'+card.title);
+    action.addEventListener('click',()=>performStageCardAction(card,action));
+    shell.append(copy,action);host.appendChild(shell);
+  }
+}
+async function refreshStageCardsNow(){
+  try{const state=await api('/api/state?view=summary');if(state._status!==304)renderStageCards(state.workspace||{})}catch(_){}
+}
+function openStageCardDetails(card,trigger=document.getElementById('openDrawer')){
+  setCommandDrawer(true,trigger,false,false);
+  if(card.taskId)setTimeout(()=>{selectTask(card.taskId);document.getElementById('taskDetail')?.scrollIntoView({block:'nearest',behavior:document.documentElement.dataset.reduceMotion==='true'?'auto':'smooth'})},120);
+  else if(card.routineId)setTimeout(()=>document.getElementById('dailyWorkspace')?.scrollIntoView({block:'start',behavior:document.documentElement.dataset.reduceMotion==='true'?'auto':'smooth'}),120);
+}
+async function performStageCardAction(card,button){
+  if(card.kind==='approval'){
+    if(card.action==='approve'&&!window.confirm('批准并执行此操作？\\n'+card.title+'\\n'+card.detail+'\\n工具参数不会显示在舞台上。'))return;
+    button.disabled=true;
+    try{
+      const path='/api/autonomy/approvals/'+encodeURIComponent(card.approvalId);
+      if(card.action==='approve')await api(path+'/approve',{method:'POST'});
+      await api(path+'/invoke',{method:'POST'});
+      stageStatus('操作已提交；审计结果正在同步。');refreshWorkspace();
+    }catch(error){stageStatus('操作未完成：'+error.message);button.disabled=false;refreshStageCardsNow();if(webRefresh.state.drawerOpen)refreshWorkspace()}
+    return;
+  }
+  if(card.kind==='task'&&['start','pause','continue','retry'].includes(card.action)){
+    button.disabled=true;button.textContent='处理中…';
+    await taskAction(button,card.taskId,card.action);
+    return;
+  }
+  openStageCardDetails(card,button);
+}
+const moteTouch=document.getElementById('moteVisual');
+function touchMote(){
+  moteTouch.dataset.touched='true';stageStatus('我在呢。');
+  setTimeout(()=>{if(moteTouch.isConnected)moteTouch.dataset.touched='false'},850);
+}
+moteTouch.addEventListener('click',touchMote);
+moteTouch.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();touchMote()}});
+renderStageChat();
 const MOTE_STAGE_CACHE_KEY='phonebridge:web:stage:v1';
 const DEFAULT_STAGE_PROFILE={id:'mote',name:'星核',voice:'理性稳重',visualPreset:'star-core',colors:{primary:'#8ea7ff',secondary:'#d8e2ff'}};
 function readMoteStageCache(){
@@ -2412,6 +2560,7 @@ async function refreshWorkspaceNow(){try{
   let s=await api('/api/state?view=summary');
   if(s._status===304) return;
   let w=s.workspace||{},p=s.autonomy||{},b=s.motes?.behavior||{},r=s.motes?.relationship||{};
+  renderStageCards(w);
   workspaceSummary.textContent='策略：'+(p.level||'-')+' · 工具 '+(p.allowedTools||[]).length+' · 急停 '+(w.emergencyStop?.active?'是':'否')+' · 任务 '+(w.taskCount||0)+' · Mote Lv.'+(r.level||1)+' · '+(b.gaze||'ambient');
   const viewMode = window.taskViewMode || 'all';
   const filter = window.taskFilter ? taskFilter.value : '';
@@ -2500,8 +2649,10 @@ async function taskAction(btn,id,action){
   if(btn) btn.disabled=true;
   try {
     await api('/api/tasks/'+encodeURIComponent(id)+'/actions',{method:'POST',headers:{'content-type':'application/json','idempotency-key':'web-'+action+'-'+Date.now()},body:JSON.stringify({action})});
+    stageStatus('任务操作已提交 · '+({start:'开始',pause:'暂停',continue:'继续',retry:'重试',cancel:'取消',archive:'归档'}[action]||action));
     refreshWorkspace();
   } catch(e) {
+    stageStatus('任务操作未完成：'+e.message);
     const div = document.getElementById('taskDetail');
     if(div && window.selectedTaskId === id) div.textContent += '\\n动作失败: ' + e.message;
   } finally {
@@ -2529,14 +2680,18 @@ function connectWebPush(){
       if(payload.telemetry&&payload.logs)pushCache.set('/api/state',payload);
       if(payload.companionSummary)pushCache.set('/api/companion/summary',{summary:payload.companionSummary});
       if(payload.motes){pushCache.set('/api/motes',payload.motes);pushCache.set('/api/motes/behavior',{behavior:payload.motes.behavior})}
+      renderStageCards(payload.workspace||{});
+      if(Array.isArray(payload.chat))stageChat.hydrate(payload.chat);
       refreshCompanionSummary().then(refreshMoteStage);
       if(webRefresh.state.drawerOpen){refreshWorkspace();refresh()}
+    }else if(['chat_delta','chat','chat_error','chat_cancelled'].includes(payload.type)){
+      stageChat.handle(payload);
     }else if(/^(mote\.|task\.|attention\.|reality\.|workspace\.)/.test(payload.type||'')){
       pushCache.clear();clearTimeout(pushRefreshTimer);
-      pushRefreshTimer=setTimeout(()=>{if(!document.hidden){refreshCompanionSummary().then(refreshMoteStage);if(webRefresh.state.drawerOpen){refreshWorkspace();refresh();refreshDailyWorkspace();refreshDiagnosticsAndTimeline()}}},80);
+      pushRefreshTimer=setTimeout(()=>{if(!document.hidden){refreshCompanionSummary().then(refreshMoteStage);refreshStageCardsNow();if(webRefresh.state.drawerOpen){refreshWorkspace();refresh();refreshDailyWorkspace();refreshDiagnosticsAndTimeline()}}},80);
     }
   };
-  pushSocket.onclose=event=>{if(generation!==pushGeneration)return;webRefresh.update({pushOnline:false});pushCache.clear();if(event.code===4401){location.reload();return}if(!document.hidden){pushReconnect=setTimeout(connectWebPush,pushDelay);pushDelay=Math.min(30000,pushDelay*2)}};
+  pushSocket.onclose=event=>{if(generation!==pushGeneration)return;webRefresh.update({pushOnline:false});pushCache.clear();if(!document.hidden){stageChat.connectionLost();pushReconnect=setTimeout(connectWebPush,pushDelay);pushDelay=Math.min(30000,pushDelay*2)}if(event.code===4401){location.reload();return}};
   pushSocket.onerror=()=>{};
 }
 function suspendWebRuntime(){
@@ -2793,6 +2948,15 @@ const handleHttpRequest = async (req, res) => {
         }
         const result = dailyRoutinesStore.recordEvent(routineId, payload);
         const status = result.duplicate ? 200 : result.action === 'start' ? 201 : 200;
+        if (!result.duplicate) broadcast({
+          type: 'workspace.routine',
+          activity: {
+            routineId: result.entry?.routineId || routineId,
+            status: result.entry?.status || '',
+            elapsedSeconds: result.entry?.elapsedSeconds || 0,
+            updatedAt: result.entry?.updatedAt || null,
+          },
+        });
         return sendJson(res, status, { ok: true, ...result });
       } catch (error) {
         return sendJson(res, error.statusCode || 400, { ok: false, code: error.code || 'invalid_event', error: error.message });
@@ -3804,9 +3968,13 @@ wss.on('connection', (ws, req) => {
             const requestId = /^[A-Za-z0-9_.:-]{1,120}$/.test(String(json.requestId || ''))
               ? String(json.requestId)
               : `chat_${crypto.randomUUID()}`;
+            const retryOfRequestId = /^[A-Za-z0-9_.:-]{1,120}$/.test(String(json.retryOfRequestId || ''))
+              ? String(json.retryOfRequestId)
+              : '';
             handleChat(json.text, json.remember === false ? [] : (Array.isArray(json.memories) ? json.memories : []), {
               remember: json.remember !== false,
               requestId,
+              retryOfRequestId,
               source: json.source || 'chat',
             }).catch(error => {
               const cancelled = /cancel/i.test(String(error?.message || ''));

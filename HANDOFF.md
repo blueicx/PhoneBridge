@@ -1,15 +1,15 @@
 # PhoneBridge 交接文档（当前状态）
 
-## 当前交接覆盖（2026-10-13）
+## 当前交接覆盖（2026-10-14）
 
-- 当前实施位于 `F:\CodexApps\PhoneBridge-worktrees\integrated-enhancement` 的 `feature/integrated-enhancement`，以 `11b5510` 为基线；本轮大版本深化按六批进行，不修改 `main`。本节优先于下方旧日期交接记录。
-- 批次 1 已完成本地实现：Web 请求去重/取消、WebSocket 优先与抽屉离线回退、显式画面预览门控；Android 缓存舞台优先、不可见时停舞台更新并按后台/传感器状态降频；CI 拆成并行 Node、Android、Room emulator 与最终 artifact 验证任务。
-- 本地证据：Node **250/250**；无头 Chromium 检查通过（在线 push 无周期轮询、离线回退/隐藏页抑制、实时画面显式启停、窄屏无横向溢出且无页面脚本异常）；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 成功；密钥扫描、CI workflow shell contract、Node 语法和差异空白检查通过。
-- 批次提交推送后，以对应实现 SHA 的 GitHub Actions 全量结果与最终 APK artifact 为准；必须确认所有 job 对应同一 SHA 全绿，不能用本地成功替代远端验收。
-- 本轮没有连接 ADB、没有安装/启动/操作手机或授权权限。Xperia 冷启动时延、舞台帧耗时、两小时稳定性等指标未测，不宣称已达标；设备恢复后按计划单独验收。正式 Release 签名仍遵守独立加密恢复副本门禁。
-- 后续按批次 2→6 继续，逐批更新 README/HANDOFF、验证、提交并推送；最终总验收仍覆盖 Node、Android JVM/Lint/Debug、Room migration、协议/敏感扫描、浏览器、性能和实际可用设备证据。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+- 当前实施位于 `F:\CodexApps\PhoneBridge-worktrees\integrated-enhancement` 的 `feature/integrated-enhancement`，本轮大版本深化按六批推进，不修改 `main`。本节优先于下方旧日期交接记录。
+- 批次 1 已提交 `cfe0f97` 并推送；GitHub Actions run [38350063660](https://github.com/blueicx/PhoneBridge/actions/runs/38350063660) 所有 job 成功。实现包含 Web 可见性/请求调度、缓存舞台优先、Android 后台降频和并行 CI。
+- 批次 2 已完成本地实现：Web 舞台直接聊天、流式气泡、独立停止/重试、最多两张任务/审批/日常活动卡；失败消息保留、重试沿用服务端 turn ID、断线恢复按请求 ID 合并历史，迟到的旧回复不覆盖新会话。Android 舞台显示任务/审批/活动卡，活动状态可从 Room 镜像先行恢复。
+- 批次 2 本地证据：Node **263/263**；真实服务进程 + Chromium 浏览器测试通过（聊天/重试、卡片实时更新、WS 优先、抽屉与页面隐藏、窄屏）；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 成功；性能预算输出 `elapsedMs=1.108`、summary **48 bytes**、缓存命中 **10000**、突发广播 **1**；敏感扫描、CI 工作流契约和 `git diff --check` 通过。批次 2 的提交、推送和最新 SHA Actions 尚待完成。
+- 实机边界：本轮未连接 ADB、未安装/启动/操作手机。Xperia 首屏、PTT、卡片触控、冷启动、帧耗时和两小时稳定性仍待实机验收，不以浏览器/构建证据代替。正式 Release 签名仍遵守独立加密恢复副本门禁。
+- 后续按批次 3→6 继续，逐批更新 README/HANDOFF、验证、提交并推送；最终总验收仍覆盖 Node、Android JVM/Lint/Debug、Room migration、协议/敏感扫描、浏览器、性能和实际可用设备证据。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 
-更新时间：2026-10-13（本节为当前状态；下面 2026-10-03 及更早内容为历史交接）
+更新时间：2026-10-14（本节为当前状态；下面 2026-10-03 及更早内容为历史交接）
 
 ## 当前交接覆盖（2026-10-03）
 

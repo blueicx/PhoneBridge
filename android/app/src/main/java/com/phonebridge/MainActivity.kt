@@ -177,6 +177,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var focusSnapshotText: TextView
     private lateinit var focusToolScroll: HorizontalScrollView
     private lateinit var focusToolsToggle: Button
+    private lateinit var focusQuickCards: LinearLayout
     private lateinit var focusCameraButton: Button
     private lateinit var focusLensButton: Button
     private lateinit var focusListenButton: Button
@@ -261,6 +262,9 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var aiSessionAdapter: android.widget.ArrayAdapter<String>
     private val aiSessionIds = mutableListOf<String>()
     private val aiSessionLabels = mutableListOf<String>()
+    private val stageApprovals = LinkedHashMap<String, StageToolApproval>()
+    private var stageRoutineProgress = emptyList<StageActivityProgress>()
+    private var stageRoutineRefreshInFlight = false
     private var aiSelectedSessionId = ""
     private var aiToolAuthorized = false
     private var aiAuthorizedUntilMs: Long? = null
@@ -506,6 +510,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
         DeviceCommandBus.setReceiver { action -> runOnUiThread { applyDeviceCommand(action) } }
         renderPet()
+        refreshStageRoutineProgress(fromServer = false)
         // Let the cached local stage draw before starting node/service work.
         rootLayout.post {
             if (!destroyed) {
@@ -668,6 +673,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         focusExit = findViewById(R.id.focusExit)
         focusToolbar = findViewById(R.id.focusToolbar)
         focusSnapshotText = findViewById(R.id.focusSnapshotText)
+        focusQuickCards = findViewById(R.id.focusQuickCards)
         focusToolScroll = findViewById(R.id.focusToolScroll)
         focusToolsToggle = findViewById(R.id.focusToolsToggle)
         focusCameraButton = findViewById(R.id.focusCameraButton)
@@ -1710,6 +1716,11 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             focusToolsExpanded = immersiveShellCoordinator.state.value.drawerOpen
             renderFocusTools()
         }
+        focusSnapshotText.setOnClickListener {
+            StageQuickCardPolicy.select(companionSessionRepository.snapshot.value, stageApprovals.values.toList(), stageRoutineProgress)
+                .firstOrNull()?.let(::openStageQuickCardDetails)
+                ?: openAiSpace()
+        }
         focusCameraButton.setOnClickListener { toggleCameraFromUi() }
         focusLensButton.setOnClickListener { flipLens() }
         focusListenButton.setOnClickListener { toggleListening() }
@@ -2700,6 +2711,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
         listOf(
             R.id.focusToolbar,
+            R.id.focusQuickCards,
             R.id.focusSpeechLayer,
             R.id.focusSpeechScroll,
             R.id.focusInputRow
@@ -2778,12 +2790,14 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         renderCameraHeroState()
         if (immersiveMode) {
             focusToolbar.visibility = View.VISIBLE
+            focusQuickCards.visibility = View.VISIBLE
             focusSpeechLayer.visibility = View.VISIBLE
             focusSpeechScroll.visibility = View.VISIBLE
             findViewById<View>(R.id.focusInputRow).visibility = View.VISIBLE
             focusSpeechLayer.post { layoutFocusSpeechOverlay() }
         }
         renderFocusTools()
+        renderCompanionSessionSnapshot()
 
         if (captureState.keepCameraOnExit) {
             frame.post { if (!realityLensActive) startCameraOrReportPermissions() }
@@ -3251,6 +3265,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         publishSensorState(force = true)
         sendJson(JSONObject().put("type", "hello").put("pet", petJson()))
         requestSnapshot()
+        refreshStageRoutineProgress(fromServer = true)
         refreshStageHabitat()
         reconcilePrivacyMigration {
             reconcilePrivacyDeletionHistory {
@@ -3916,23 +3931,30 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         )
         if (request == null) {
             aiSpaceStatus.text = "先选择一个任务"
+            if (immersiveMode) Toast.makeText(this, "当前任务已变化，请重新打开任务卡", Toast.LENGTH_SHORT).show()
             return
         }
         if (!BridgeLink.isOnline) {
             aiSpaceStatus.text = "节点离线，任务操作未发送"
+            if (immersiveMode) Toast.makeText(this, "节点离线，任务操作未发送", Toast.LENGTH_SHORT).show()
             return
         }
         aiSpaceStatus.text = "正在${actionLabel(action)}任务…"
+        if (immersiveMode) Toast.makeText(this, "正在${actionLabel(action)}任务…", Toast.LENGTH_SHORT).show()
         workspaceRequest(
             request.path,
             "POST",
             JSONObject().put("action", request.action).put("actor", "android").put("idempotencyKey", request.idempotencyKey),
             onSuccess = {
                 aiSpaceStatus.text = "任务已${actionLabel(action)}"
+                if (immersiveMode) Toast.makeText(this, "任务已${actionLabel(action)}", Toast.LENGTH_SHORT).show()
                 refreshAiTasks()
                 refreshCockpitSnapshot()
             },
-            onError = { error -> aiSpaceStatus.text = "任务${actionLabel(action)}失败：$error" }
+            onError = { error ->
+                aiSpaceStatus.text = "任务${actionLabel(action)}失败：$error"
+                if (immersiveMode) Toast.makeText(this, "操作失败：${error.take(120)}", Toast.LENGTH_LONG).show()
+            }
         )
     }
 
@@ -5696,6 +5718,8 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                         companionSummary = CompanionSummaryParser.parse(summaryJson)
                         companionSessionRepository.applySummary(companionSummary)
                     }
+                    (json.optJSONArray("approvals") ?: json.optJSONObject("workspace")?.optJSONArray("approvals"))
+                        ?.let(::handleStageApprovalSnapshot)
                     val revision = json.optLong("eventRevision", json.optJSONObject("workspace")?.optLong("eventRevision", 0L) ?: 0L)
                     if (revision > workspaceRevision) {
                         workspaceRevision = revision
@@ -5923,6 +5947,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 }
                 "workspace.message" -> handleWorkspaceMessage(json)
                 "workspace.task" -> handleWorkspaceTaskEvent(json.optJSONObject("task"))
+                "workspace.routine" -> refreshStageRoutineProgress(fromServer = true)
                 "workspace.goal" -> handleWorkspaceGoalEvent(json)
                 "attention.upsert" -> handleAttentionEvent(json.optJSONObject("attention"))
                 "action.run", "action.result" -> handleActionRunEvent(json.optJSONObject("actionRun"))
@@ -6485,6 +6510,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             }
             withContext(Dispatchers.Main) {
                 result.onSuccess {
+                    refreshStageRoutineProgress(fromServer = false)
                     scheduleOutboxSync()
                     Toast.makeText(this@MainActivity, "已暂存 · 待节点确认", Toast.LENGTH_SHORT).show()
                     onComplete(true)
@@ -6893,9 +6919,26 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun handleAutonomyApprovalEvent(approval: JSONObject?) {
         if (approval == null) return
         val tool = approval.optString("toolId", "受限工具")
-        if (approval.optString("state") == "needs_confirmation") runOnUiThread {
-            speechText.text = "Mote：需要确认 $tool".takeLast(220)
-            companionView.speakPulse()
+        val id = approval.optString("id").trim()
+        if (id.isBlank()) return
+        val state = approval.optString("state", "needs_confirmation").lowercase(Locale.ROOT)
+        runOnUiThread {
+            if (state in setOf("needs_confirmation", "approved")) {
+                stageApprovals[id] = StageToolApproval(
+                    id = id,
+                    taskId = approval.optString("taskId"),
+                    toolId = tool,
+                    state = state,
+                    createdAt = parseEpochMs(approval.opt("createdAt")) ?: 0L
+                )
+            } else {
+                stageApprovals.remove(id)
+            }
+            if (state == "needs_confirmation") {
+                speechText.text = "Mote：需要确认 $tool".takeLast(220)
+                companionView.speakPulse()
+            }
+            renderCompanionSessionSnapshot()
         }
     }
 
@@ -7353,10 +7396,12 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         heroPanel.layoutParams = params
         focusExit.visibility = View.VISIBLE
         focusToolbar.visibility = View.VISIBLE
+        focusQuickCards.visibility = View.VISIBLE
         focusSpeechLayer.visibility = View.VISIBLE
         focusSpeechScroll.visibility = View.VISIBLE
         findViewById<View>(R.id.focusInputRow).visibility = View.VISIBLE
         renderFocusTools()
+        renderCompanionSessionSnapshot()
         focusSpeechLayer.post { layoutFocusSpeechOverlay() }
         focusBackCallback.isEnabled = true
         hideSystemBars()
@@ -7380,6 +7425,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         ).forEach { id -> findViewById<View>(id).visibility = View.VISIBLE }
         focusExit.visibility = View.GONE
         focusToolbar.visibility = View.GONE
+        focusQuickCards.visibility = View.GONE
         focusSpeechLayer.visibility = View.GONE
         focusSpeechScroll.visibility = View.GONE
         focusSpeechStack.removeAllViews()
@@ -7451,26 +7497,231 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    private fun refreshStageRoutineProgress(fromServer: Boolean = false) {
+        if (fromServer && BridgeLink.isOnline) {
+            if (stageRoutineRefreshInFlight) return
+            stageRoutineRefreshInFlight = true
+            workspaceRequest(
+                "/api/routines?cursor=0&limit=20",
+                onSuccess = { response ->
+                    val snapshot = runCatching { DailyRoutineProtocol.parseSnapshot(response.toString()) }.getOrNull()
+                    if (snapshot == null) {
+                        stageRoutineRefreshInFlight = false
+                        refreshStageRoutineProgress(fromServer = false)
+                        return@workspaceRequest
+                    }
+                    appScope.launch(Dispatchers.IO) {
+                        runCatching { workspaceRepository.saveRoutineSnapshot(snapshot) }
+                        val local = runCatching { workspaceRepository.routineEntries() }.getOrDefault(emptyList())
+                        withContext(Dispatchers.Main) {
+                            stageRoutineRefreshInFlight = false
+                            stageRoutineProgress = local.map { entry ->
+                                StageActivityProgress(entry.routineId, entry.title, entry.status, entry.elapsedSeconds, entry.updatedAt, entry.syncState)
+                            }
+                            renderCompanionSessionSnapshot()
+                        }
+                    }
+                },
+                onError = {
+                    stageRoutineRefreshInFlight = false
+                    refreshStageRoutineProgress(fromServer = false)
+                }
+            )
+            return
+        }
+        appScope.launch(Dispatchers.IO) {
+            val local = runCatching { workspaceRepository.routineEntries() }.getOrDefault(emptyList())
+            withContext(Dispatchers.Main) {
+                stageRoutineProgress = local.map { entry ->
+                    StageActivityProgress(entry.routineId, entry.title, entry.status, entry.elapsedSeconds, entry.updatedAt, entry.syncState)
+                }
+                renderCompanionSessionSnapshot()
+            }
+        }
+    }
+
+    private fun handleStageApprovalSnapshot(values: JSONArray) {
+        val parsed = LinkedHashMap<String, StageToolApproval>()
+        for (index in 0 until values.length()) {
+            val item = values.optJSONObject(index) ?: continue
+            val id = item.optString("id").trim()
+            if (id.isBlank()) continue
+            val state = item.optString("state", "needs_confirmation").lowercase(Locale.ROOT)
+            if (state !in setOf("needs_confirmation", "approved")) continue
+            parsed[id] = StageToolApproval(
+                id = id,
+                taskId = item.optString("taskId"),
+                toolId = item.optString("toolId"),
+                state = state,
+                createdAt = parseEpochMs(item.opt("createdAt")) ?: 0L
+            )
+        }
+        runOnUiThread {
+            stageApprovals.clear()
+            stageApprovals.putAll(parsed)
+            renderCompanionSessionSnapshot()
+        }
+    }
+
+    private fun renderStageQuickCards(snapshot: CompanionSnapshot) {
+        if (!::focusQuickCards.isInitialized) return
+        val cards = StageQuickCardPolicy.select(snapshot, stageApprovals.values.toList(), stageRoutineProgress)
+        focusQuickCards.removeAllViews()
+        cards.forEach { card ->
+            val shell = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(dp(12), dp(7), dp(8), dp(7))
+                minimumHeight = dp(58)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.argb(232, 12, 20, 18))
+                    setStroke(dp(1), Color.argb(150, 255, 184, 77))
+                    cornerRadius = dp(14).toFloat()
+                }
+                isClickable = true
+                isFocusable = true
+                contentDescription = "${card.title}，${card.detail}。打开详情"
+                setOnClickListener { openStageQuickCardDetails(card) }
+            }
+            val copy = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+            val title = TextView(this).apply {
+                text = card.title.take(96)
+                setTextColor(0xFFF7F5F0.toInt())
+                textSize = 13f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }
+            val detail = TextView(this).apply {
+                text = card.detail.take(140)
+                setTextColor(0xFFA6ADA8.toInt())
+                textSize = 11f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }
+            copy.addView(title, LinearLayout.LayoutParams(-1, -2))
+            copy.addView(detail, LinearLayout.LayoutParams(-1, -2))
+            shell.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
+            val action = Button(this).apply {
+                text = card.actionLabel
+                contentDescription = "${card.actionLabel}：${card.title}"
+                minWidth = dp(48)
+                minimumWidth = dp(48)
+                minHeight = dp(44)
+                minimumHeight = dp(44)
+                setPadding(dp(9), 0, dp(9), 0)
+                setOnClickListener { performStageQuickCardAction(card) }
+            }
+            shell.addView(action, LinearLayout.LayoutParams(-2, dp(44)).apply { marginStart = dp(8) })
+            focusQuickCards.addView(shell, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+        }
+        focusQuickCards.visibility = if (immersiveMode && !realityLensActive && cards.isNotEmpty()) View.VISIBLE else View.GONE
+        focusSnapshotText.isClickable = cards.isNotEmpty()
+        focusSnapshotText.contentDescription = when {
+            cards.any { it.kind == StageQuickCardKind.APPROVAL } -> "查看待确认操作和当前任务"
+            cards.isNotEmpty() -> "查看当前任务、提醒或最近结果"
+            else -> "当前没有待处理任务"
+        }
+    }
+
+    private fun openStageQuickCardDetails(card: StageQuickCard) {
+        focusSnapshotText.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        if (card.kind == StageQuickCardKind.ACTIVITY) {
+            showDailyRoutineDialog()
+            return
+        }
+        if (card.kind == StageQuickCardKind.APPROVAL) {
+            showStageApprovalConfirmation(card)
+            return
+        }
+        if (card.taskId.isNotBlank()) aiHighlightedTaskId = card.taskId
+        openAiSpace()
+        refreshAiTasks()
+    }
+
+    private fun performStageQuickCardAction(card: StageQuickCard) {
+        when {
+            card.kind == StageQuickCardKind.APPROVAL -> showStageApprovalConfirmation(card)
+            card.kind == StageQuickCardKind.ACTIVITY -> showDailyRoutineDialog()
+            card.kind == StageQuickCardKind.TASK && card.action in setOf("start", "pause", "continue", "retry", "cancel", "archive") -> {
+                aiHighlightedTaskId = card.taskId
+                performAiTaskAction(card.action)
+            }
+            else -> openStageQuickCardDetails(card)
+        }
+    }
+
+    private fun showStageApprovalConfirmation(card: StageQuickCard) {
+        val approval = stageApprovals[card.approvalId]
+        if (approval == null) {
+            setStatus("确认已更新，请等待工作台同步")
+            requestSnapshot()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(if (approval.state == "approved") "继续执行已批准操作？" else "批准并执行？")
+            .setMessage("${card.title}\n工具：${approval.toolId.ifBlank { "受限操作" }}\n只显示安全摘要；执行结果会记录在任务审计中。")
+            .setNegativeButton("稍后", null)
+            .setPositiveButton(if (approval.state == "approved") "执行" else "批准并执行") { _, _ -> executeStageApproval(approval) }
+            .show()
+    }
+
+    private fun executeStageApproval(approval: StageToolApproval) {
+        if (!BridgeLink.isOnline) {
+            setStatus("节点离线，尚未批准或执行")
+            return
+        }
+        val approvalPath = "/api/autonomy/approvals/${java.net.URLEncoder.encode(approval.id, "UTF-8")}"
+        val invoke = {
+            workspaceRequest(
+                "$approvalPath/invoke",
+                "POST",
+                JSONObject(),
+                onSuccess = {
+                    stageApprovals.remove(approval.id)
+                    say("已执行 ${approval.toolId}，结果已记入任务记录。")
+                    requestSnapshot()
+                    refreshCockpitSnapshot()
+                },
+                onError = { error -> say("执行未完成：$error") }
+            )
+        }
+        if (approval.state == "approved") {
+            invoke()
+        } else {
+            workspaceRequest(
+                "$approvalPath/approve",
+                "POST",
+                JSONObject(),
+                onSuccess = { invoke() },
+                onError = { error -> say("批准失败：$error") }
+            )
+        }
+    }
+
     private fun renderCompanionSessionSnapshot() {
         if (!::focusSnapshotText.isInitialized) return
         val snapshot = companionSessionRepository.snapshot.value
-        val current = snapshot.currentTask()
-        val latest = snapshot.recentResults(1).firstOrNull()
+        val cards = StageQuickCardPolicy.select(snapshot, stageApprovals.values.toList(), stageRoutineProgress)
         val connection = when {
             snapshot.sync.recovering -> "重连中"
             snapshot.sync.online -> "在线"
             else -> "离线镜像"
         }
-        val taskLine = current?.let {
-            "${it.title.ifBlank { "当前任务" }} · ${statusLabel(it.state)} ${it.progress}%"
-        } ?: "当前无进行中任务"
-        val resultLine = latest?.let { "最近：${it.title.ifBlank { "任务" }} · ${statusLabel(it.state)}" } ?: "暂无最近结果"
-        val attentionLine = if (snapshot.pendingAttention().isEmpty()) "无待确认" else "待确认 ${snapshot.pendingAttention().size}"
-        focusSnapshotText.text = listOf(
-            "$connection · ${snapshot.summary.providerName.ifBlank { snapshot.summary.providerId }}",
-            taskLine,
-            "$attentionLine · $resultLine"
-        ).joinToString("\n")
+        focusSnapshotText.text = if (cards.isNotEmpty()) {
+            cards.take(2).map { card ->
+                val prefix = when (card.kind) {
+                    StageQuickCardKind.APPROVAL -> "确认"
+                    StageQuickCardKind.ATTENTION -> "提醒"
+                    StageQuickCardKind.RESULT -> "结果"
+                    StageQuickCardKind.TASK -> "任务"
+                    StageQuickCardKind.ACTIVITY -> "活动"
+                }
+                "$prefix · ${card.title.take(18)} · ${card.detail.take(22)}"
+            }.joinToString("\n")
+        } else {
+            "$connection · Mote Lv.${moteRelationship.level}\n当前无待处理事项"
+        }
+        renderStageQuickCards(snapshot)
     }
 
     private fun readCompanionStagePreferences(): CompanionStagePreferences {

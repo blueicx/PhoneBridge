@@ -61,6 +61,16 @@
 
 实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 
+## 2026-10-14 大版本深化·批次 2：舞台操作
+
+- Web 舞台增加直接聊天、增量回复气泡、停止生成和独立重试入口；失败消息保留在对话记录，发送新消息不会悄悄覆盖旧失败。重试沿用服务端 turn ID，断线重连后按请求 ID 合并历史并清除已在服务端完成的重试标记；迟到的旧回复不会清掉新一轮生成状态。
+- Web 舞台最多显示两张任务、审批、提醒或日常活动卡；卡片从推送摘要刷新，提供开始/暂停/继续/审批/打开详情。任务审批仍需显式确认，舞台仅呈现安全摘要、不暴露工具参数。
+- Android 沉浸舞台显示最多两张任务、审批、提醒、结果或活动卡；操作复用既有任务和审批 API。日常活动摘要只包含标题、状态、用时和更新时间，不读取反思文本；启动先从 Room 镜像恢复，在线后再同步。
+- 验证：Node **263/263**；无头 Chromium 的聊天重试、卡片/活动推送、可见性/抽屉调度、断线恢复和窄屏检查通过；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 成功；性能预算、密钥扫描和 `git diff --check` 通过。
+- 远端 Actions 与实机尚未验收；本批未连接 ADB 或操作 Xperia。批次 2 提交后需检查同一 SHA 的全部 GitHub Actions job，再按可用设备记录沉浸首屏、PTT、卡片触控和断线恢复。
+
+实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+
 ## PhoneBridge 2.0 持续增强
 
 当前分支正在推进 2.0 四批增强。已落地的基础能力包括：

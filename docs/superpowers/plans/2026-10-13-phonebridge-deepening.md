@@ -1,6 +1,6 @@
 # PhoneBridge 大版本深化实施账本
 
-基线：11b5510；分支：feature/integrated-enhancement。Codex 独立执行，不使用子 agent。
+计划基线：11b5510；当前分支：feature/integrated-enhancement。Codex 独立执行，不使用子 agent。
 
 ## 已批准的批次
 
@@ -13,8 +13,9 @@
 
 ## 进度
 
-- 批次 1：本地实现与自动验收完成；Node **250/250**、无头 Chromium、Android 单测/Lint/Debug 构建均通过。提交推送和最新 SHA 的 GitHub Actions 仍待确认。
-- 批次 2–6：待实施。
+- 批次 1：提交 `cfe0f97` 已推送；Node **250/250**、无头 Chromium、Android 单测/Lint/Debug 构建通过；GitHub Actions run **38350063660** 全部成功。
+- 批次 2：本地实现完成，Node **263/263**、真实服务进程 + Chromium、Android 单测/Lint/Debug 构建、性能预算和敏感扫描通过；提交推送及最新 SHA Actions 待确认。Web/Android 舞台聊天、任务/审批/活动卡和失败恢复已接通。
+- 批次 3–6：待实施。
 
 ## 验收
 
