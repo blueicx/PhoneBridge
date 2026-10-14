@@ -5,6 +5,7 @@ param(
   [switch]$ConfirmNodeStopped
 )
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'path_safety.psm1') -Force
 
 $sourceItem = Get-Item -LiteralPath $Source -Force
 if (-not $sourceItem.PSIsContainer) {
@@ -151,8 +152,8 @@ try {
 } finally {
   if ($stagingRoot -and -not $preserveStaging -and (Test-Path -LiteralPath $stagingRoot -PathType Container)) {
     $resolvedStaging = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $stagingRoot).Path)
-    $resolvedRuntimePrefix = [IO.Path]::GetFullPath($RuntimeDir).TrimEnd('\') + '\'
-    if ($resolvedStaging.StartsWith($resolvedRuntimePrefix, [StringComparison]::OrdinalIgnoreCase) -and
+    $resolvedRuntimePrefix = Get-PhoneBridgeDirectoryPrefix -Path $RuntimeDir
+    if ($resolvedStaging.StartsWith($resolvedRuntimePrefix, (Get-PhoneBridgePathComparison)) -and
         (Split-Path -Leaf $resolvedStaging) -match '^\.phonebridge-restore-[a-f0-9]{32}$') {
       Remove-Item -LiteralPath $resolvedStaging -Recurse -Force -ErrorAction SilentlyContinue
     }

@@ -6,6 +6,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'privacy_archive.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'path_safety.psm1') -Force
 
 $sourcePath = (Resolve-Path -LiteralPath $Source).Path
 if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf) -or [IO.Path]::GetExtension($sourcePath) -ne '.pbenc') {
@@ -24,10 +25,9 @@ try {
   if ($ConfirmNodeStopped) { $restoreArguments.ConfirmNodeStopped = $true }
   & $restoreScript @restoreArguments
 } finally {
-  $resolvedTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
   if (Test-Path -LiteralPath $temporaryRoot -PathType Container) {
     $resolvedTarget = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $temporaryRoot).Path)
-    if ($resolvedTarget.StartsWith($resolvedTempRoot, [StringComparison]::OrdinalIgnoreCase) -and
+    if ((Test-PhoneBridgePathWithinDirectory -Path $resolvedTarget -Directory ([IO.Path]::GetTempPath())) -and
         (Split-Path -Leaf $resolvedTarget) -match '^PhoneBridgeEncryptedRestore-[a-f0-9]{32}$') {
       Remove-Item -LiteralPath $resolvedTarget -Recurse -Force -ErrorAction SilentlyContinue
     }

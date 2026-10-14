@@ -101,19 +101,19 @@
 - 现实遭遇增加 12 个原创场景，每个都提供独立提示，并分别为观察、共鸣、绕行和 Mote 特长编写不同结果。开始只展示提示，用户选择后服务端决定结果与有限经验加成；客户端提交的剧情文字和经验不会被信任。
 - Web 与 Android 探索记录显示已确认遭遇、角色选择与结果；共享 fixture 向旧协议兼容，日志仅投影服务端白名单收据。
 - 本机验证：Node **312/312**；Android JVM **199/199（51 suites）**，`:app:lintDebug` 与 `:app:assembleDebug` 成功；隔离本地服务 + Chromium 覆盖窄屏遭遇提示、四选一和历史收据；APK 内部门禁、签名解析器、Android CI workflow 契约、秘密扫描与 `git diff --check` 通过。性能基准 `elapsedMs=1.286`、完整快照 **1694 bytes**、摘要 **48 bytes**、缓存命中 **10000**、突发广播 **1**。
-- 本节记录的是本机自动化验收；批次实现已本地提交 `d926be1`，推送后再核验对应 GitHub Actions。Xperia 无线调试地址 `192.168.101.68:39663` 当前不可达，本轮未操作手机；正式 Release 签名仍受独立加密恢复副本门禁约束。
+- 本节记录的是本机自动化验收；批次实现提交 `d926be1` 已随分支推送。最新整分支 Actions run [38555522846](https://github.com/blueicx/PhoneBridge/actions/runs/38555522846) 的 Android 与 API 34 emulator 成功，Node 在批次 6 加密备份路径检查失败，原因和修复记录见下节；该 run 未产出通过 verify 的 Debug artifact。Xperia 无线调试地址 `192.168.101.68:39663` 当前不可达，本轮未操作手机；正式 Release 签名仍受独立加密恢复副本门禁约束。
 
 实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 
 ## 2026-10-14 大版本深化·批次 6：恢复与交付预检
 
 - `scripts/test_runtime_backup.ps1` 在隔离临时目录通过：v3 清单与哈希、敏感文件/日志/精确位置/原图字段排除、加密包错误口令、VerifyOnly 不写入、替换失败回滚、成功恢复、篡改/缺失/路径穿越/空备份拒绝，以及 v2 迁移。故事、成长收据和进行中的 Reality 遭遇均纳入清单；恢复后重新创建真实 `RuntimePersistence`、`MoteStoryStore` 与 `MoteGrowthStore`，重放故事步骤和线索事件均被去重，不会重复推进或发 XP。
-- GitHub Actions 的 PowerShell 门禁已加入同一恢复演练，工作流契约测试会检查此步骤存在；本机恢复脚本与 CI 契约检查通过。该改动已本地提交 `e046832`，尚未推送，远端 Actions 仍待触发。
-- 本轮最终本机回归：Node **312/312**；Android JVM **199/199（51 suites）**、`:app:lintDebug`、`:app:assembleDebug`；恢复后重开/重复事件演练、CI 契约、秘密扫描、性能预算与 `git diff --check` 通过。性能脚本 `elapsedMs=0.797`、完整快照 **1694 bytes**、摘要 **48 bytes**、缓存命中 **10000**、突发广播 **1**。Gradle 构建成功但仍提示 Gradle 9 兼容性弃用警告。
+- GitHub Actions 的 PowerShell 门禁已加入同一恢复演练。run [38555522846](https://github.com/blueicx/PhoneBridge/actions/runs/38555522846) 在 SHA `01c945d` 上，Android 与 API 34 emulator 成功；Node 因 Windows 风格 `\` 路径前缀在 Ubuntu 被误判为越界而失败，verify job 因依赖失败未运行，未生成已验证 Debug artifact。该 run 的 artifact 仅含 build 与测试报告。
+- 根因修复正在本地工作树：路径边界/大小写比较统一使用平台原生路径规则；备份目录先校验后创建；加密恢复、回滚 staging 与测试临时目录改用共享安全路径 helper，并增加拒绝嵌套目标、无残留目录断言。修复后恢复演练、完整 Node **312/312**、CI 契约、秘密扫描、性能预算与 `git diff --check` 通过；Android JVM **199/199（51 suites）**、Lint、Debug 构建也已在本轮通过，脚本修复未触及 Android/Node 业务源码。性能脚本最近 `elapsedMs=0.66`、完整快照 **1694 bytes**、摘要 **48 bytes**、缓存命中 **10000**、突发广播 **1**。Gradle 构建成功但仍提示 Gradle 9 兼容性弃用警告。
 - 当前 Debug APK 在干净工作树上通过 `scripts/verify_release_gates.ps1 -Channel internal-debug -RequireClean`；包名、版本和 Android 签名校验通过。此结果不等同正式 Release 签名。
 - 本地构建产物的校验 manifest 记录源提交 `ec0eeb1`：`android/app/build/outputs/apk/debug/app-debug.apk`，`com.phonebridge` `2.2.0` / code `4`，94,776,366 bytes，SHA-256 `60c654437cce4c4118478b7aae019714dd02bb0ebb55681850738203621090c5`；清单位于同目录 `phonebridge-release-manifest.json`。后续提交仅更新文档、未改变 APK 内容。这是 Debug v2 签名，尚非正式发布包或 GitHub artifact。
 - 实机前置探测：`192.168.101.68:39663` TCP 不可达；ADB 使用隔离端口 5038 查询后无已连接设备。本轮未连接、安装或操作手机。
-- 批次 6 尚未完成：需要先核对前置提交的最新 SHA Actions，再提交并推送批次 5/6；随后核验最新 SHA Actions、最终性能/备份报告、Debug artifact 交付。可用设备实测仍待设备恢复；正式签名继续受独立加密恢复副本门禁约束。
+- 批次 6 尚未完成：路径修复尚待提交/推送，并需要核验修复后最新 SHA Actions 全绿及 Debug artifact；可用设备实测仍待设备恢复。正式签名继续受独立加密恢复副本门禁约束。
 
 实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 

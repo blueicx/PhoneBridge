@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'path_safety.psm1') -Force
 $backupScript = Join-Path $PSScriptRoot 'backup_runtime.ps1'
 $restoreScript = Join-Path $PSScriptRoot 'restore_runtime.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) "PhoneBridgeRuntimeBackupTests-$([guid]::NewGuid().ToString('N'))"
@@ -68,6 +69,9 @@ try {
   Write-Utf8File (Join-Path $runtimeDir 'reality-state.json') '{"version":4,"activeEncounter":{"eventId":"reality:v2:sample","encounterId":"encounter_11","step":0},"seenEventIds":[]}'
   Write-Utf8File (Join-Path $runtimeDir 'access.token') 'must-not-be-backed-up'
   Write-Utf8File (Join-Path $runtimeDir 'crash.log') 'must-not-be-backed-up'
+  $nestedBackupRoot = Join-Path $runtimeDir 'nested-backups'
+  Assert-Fails { & $backupScript -RuntimeDir $runtimeDir -Destination $nestedBackupRoot } 'backup must reject a destination inside the runtime directory'
+  Assert-True (-not (Test-Path -LiteralPath $nestedBackupRoot)) 'rejected nested backup destination must not create a directory inside runtime state'
 
   $backupOutput = & $backupScript -RuntimeDir $runtimeDir -Destination $backupRoot
   $backupPath = ([string]($backupOutput | Select-Object -Last 1) -replace '^runtime backup created: ', '')
@@ -107,7 +111,10 @@ try {
     Assert-True (-not (Test-Path -LiteralPath ($encryptedPath -replace '\.pbenc$', ''))) 'encrypted backup must remove its plaintext snapshot directory'
     $encryptedBytes = [IO.File]::ReadAllText($encryptedPath)
     Assert-True (-not $encryptedBytes.Contains('chat must not be backed up')) 'encrypted archive envelope must not expose plaintext state'
+    $encryptedRestoreTempBefore = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'PhoneBridgeEncryptedRestore-*' | ForEach-Object { $_.FullName })
     & $restoreScript -Source $encryptedPath -RuntimeDir $runtimeDir -VerifyOnly | Out-Null
+    $newEncryptedRestoreTemp = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'PhoneBridgeEncryptedRestore-*' | Where-Object { $_.FullName -notin $encryptedRestoreTempBefore })
+    Assert-True ($newEncryptedRestoreTemp.Count -eq 0) 'encrypted VerifyOnly must remove its temporary plaintext extraction directory'
     $global:PhoneBridgeTestWrongPassphrase = $true
     Assert-Fails { & $restoreScript -Source $encryptedPath -RuntimeDir $runtimeDir -VerifyOnly } 'encrypted VerifyOnly must reject an incorrect passphrase'
     $global:PhoneBridgeTestWrongPassphrase = $false
@@ -129,6 +136,8 @@ try {
     $lockedTarget.Dispose()
   }
   Assert-True ([IO.File]::ReadAllText((Join-Path $runtimeDir 'runtime-state.json')) -eq '{"state":"after"}') 'failed restore must roll back already moved files'
+  $leftoverRestoreStages = @(Get-ChildItem -LiteralPath $runtimeDir -Directory -Force | Where-Object { $_.Name -match '^\.phonebridge-restore-[a-f0-9]{32}$' })
+  Assert-True ($leftoverRestoreStages.Count -eq 0) 'failed restore must remove its rollback staging directory'
   & $restoreScript -Source $backupPath -RuntimeDir $runtimeDir -ConfirmNodeStopped | Out-Null
   $restoredRuntime = Get-Content -Raw -LiteralPath (Join-Path $runtimeDir 'runtime-state.json') | ConvertFrom-Json
   Assert-True ($restoredRuntime.schemaVersion -eq 3 -and $restoredRuntime.state.state -eq 'before') 'restore must replace the selected runtime state'
@@ -218,10 +227,10 @@ assert.equal(reality.activeEncounter.eventId, 'reality:v2:sample', 'reopened per
 
   Write-Output 'runtime backup/restore tests passed'
 } finally {
-  $resolvedTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
   $resolvedTestRoot = [IO.Path]::GetFullPath($testRoot)
-  if ($resolvedTestRoot.StartsWith($resolvedTempRoot, [StringComparison]::OrdinalIgnoreCase) -and
+  if ((Test-PhoneBridgePathWithinDirectory -Path $resolvedTestRoot -Directory ([IO.Path]::GetTempPath())) -and
       (Split-Path -Leaf $resolvedTestRoot).StartsWith('PhoneBridgeRuntimeBackupTests-', [StringComparison]::Ordinal)) {
     Remove-Item -LiteralPath $resolvedTestRoot -Recurse -Force -ErrorAction SilentlyContinue
   }
+  if (Test-Path -LiteralPath $resolvedTestRoot) { throw 'runtime backup test sandbox was not removed' }
 }

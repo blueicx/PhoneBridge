@@ -7,6 +7,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'privacy_archive.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'path_safety.psm1') -Force
 
 $stateNames = @(
   'runtime-state.json',
@@ -26,14 +27,22 @@ $escapedNames = ($stateNames | ForEach-Object { [regex]::Escape($_) }) -join '|'
 $allowedPattern = "^(?:$escapedNames)(?:\.bak\.[1-9][0-9]*)?$"
 $RuntimeDir = (Resolve-Path -LiteralPath $RuntimeDir).Path
 $destinationInput = [IO.Path]::GetFullPath($Destination)
+$runtimeFullPath = [IO.Path]::GetFullPath($RuntimeDir)
+$pathComparison = Get-PhoneBridgePathComparison
+$runtimePrefix = Get-PhoneBridgeDirectoryPrefix -Path $runtimeFullPath
+$destinationInputPrefix = Get-PhoneBridgeDirectoryPrefix -Path $destinationInput
+if ($destinationInput.Equals($runtimeFullPath, $pathComparison) -or
+    $destinationInputPrefix.StartsWith($runtimePrefix, $pathComparison)) {
+  throw 'backup destination must be outside the runtime directory'
+}
 if (-not (Test-Path -LiteralPath $destinationInput -PathType Container)) {
   New-Item -ItemType Directory -Path $destinationInput -Force | Out-Null
 }
 $destinationRoot = (Resolve-Path -LiteralPath $destinationInput).Path
-$runtimePrefix = [IO.Path]::GetFullPath($RuntimeDir).TrimEnd('\') + '\'
-$destinationPrefix = [IO.Path]::GetFullPath($destinationRoot).TrimEnd('\') + '\'
-if ([IO.Path]::GetFullPath($destinationRoot).Equals([IO.Path]::GetFullPath($RuntimeDir), [StringComparison]::OrdinalIgnoreCase) -or
-    $destinationPrefix.StartsWith($runtimePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+$resolvedDestinationPath = [IO.Path]::GetFullPath($destinationRoot)
+$resolvedDestinationPrefix = Get-PhoneBridgeDirectoryPrefix -Path $resolvedDestinationPath
+if ($resolvedDestinationPath.Equals($runtimeFullPath, $pathComparison) -or
+    $resolvedDestinationPrefix.StartsWith($runtimePrefix, $pathComparison)) {
   throw 'backup destination must be outside the runtime directory'
 }
 
@@ -104,8 +113,8 @@ try {
       Invoke-PhoneBridgeArchiveCli -Command verify -Source $encryptedPath
       Remove-Item -LiteralPath $zipPath -Force
       $resolvedTarget = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $target).Path)
-      $resolvedDestination = [IO.Path]::GetFullPath($destinationRoot).TrimEnd('\') + '\'
-      if (-not $resolvedTarget.StartsWith($resolvedDestination, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $resolvedTarget) -ne $backupId) {
+      $resolvedDestination = Get-PhoneBridgeDirectoryPrefix -Path $destinationRoot
+      if (-not $resolvedTarget.StartsWith($resolvedDestination, $pathComparison) -or (Split-Path -Leaf $resolvedTarget) -ne $backupId) {
         throw 'created plaintext backup path escaped the selected destination'
       }
       Remove-Item -LiteralPath $resolvedTarget -Recurse -Force
@@ -120,8 +129,7 @@ try {
 } finally {
   if ($staging -and (Test-Path -LiteralPath $staging -PathType Container)) {
     $resolvedStaging = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $staging).Path)
-    $resolvedDestination = [IO.Path]::GetFullPath($destinationRoot).TrimEnd('\') + '\'
-    if ($resolvedStaging.StartsWith($resolvedDestination, [StringComparison]::OrdinalIgnoreCase)) {
+    if (Test-PhoneBridgePathWithinDirectory -Path $resolvedStaging -Directory $destinationRoot) {
       Remove-Item -LiteralPath $resolvedStaging -Recurse -Force -ErrorAction SilentlyContinue
     }
   }
