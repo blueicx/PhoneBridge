@@ -29,6 +29,7 @@ jobs:
           ./scripts/scan_secrets.ps1
           ./scripts/bench_workspace.ps1
           ./scripts/test_android_ci_workflow.ps1
+          ./scripts/test_runtime_backup.ps1
       - run: git diff --check
 
   android:

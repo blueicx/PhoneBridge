@@ -2,6 +2,9 @@ $ErrorActionPreference = 'Stop'
 $backupScript = Join-Path $PSScriptRoot 'backup_runtime.ps1'
 $restoreScript = Join-Path $PSScriptRoot 'restore_runtime.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) "PhoneBridgeRuntimeBackupTests-$([guid]::NewGuid().ToString('N'))"
+$activityAt = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(8)).ToUnixTimeMilliseconds()
+$activityDate = [DateTimeOffset]::FromUnixTimeMilliseconds($activityAt).ToOffset([TimeSpan]::FromHours(8)).ToString('yyyy-MM-dd')
+$growthEventId = "reality-lens:v2:$activityDate`:cell:1:2`:object`:backup-fixture"
 
 function Write-Utf8File([string]$Path, [string]$Text) {
   [IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding $false))
@@ -22,8 +25,47 @@ try {
   $runtimeDir = Join-Path $testRoot 'server'
   $backupRoot = Join-Path $testRoot 'backups'
   New-Item -ItemType Directory -Path $runtimeDir | Out-Null
-  Write-Utf8File (Join-Path $runtimeDir 'runtime-state.json') '{"state":"before","logs":["log must not be backed up"],"chatHistory":[{"text":"chat must not be backed up"}]}'
+  Write-Utf8File (Join-Path $runtimeDir 'runtime-state.json') '{"state":"before","logs":["log must not be backed up"],"latitude":51.5,"photoData":"raw image bytes","chatHistory":[{"text":"chat must not be backed up"}]}'
   Write-Utf8File (Join-Path $runtimeDir 'workspace-state.json') '{"workspace":"before","logs":["workspace log must not be backed up"]}'
+  Write-Utf8File (Join-Path $runtimeDir 'mote-story.json') '{"version":4,"storyProgress":{"exclusive-mote":{"started":true,"stepIndex":2,"startedAt":1000,"stepReceipts":[{"eventId":"story-step:exclusive-mote:chapter-1","stepId":"chapter-1","advancedAt":1200}]}},"logs":["story log must not be backed up"]}'
+  $dailyState = [ordered]@{
+    date = $activityDate
+    clues = [ordered]@{ location = 0; object = 1; light = 0 }
+    completed = $false
+  }
+  $dailyByDate = @{}
+  $dailyByDate[$activityDate] = $dailyState
+  $growthState = [ordered]@{
+    version = 2
+    xp = 17
+    level = 1
+    region = 'cell:1:2'
+    daily = $dailyState
+    dailyByDate = $dailyByDate
+    boosts = @()
+    seenEventIds = @($growthEventId)
+    processedEvents = @([ordered]@{
+      eventId = $growthEventId
+      businessStatus = 'accepted'
+      reason = 'reward_applied'
+      revision = 1
+      activityDate = $activityDate
+      region = 'cell:1:2'
+      clueType = 'object'
+      reward = [ordered]@{
+        xp = 5
+        dailyCompleted = $false
+        boost = $null
+        encounter = [ordered]@{ id = 'lost-signal'; action = 'skill' }
+      }
+      createdAt = $activityAt
+    })
+    growthRecords = @([ordered]@{ eventId = $growthEventId; reward = [ordered]@{ xp = 5; encounter = [ordered]@{ id = 'lost-signal'; action = 'skill' } } })
+    revision = 1
+    updatedAt = $activityAt
+  }
+  Write-Utf8File (Join-Path $runtimeDir 'mote-growth.json') (ConvertTo-Json -InputObject $growthState -Depth 12 -Compress)
+  Write-Utf8File (Join-Path $runtimeDir 'reality-state.json') '{"version":4,"activeEncounter":{"eventId":"reality:v2:sample","encounterId":"encounter_11","step":0},"seenEventIds":[]}'
   Write-Utf8File (Join-Path $runtimeDir 'access.token') 'must-not-be-backed-up'
   Write-Utf8File (Join-Path $runtimeDir 'crash.log') 'must-not-be-backed-up'
 
@@ -31,13 +73,24 @@ try {
   $backupPath = ([string]($backupOutput | Select-Object -Last 1) -replace '^runtime backup created: ', '')
   $manifest = Get-Content -Raw -LiteralPath (Join-Path $backupPath 'backup-manifest.json') | ConvertFrom-Json
   Assert-True ($manifest.formatVersion -eq 3) 'backup manifest must use format version 3'
+  $backupNames = @($manifest.files | ForEach-Object { $_.name })
+  Assert-True ($backupNames -contains 'mote-story.json') 'backup must include durable Mote story progress'
+  Assert-True ($backupNames -contains 'mote-growth.json') 'backup must include Mote growth and encounter receipts'
+  Assert-True ($backupNames -contains 'reality-state.json') 'backup must include active Reality encounter state'
   Assert-True (-not (Test-Path -LiteralPath (Join-Path $backupPath 'access.token'))) 'backup must exclude access.token'
   Assert-True (-not (Test-Path -LiteralPath (Join-Path $backupPath 'crash.log'))) 'backup must exclude logs'
   $sanitizedRuntime = Get-Content -Raw -LiteralPath (Join-Path $backupPath 'runtime-state.json') | ConvertFrom-Json
   Assert-True ($null -eq $sanitizedRuntime.state.logs -and $sanitizedRuntime.state.chatHistory[0].text -eq 'chat must not be backed up') 'backup must strip embedded logs while preserving recoverable conversations'
+  Assert-True ($null -eq $sanitizedRuntime.state.latitude -and $null -eq $sanitizedRuntime.state.photoData) 'backup must exclude exact location and raw image fields'
   Assert-True (-not ([IO.File]::ReadAllText((Join-Path $backupPath 'runtime-state.json')).Contains('log must not be backed up'))) 'backup must not retain embedded log text'
   $sanitizedWorkspace = Get-Content -Raw -LiteralPath (Join-Path $backupPath 'workspace-state.json') | ConvertFrom-Json
   Assert-True ($sanitizedWorkspace.state.workspace -eq 'before' -and $null -eq $sanitizedWorkspace.state.logs) 'backup must sanitize every allowlisted state snapshot'
+  $sanitizedStory = Get-Content -Raw -LiteralPath (Join-Path $backupPath 'mote-story.json') | ConvertFrom-Json
+  Assert-True ($sanitizedStory.state.storyProgress.'exclusive-mote'.stepIndex -eq 2 -and $null -eq $sanitizedStory.state.logs) 'backup must preserve chapter progress while removing embedded logs'
+  $sanitizedGrowth = Get-Content -Raw -LiteralPath (Join-Path $backupPath 'mote-growth.json') | ConvertFrom-Json
+  Assert-True ($sanitizedGrowth.state.xp -eq 17 -and $sanitizedGrowth.state.processedEvents[0].eventId -eq $growthEventId -and $sanitizedGrowth.state.growthRecords[0].reward.encounter.id -eq 'lost-signal') 'backup must preserve Mote growth and encounter receipts'
+  $sanitizedReality = Get-Content -Raw -LiteralPath (Join-Path $backupPath 'reality-state.json') | ConvertFrom-Json
+  Assert-True ($sanitizedReality.state.activeEncounter.eventId -eq 'reality:v2:sample') 'backup must preserve resumable Reality encounter state'
 
   $global:PhoneBridgeTestWrongPassphrase = $false
   function global:Read-Host {
@@ -79,6 +132,49 @@ try {
   & $restoreScript -Source $backupPath -RuntimeDir $runtimeDir -ConfirmNodeStopped | Out-Null
   $restoredRuntime = Get-Content -Raw -LiteralPath (Join-Path $runtimeDir 'runtime-state.json') | ConvertFrom-Json
   Assert-True ($restoredRuntime.schemaVersion -eq 3 -and $restoredRuntime.state.state -eq 'before') 'restore must replace the selected runtime state'
+  $restoredStory = Get-Content -Raw -LiteralPath (Join-Path $runtimeDir 'mote-story.json') | ConvertFrom-Json
+  Assert-True ($restoredStory.state.storyProgress.'exclusive-mote'.stepIndex -eq 2) 'restore must retain resumable Mote story chapter progress'
+  $restoredGrowth = Get-Content -Raw -LiteralPath (Join-Path $runtimeDir 'mote-growth.json') | ConvertFrom-Json
+  Assert-True ($restoredGrowth.state.processedEvents[0].eventId -eq $growthEventId -and $restoredGrowth.state.growthRecords[0].reward.encounter.id -eq 'lost-signal') 'restore must retain encounter reward receipts'
+  $restoredReality = Get-Content -Raw -LiteralPath (Join-Path $runtimeDir 'reality-state.json') | ConvertFrom-Json
+  Assert-True ($restoredReality.state.activeEncounter.eventId -eq 'reality:v2:sample') 'restore must retain in-progress Reality encounters'
+  $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+  $smokePath = Join-Path $testRoot 'verify-restored-state.cjs'
+  $smokeScript = @'
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const [repositoryRoot, runtimeDir, activityAtValue, growthEventId] = process.argv.slice(2);
+const activityAt = Number(activityAtValue);
+const { RuntimePersistence } = require(path.join(repositoryRoot, 'server/runtime-persistence'));
+const { MoteStoryStore } = require(path.join(repositoryRoot, 'server/mote-story'));
+const { MoteGrowthStore } = require(path.join(repositoryRoot, 'server/mote-growth'));
+const persistence = new RuntimePersistence({ dir: runtimeDir, now: () => activityAt });
+const story = new MoteStoryStore({ persistence, now: () => activityAt });
+const storyReplay = story.advance({
+  storyId: 'exclusive-mote',
+  eventId: 'story-step:exclusive-mote:chapter-1',
+  stepId: 'chapter-1',
+  activeId: 'sprite',
+});
+assert.equal(storyReplay.duplicate, true, 'reopened story store must recognize an already-applied step');
+assert.equal(story.snapshot().storyProgress['exclusive-mote'].stepIndex, 2, 'story replay must not advance progress twice');
+const growth = new MoteGrowthStore({ persistence, now: () => activityAt });
+const growthReplay = growth.recordClue({
+  eventId: growthEventId,
+  clueType: 'object',
+  region: 'cell:1:2',
+  activityAt,
+  offline: false,
+});
+assert.equal(growthReplay.businessStatus, 'duplicate', 'reopened growth store must recognize an already-applied clue');
+assert.equal(growthReplay.reward.xp, 0, 'replayed clue must not award XP again');
+assert.equal(growth.snapshot().xp, 17, 'replayed clue must preserve the restored XP balance');
+const reality = persistence.load('reality-state', {});
+assert.equal(reality.activeEncounter.eventId, 'reality:v2:sample', 'reopened persistence must retain the in-progress encounter');
+'@
+  Write-Utf8File $smokePath $smokeScript
+  & node $smokePath $repositoryRoot $runtimeDir "$activityAt" $growthEventId
+  Assert-True ($LASTEXITCODE -eq 0) 'runtime stores must reopen restored snapshots and deduplicate replayed story and growth events'
   Assert-True ([IO.File]::ReadAllText((Join-Path $runtimeDir 'access.token')) -eq 'must-not-be-backed-up') 'restore must not change the access token'
 
   $corruptPath = Join-Path $testRoot 'corrupt-backup'
