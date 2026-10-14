@@ -129,11 +129,26 @@ try {
 
   Write-Utf8File (Join-Path $runtimeDir 'runtime-state.json') '{"state":"after"}'
   Assert-Fails { & $restoreScript -Source $backupPath -RuntimeDir $runtimeDir } 'restore must require explicit confirmation that the node is stopped'
-  $lockedTarget = [IO.File]::Open((Join-Path $runtimeDir 'workspace-state.json'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+  $originalMoveItemFunction = Get-Item Function:\global:Move-Item -ErrorAction SilentlyContinue
+  $global:PhoneBridgeTestFailRestoreInstall = $false
+  $global:PhoneBridgeTestRestoreFailureInjected = $false
+  function global:Move-Item {
+    param([string]$LiteralPath, [string]$Destination)
+    if ($global:PhoneBridgeTestFailRestoreInstall -and (Split-Path -Leaf (Split-Path -Parent $LiteralPath)) -eq 'incoming') {
+      $global:PhoneBridgeTestRestoreFailureInjected = $true
+      throw 'simulated restore installation failure'
+    }
+    Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+  }
   try {
-    Assert-Fails { & $restoreScript -Source $backupPath -RuntimeDir $runtimeDir -ConfirmNodeStopped } 'restore must fail when an existing runtime file cannot be replaced'
+    $global:PhoneBridgeTestFailRestoreInstall = $true
+    Assert-Fails { & $restoreScript -Source $backupPath -RuntimeDir $runtimeDir -ConfirmNodeStopped } 'restore must fail when staged installation is interrupted'
+    Assert-True $global:PhoneBridgeTestRestoreFailureInjected 'restore rollback test must inject a failure during installation'
   } finally {
-    $lockedTarget.Dispose()
+    Remove-Item Function:\global:Move-Item -ErrorAction SilentlyContinue
+    if ($originalMoveItemFunction) { Set-Item Function:\global:Move-Item -Value $originalMoveItemFunction.ScriptBlock }
+    Remove-Variable PhoneBridgeTestFailRestoreInstall -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable PhoneBridgeTestRestoreFailureInjected -Scope Global -ErrorAction SilentlyContinue
   }
   Assert-True ([IO.File]::ReadAllText((Join-Path $runtimeDir 'runtime-state.json')) -eq '{"state":"after"}') 'failed restore must roll back already moved files'
   $leftoverRestoreStages = @(Get-ChildItem -LiteralPath $runtimeDir -Directory -Force | Where-Object { $_.Name -match '^\.phonebridge-restore-[a-f0-9]{32}$' })
