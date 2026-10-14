@@ -7,11 +7,13 @@
 - 批次 2 已提交 `71f55e5` 并推送；Web 舞台直接聊天、流式气泡、停止/重试、任务/审批/活动卡及 Android Room 先行恢复均已落地。
 - 批次 2 提交 `71f55e5` 已推送；GitHub Actions run [38531370595](https://github.com/blueicx/PhoneBridge/actions/runs/38531370595) 在同一 SHA 上 Node、Android、API 34 emulator 和 artifact verify 四个 job 全部成功。已上传 artifact `phonebridge-debug-71f55e517b179e2ae878facbbafb02546a0694c7`（Debug APK + 校验清单）。
 - 批次 3 已提交并推送：`6377e763c0c277bfb792841276a2f6268d97f660`；Actions run [38536709334](https://github.com/blueicx/PhoneBridge/actions/runs/38536709334) 全部成功。OpenAI/Gemini-compatible 使用真实 SSE 增量读取并支持上游取消；会话摘要/恢复遵守“本轮不记忆”；记忆来源、冲突候选、批量确认/合并与 Android 离线同步状态已落地。
-- 批次 4 本地验收完成：Node 全量 **297/297**；Android JVM **196/196**，`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 全部成功；真实本地服务 + Chromium 验证通过；内部 Debug APK 发布门禁、敏感扫描、`node --check` 与 `git diff --check` 通过。工作区性能脚本输出 `elapsedMs=1.686`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。最新源码 SHA 和 GitHub Actions 在推送后补记。
+- 批次 4 提交 `00d6176e9ee6846b10bf5335dac7b36fbf2c57b9` 已推送；GitHub Actions [run 38543293259](https://github.com/blueicx/PhoneBridge/actions/runs/38543293259) 在同一 SHA 上 Node、Android、API 34 模拟器与 APK verify 四个 job 全部成功。
+- 批次 4 本地验收：Node 全量 **297/297**；Android JVM **196/196**，`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 全部成功；真实本地服务 + Chromium 验证通过；内部 Debug APK 发布门禁、敏感扫描、`node --check` 与 `git diff --check` 通过。工作区性能脚本输出 `elapsedMs=1.686`、完整快照 `1694 bytes`、摘要 `48 bytes`、缓存命中 `10000`、突发广播 `1`。
 - 批次 4 落地家园布局 v2、Web/Android 摆放交互、12 件道具实际效果、材料来源预览、活动成长记录与跨账本可重试收据；网络结果不确定时两端复用原 `eventId`，明确业务拒绝才清除待确认状态。
 - 批次 4 验收期间发现并修复两类回归：Reality coordinator 旧测试替身未声明新增投影接口；使用/制作成功但响应丢失时，库存变化曾使重试入口消失。已补 Node/Android 回归覆盖。
 - 实机边界：批次 4 未做 Xperia 实机拖拽/观感验收。Xperia 首屏、PTT、卡片触控、冷启动、帧耗时和两小时稳定性仍待设备验证，不以浏览器/构建证据代替。正式 Release 签名仍遵守独立加密恢复副本门禁。
-- 下一步：批次 4 独立提交推送并确认最新 SHA 的 Actions；随后实施批次 5（20 个角色反馈/专属剧情与 12 种探索遭遇）。批次 6 与最终总验收仍覆盖备份恢复、性能、Room migration、协议/敏感扫描、浏览器和实际可用设备证据。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+- 当前：第 5 批本地实施中；确认现有 20 个角色已有四种反馈及独立基础剧情，正在把剧情补成可恢复三步并接入双端进度/分支。
+- 下一步：完成批次 5 的 20 个角色剧情深化、12 种遭遇差异结果和探索日志，再单独测试/提交/推送。批次 6 与最终总验收仍覆盖备份恢复、性能、Room migration、协议/敏感扫描、浏览器和实际可用设备证据。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 
 更新时间：2026-10-14（本节为当前状态；下面 2026-10-03 及更早内容为历史交接）
 
