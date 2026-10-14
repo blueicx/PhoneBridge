@@ -614,7 +614,11 @@ class BridgeService : Service(), BridgeLink.DeviceListener {
                 .build()
             http.newCall(request).enqueue(object : okhttp3.Callback {
                 override fun onFailure(call: okhttp3.Call, error: java.io.IOException) = Unit
-                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) { response.close() }
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    try {
+                        if (response.isSuccessful) MoteMemory.markSyncedById(this@BridgeService, item.id)
+                    } finally { response.close() }
+                }
             })
         }
     }

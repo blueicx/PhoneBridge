@@ -7,7 +7,7 @@ class StageChatController {
     this.onChange = onChange;
     this.state = {
       messages: [], status: 'idle', activeRequestId: '', lastFailedText: '', failedMessages: [], pendingText: '',
-      lastCompletedRequestId: '', streamedText: '', error: '',
+      lastCompletedRequestId: '', streamedText: '', error: '', resume: null,
     };
     this.pendingUserMessageId = '';
     this.pendingFailureId = '';
@@ -161,8 +161,19 @@ class StageChatController {
     return false;
   }
 
-  hydrate(history = []) {
-    if (!Array.isArray(history) || history.length === 0) return;
+  hydrate(history = [], resume = undefined) {
+    const normalizedResume = resume && typeof resume === 'object'
+      ? {
+          lastUserMessage: String(resume.lastUserMessage || '').slice(0, 180),
+          lastAssistantMessage: String(resume.lastAssistantMessage || '').slice(0, 240),
+          updatedAt: resume.updatedAt || null,
+        }
+      : undefined;
+    const resumeChanged = normalizedResume !== undefined && JSON.stringify(normalizedResume) !== JSON.stringify(this.state.resume);
+    if (!Array.isArray(history) || history.length === 0) {
+      if (resumeChanged) this.publish({ resume: normalizedResume });
+      return;
+    }
     const currentMessages = this.state.messages.slice();
     const orderedHistory = [];
     const consumedMessageIds = new Set();
@@ -194,8 +205,11 @@ class StageChatController {
     const localOnly = currentMessages.filter(item => !consumedMessageIds.has(item.id));
     const messages = [...orderedHistory, ...localOnly];
     const changed = JSON.stringify(messages) !== JSON.stringify(this.state.messages) || failedMessages.length !== this.state.failedMessages.length;
-    if (changed) {
-      this.publish({ messages, failedMessages, lastFailedText: failedMessages.at(-1)?.text || '' });
+    if (changed || resumeChanged) {
+      this.publish({
+        messages, failedMessages, lastFailedText: failedMessages.at(-1)?.text || '',
+        ...(resumeChanged ? { resume: normalizedResume } : {}),
+      });
     }
   }
 }

@@ -44,15 +44,36 @@ class MemoryAdapter(
         val item = items[position]
         holder.text.text = item.text
         val status = when {
+            item.status == "candidate" && item.pendingSync -> "待确认 · 本机待同步"
             item.status == "candidate" -> "待确认"
             item.excludedFromRecall -> "不再提起"
+            item.pendingSync -> "已确认 · 本机待同步"
             else -> "已确认"
         }
-        holder.meta.text = "$status · 来源 ${item.source} · 更新 ${format.format(Date(item.updatedAtMs.takeIf { it > 0 } ?: item.createdAtMs))} · 使用 ${item.useCount} 次 · ${
-            if (item.lastUsedAtMs > 0) format.format(Date(item.lastUsedAtMs)) else "未召回"
-        }"
+        val provenance = item.provenance.ifEmpty { listOf(item.source) }
+            .distinct().joinToString("、") { sourceLabel(it) }
+        val lastUse = if (item.lastUsedAtMs > 0) {
+            val reason = when (item.lastUsedReason) {
+                "conversation_recall" -> "对话中召回"
+                "conversation_context" -> "会话上下文"
+                "task_context" -> "任务上下文"
+                else -> item.lastUsedReason.takeIf { it.isNotBlank() }?.let { "用途：$it" } ?: "已召回"
+            }
+            "$reason ${format.format(Date(item.lastUsedAtMs))}"
+        } else "未召回"
+        val conflict = item.possibleConflicts.firstOrNull()?.let {
+            " · 可能冲突 ${item.possibleConflicts.size} 条：${it.text.take(24)}"
+        }.orEmpty()
+        holder.meta.text = "$status · 来源 $provenance · 更新 ${format.format(Date(item.updatedAtMs.takeIf { it > 0 } ?: item.createdAtMs))} · 使用 ${item.useCount} 次 · $lastUse$conflict"
         holder.delete.setOnClickListener { onDelete(item) }
         holder.itemView.setOnClickListener { onSelect(item) }
+    }
+
+    private fun sourceLabel(value: String): String = when (value) {
+        "user", "explicit" -> "手动"
+        "conversation", "conversation_recall" -> "对话"
+        "auto_extract" -> "自动提取"
+        else -> value.take(24)
     }
 
     override fun getItemCount() = items.size

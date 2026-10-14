@@ -14,8 +14,9 @@
 ## 进度
 
 - 批次 1：提交 `cfe0f97` 已推送；Node **250/250**、无头 Chromium、Android 单测/Lint/Debug 构建通过；GitHub Actions run **38350063660** 全部成功。
-- 批次 2：本地实现完成，Node **263/263**、真实服务进程 + Chromium、Android 单测/Lint/Debug 构建、性能预算和敏感扫描通过；提交推送及最新 SHA Actions 待确认。Web/Android 舞台聊天、任务/审批/活动卡和失败恢复已接通。
-- 批次 3–6：待实施。
+- 批次 2：提交 `71f55e517b179e2ae878facbbafb02546a0694c7` 已推送；Node、Android、API 34 emulator 与 artifact verify 在 GitHub Actions run **38531370595** 全部成功。Web/Android 舞台聊天、任务/审批/活动卡和失败恢复已接通。
+- 批次 3：本地实现与自动验收完成，待提交推送和最新 SHA Actions。Node **276/276**；Android JVM **189/189（49 suites）**、Lint、Debug 构建通过；真实本地服务 + Chromium、模拟 SSE、性能预算和敏感扫描通过。覆盖 provider 真流式/取消、会话恢复与隐私隔离、记忆来源/冲突/批量确认与合并、Android 离线记忆同步状态。
+- 批次 4–6：待实施。实机和真实在线 provider 验收保持单独待办。
 
 ## 验收
 

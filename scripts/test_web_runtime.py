@@ -38,6 +38,7 @@ with sync_playwright() as playwright:
             testChat.handle({type:'chat_error', requestId:window.stageSent.requestId, error:'模拟失败'});
             testChat.send('失败后用户输入的新消息');
             testChat.handle({type:'chat_delta', requestId:window.stageSent.requestId, text:'新消息已回复', terminal:true});
+            testChat.hydrate([], {lastUserMessage:'上次在准备项目演示。',lastAssistantMessage:'我们决定先完成最小闭环。'});
             renderStageCards({
                 tasks:[{id:'task-ui',title:'安全卡片',state:'running',progress:37}],
                 approvals:[{id:'approval-ui',taskId:'task-ui',toolId:'read.status',state:'needs_confirmation',args:{secret:'must-not-render'}}],
@@ -52,6 +53,12 @@ with sync_playwright() as playwright:
         assert page.locator("#stageQuickCards .stage-quick-card").count() == 2
         assert page.locator("#stageQuickCards").inner_text().find("must-not-render") < 0
         assert page.locator("#moteVisual").get_attribute("data-touched") == "true"
+        page.locator("#openDrawer").click()
+        page.wait_for_selector("#commandDrawer.open")
+        assert page.locator("#stageChatResume").is_visible(), "resumed conversation context must appear in the chat drawer"
+        assert "上次在准备项目演示" in page.locator("#stageChatResume").inner_text()
+        page.locator("#closeDrawer").click()
+        page.wait_for_function("!document.querySelector('#commandDrawer').classList.contains('open')")
         page.evaluate("renderStageCards({});renderStageChat({messages:[],status:'idle',error:''})")
         assert page.evaluate("() => { const active = pushSocket; connectWebPush(); return pushSocket === active; }"), \
             "repeated page-show callbacks must not create a second WebSocket"

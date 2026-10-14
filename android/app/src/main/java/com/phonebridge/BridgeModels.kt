@@ -138,7 +138,20 @@ data class MemoryItem(
     val source: String = "user",
     val status: String = "confirmed",
     val excludedFromRecall: Boolean = false,
-    val updatedAtMs: Long = createdAtMs
+    val updatedAtMs: Long = createdAtMs,
+    val lastUsedReason: String = "",
+    val provenance: List<String> = listOf(source),
+    val mergedFrom: List<String> = emptyList(),
+    val possibleConflicts: List<MemoryConflict> = emptyList(),
+    val pendingSync: Boolean = false
+)
+
+data class MemoryConflict(
+    val id: String,
+    val text: String,
+    val source: String = "user",
+    val similarity: Float = 0f,
+    val reason: String = ""
 )
 
 object BridgeJson {

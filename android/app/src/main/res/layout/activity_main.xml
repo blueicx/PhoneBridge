@@ -1050,6 +1050,7 @@
                 <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:layout_weight="1" android:orientation="vertical">
                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="AI 空间" android:textColor="#F4FAF6" android:textSize="22sp" android:fontFamily="sans-serif-medium"/>
                     <TextView android:id="@+id/aiSpaceStatus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="会话、工具与任务" android:textColor="#87A495" android:textSize="11sp"/>
+                    <TextView android:id="@+id/aiSessionResume" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:ellipsize="end" android:maxLines="2" android:textColor="#A7C5B6" android:textSize="10sp" android:visibility="gone"/>
                 </LinearLayout>
                 <Button android:id="@+id/aiEmergencyStop" style="@style/PetAction" android:layout_width="wrap_content" android:layout_height="38dp" android:text="急停" android:textColor="#FFB0B0"/>
             </LinearLayout>

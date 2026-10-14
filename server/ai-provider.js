@@ -82,8 +82,130 @@ class LocalRuleFallbackAdapter {
   }
 }
 
-function requestSignal(timeoutMs) {
-  return typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(Math.max(1000, Number(timeoutMs) || 15000)) : undefined;
+function requestSignal(timeoutMs, parentSignal = null) {
+  const timeoutSignal = typeof AbortSignal?.timeout === 'function'
+    ? AbortSignal.timeout(Math.max(1000, Number(timeoutMs) || 15000))
+    : undefined;
+  if (parentSignal && timeoutSignal && typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([parentSignal, timeoutSignal]);
+  }
+  return parentSignal || timeoutSignal;
+}
+
+async function* readSseData(response, signal) {
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    throw new Error('provider stream body unavailable');
+  }
+  if (signal?.aborted) throw new Error('AI request cancelled');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  let dataLines = [];
+  let completed = false;
+  const abortReader = () => {
+    void reader.cancel(new Error('AI request cancelled')).catch(() => {});
+  };
+  const consumeLine = line => {
+    const normalized = line.endsWith('\r') ? line.slice(0, -1) : line;
+    if (!normalized) {
+      if (!dataLines.length) return null;
+      const data = dataLines.join('\n');
+      dataLines = [];
+      return data;
+    }
+    if (normalized.startsWith('data:')) dataLines.push(normalized.slice(5).replace(/^ /, ''));
+    return null;
+  };
+  signal?.addEventListener('abort', abortReader, { once: true });
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (signal?.aborted) throw new Error('AI request cancelled');
+      if (done) {
+        completed = true;
+        break;
+      }
+      buffered += decoder.decode(value, { stream: true });
+      let newline = buffered.indexOf('\n');
+      while (newline >= 0) {
+        const data = consumeLine(buffered.slice(0, newline));
+        buffered = buffered.slice(newline + 1);
+        if (data !== null) yield data;
+        newline = buffered.indexOf('\n');
+      }
+    }
+    buffered += decoder.decode();
+    if (buffered) {
+      const data = consumeLine(buffered);
+      if (data !== null) yield data;
+    }
+    const finalData = consumeLine('');
+    if (finalData !== null) yield finalData;
+  } finally {
+    signal?.removeEventListener('abort', abortReader);
+    if (!completed) await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
+function parseSseJson(data, providerId) {
+  if (data === '[DONE]') return null;
+  try {
+    return JSON.parse(data);
+  } catch (_) {
+    throw new Error(`${providerId} provider returned invalid stream data`);
+  }
+}
+
+function normalizeMemoryText(memories = []) {
+  return (Array.isArray(memories) ? memories : [])
+    .map(item => String(item?.text || item || '').trim())
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function openAiMessages(messages = [], prompt = '', memories = []) {
+  const context = (Array.isArray(messages) ? messages : [])
+    .filter(item => item && ['system', 'user', 'assistant', 'developer'].includes(item.role))
+    .map(item => ({ role: item.role, content: String(item.text || item.content || '') }));
+  const memoryText = normalizeMemoryText(memories);
+  if (memoryText.length) {
+    context.unshift({
+      role: 'system',
+      content: `用户确认的长期记忆，仅在与当前问题相关时使用：\n${memoryText.map((text, index) => `${index + 1}. ${text}`).join('\n')}`
+    });
+  }
+  const latest = context.at(-1);
+  if (!latest || latest.role !== 'user' || latest.content !== String(prompt || '')) {
+    context.push({ role: 'user', content: String(prompt || '') });
+  }
+  return context;
+}
+
+function geminiRequestContent(messages = [], prompt = '', memories = []) {
+  const source = (Array.isArray(messages) ? messages : [])
+    .filter(item => item && ['system', 'user', 'assistant', 'model'].includes(item.role));
+  const systemParts = source.filter(item => item.role === 'system')
+    .map(item => String(item.text || item.content || '').trim())
+    .filter(Boolean);
+  const memoryText = normalizeMemoryText(memories);
+  if (memoryText.length) systemParts.unshift(`用户确认的长期记忆，仅在与当前问题相关时使用：\n${memoryText.join('\n')}`);
+  const contents = [];
+  for (const item of source.filter(value => value.role !== 'system')) {
+    const role = item.role === 'assistant' || item.role === 'model' ? 'model' : 'user';
+    const text = String(item.text || item.content || '');
+    const previous = contents.at(-1);
+    if (previous?.role === role) previous.parts[0].text += `\n${text}`;
+    else contents.push({ role, parts: [{ text }] });
+  }
+  const latest = contents.at(-1);
+  if (!latest || latest.role !== 'user' || latest.parts[0].text !== String(prompt || '')) {
+    contents.push({ role: 'user', parts: [{ text: String(prompt || '') }] });
+  }
+  return {
+    contents,
+    ...(systemParts.length ? { systemInstruction: { parts: [{ text: systemParts.join('\n\n') }] } } : {})
+  };
 }
 
 class OpenAiCompatibleAdapter {
@@ -92,22 +214,39 @@ class OpenAiCompatibleAdapter {
     this.id = 'openai';
   }
 
-  async chat({ prompt = '', messages = [], config = {}, timeoutMs = 15000 } = {}) {
+  async chat({ prompt = '', messages = [], memories = [], config = {}, timeoutMs = 15000, signal = null, maxOutputTokens = 1024 } = {}) {
     if (!config.apiKey || isRedactedPlaceholder(config.apiKey)) throw new Error('openai api key missing');
-    const context = messages.length
-      ? messages.map(item => ({ role: item.role || 'user', content: item.text || item.content || '' }))
-      : [{ role: 'user', content: prompt }];
+    const context = openAiMessages(messages, prompt, memories);
     const response = await this.fetchImpl(`${String(config.endpoint || '').replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}`, ...(config.headers || {}) },
-      body: JSON.stringify({ model: config.model, messages: context, stream: false }),
-      signal: requestSignal(timeoutMs)
+      body: JSON.stringify({ model: config.model, messages: context, max_tokens: maxOutputTokens, stream: false }),
+      signal: requestSignal(timeoutMs, signal)
     });
     if (!response.ok) throw new Error(`openai provider HTTP ${response.status}`);
     const data = await response.json();
     const reply = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || '';
     if (!String(reply).trim()) throw new Error('openai provider returned empty response');
     return { reply: String(reply), model: data.model || config.model };
+  }
+
+  async *stream({ prompt = '', messages = [], memories = [], config = {}, timeoutMs = 15000, signal = null, maxOutputTokens = 1024 } = {}) {
+    if (!config.apiKey || isRedactedPlaceholder(config.apiKey)) throw new Error('openai api key missing');
+    const providerSignal = requestSignal(timeoutMs, signal);
+    const response = await this.fetchImpl(`${String(config.endpoint || '').replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}`, ...(config.headers || {}) },
+      body: JSON.stringify({ model: config.model, messages: openAiMessages(messages, prompt, memories), max_tokens: maxOutputTokens, stream: true }),
+      signal: providerSignal
+    });
+    if (!response.ok) throw new Error(`openai provider HTTP ${response.status}`);
+    for await (const data of readSseData(response, providerSignal)) {
+      const payload = parseSseJson(data, 'openai');
+      if (!payload) return;
+      if (payload.error) throw new Error('openai provider stream error');
+      const delta = payload.choices?.[0]?.delta?.content;
+      if (typeof delta === 'string' && delta) yield delta;
+    }
   }
 
   async probe(config = {}) {
@@ -129,20 +268,42 @@ class GeminiCompatibleAdapter {
     this.id = 'gemini';
   }
 
-  async chat({ prompt = '', config = {}, timeoutMs = 15000 } = {}) {
+  async chat({ prompt = '', messages = [], memories = [], config = {}, timeoutMs = 15000, signal = null, maxOutputTokens = 1024 } = {}) {
     if (!config.apiKey || isRedactedPlaceholder(config.apiKey)) throw new Error('gemini api key missing');
     const endpoint = `${String(config.endpoint || '').replace(/\/$/, '')}/models/${encodeURIComponent(config.model)}:generateContent?key=${encodeURIComponent(config.apiKey)}`;
     const response = await this.fetchImpl(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(config.headers || {}) },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
-      signal: requestSignal(timeoutMs)
+      body: JSON.stringify({ ...geminiRequestContent(messages, prompt, memories), generationConfig: { maxOutputTokens } }),
+      signal: requestSignal(timeoutMs, signal)
     });
     if (!response.ok) throw new Error(`gemini provider HTTP ${response.status}`);
     const data = await response.json();
     const reply = data.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '';
     if (!String(reply).trim()) throw new Error('gemini provider returned empty response');
     return { reply: String(reply), model: config.model };
+  }
+
+  async *stream({ prompt = '', messages = [], memories = [], config = {}, timeoutMs = 15000, signal = null, maxOutputTokens = 1024 } = {}) {
+    if (!config.apiKey || isRedactedPlaceholder(config.apiKey)) throw new Error('gemini api key missing');
+    const providerSignal = requestSignal(timeoutMs, signal);
+    const endpoint = new URL(`${String(config.endpoint || '').replace(/\/$/, '')}/models/${encodeURIComponent(config.model)}:streamGenerateContent`);
+    endpoint.searchParams.set('alt', 'sse');
+    endpoint.searchParams.set('key', config.apiKey);
+    const response = await this.fetchImpl(endpoint.toString(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(config.headers || {}) },
+      body: JSON.stringify({ ...geminiRequestContent(messages, prompt, memories), generationConfig: { maxOutputTokens } }),
+      signal: providerSignal
+    });
+    if (!response.ok) throw new Error(`gemini provider HTTP ${response.status}`);
+    for await (const data of readSseData(response, providerSignal)) {
+      const payload = parseSseJson(data, 'gemini');
+      if (!payload) return;
+      if (payload.error) throw new Error('gemini provider stream error');
+      const delta = payload.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '';
+      if (delta) yield delta;
+    }
   }
 
   async probe(config = {}) {
@@ -435,7 +596,7 @@ class AiProviderManager {
     }
   }
 
-  async chat({ prompt = '', messages = [], memories = [], providerId = null, options = {}, requestId = null, signal = null } = {}) {
+  async chat({ prompt = '', messages = [], memories = [], providerId = null, options = {}, requestId = null, signal = null, onDelta = null } = {}) {
     const targetProviderId = providerId || this.activeProviderId;
     const start = this.now();
     const id = String(requestId || `ai_${crypto.randomUUID()}`);
@@ -454,18 +615,37 @@ class AiProviderManager {
       if (targetProviderId !== 'local') {
         try {
           const adapter = this.adapters[targetProviderId];
-          if (adapter && typeof adapter.chat === 'function') {
-            const res = await adapter.chat({
+          if (adapter && (typeof adapter.chat === 'function' || typeof adapter.stream === 'function')) {
+            const adapterRequest = {
               prompt,
               messages,
               memories,
               requestId: id,
-              onDelta: () => { providerOutputEmitted = true; },
+              onDelta: delta => {
+                providerOutputEmitted = true;
+                onDelta?.(String(delta || ''));
+              },
               options,
               timeoutMs: this.timeoutMs,
               config: this.configs[targetProviderId],
-              signal: requestSignalValue
-            });
+              signal: requestSignalValue,
+              maxOutputTokens: this.maxOutputTokens
+            };
+            let res;
+            if (typeof adapter.stream === 'function') {
+              let reply = '';
+              for await (const delta of adapter.stream(adapterRequest)) {
+                if (requestSignalValue.aborted) throw new Error('AI request cancelled');
+                const chunk = String(delta || '');
+                if (!chunk) continue;
+                reply += chunk;
+                adapterRequest.onDelta(chunk);
+              }
+              if (!reply.trim()) throw new Error(`${targetProviderId} provider returned empty response`);
+              res = { reply, model: this.configs[targetProviderId]?.model };
+            } else {
+              res = await adapter.chat(adapterRequest);
+            }
             this.consumeBudget(res.reply || '');
             this.lastLatencyMs = this.now() - start;
             return {
@@ -535,12 +715,25 @@ class AiProviderManager {
       this.activeRequests.set(requestId, controller);
       const startedAt = this.now();
       let yielded = false;
+      let streamedText = '';
       try {
-        for await (const delta of adapter.stream({ ...request, requestId, signal: controller.signal, config: this.configs[targetProviderId], timeoutMs: this.timeoutMs })) {
+        for await (const delta of adapter.stream({
+          ...request,
+          requestId,
+          signal: controller.signal,
+          config: this.configs[targetProviderId],
+          timeoutMs: this.timeoutMs,
+          maxOutputTokens: this.maxOutputTokens
+        })) {
           if (controller.signal.aborted) throw new Error('AI request cancelled');
+          const chunk = String(delta || '');
+          if (!chunk) continue;
+          streamedText += chunk;
           yielded = true;
-          yield String(delta);
+          yield chunk;
         }
+        if (yielded) this.consumeBudget(streamedText);
+        this.lastLatencyMs = this.now() - startedAt;
       } catch (error) {
         if (controller.signal.aborted) throw new Error('AI request cancelled');
         if (yielded || !this.fallbackToLocal || !this.localRulesEnabled) throw error;

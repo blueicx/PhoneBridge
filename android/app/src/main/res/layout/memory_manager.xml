@@ -34,6 +34,25 @@
             android:text="@string/action_remember"/>
     </LinearLayout>
 
+    <TextView
+        android:id="@+id/memorySyncStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="7dp"
+        android:accessibilityLiveRegion="polite"
+        android:text="显示本机记忆缓存"
+        android:textColor="#88A296"
+        android:textSize="11sp" />
+
+    <Button
+        android:id="@+id/confirmMemoryCandidates"
+        style="@style/PetAction"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="5dp"
+        android:enabled="false"
+        android:text="批量确认候选（0）" />
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/memoryRecycler"
         android:layout_width="match_parent"

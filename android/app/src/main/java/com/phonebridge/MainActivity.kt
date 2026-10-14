@@ -229,6 +229,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private lateinit var chatRecycler: RecyclerView
     private lateinit var aiSpacePanel: View
     private lateinit var aiSpaceStatus: TextView
+    private lateinit var aiSessionResume: TextView
     private lateinit var aiAuthorizationStatus: TextView
     private lateinit var aiConversationText: TextView
     private lateinit var aiTaskText: TextView
@@ -737,6 +738,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         chatRecycler = findViewById(R.id.chatRecycler)
         aiSpacePanel = findViewById(R.id.aiSpacePanel)
         aiSpaceStatus = findViewById(R.id.aiSpaceStatus)
+        aiSessionResume = findViewById(R.id.aiSessionResume)
         aiAuthorizationStatus = findViewById(R.id.aiAuthorizationStatus)
         aiConversationText = findViewById(R.id.aiConversationText)
         aiTaskText = findViewById(R.id.aiTaskText)
@@ -3745,6 +3747,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             val session = json.optJSONObject("session") ?: return@workspaceRequest
             aiProviderInput.setText(session.optString("providerId", "codex"))
             aiModelInput.setText(session.optString("model", ""))
+            renderAiResume(json.optJSONObject("resume"))
             val messages = session.optJSONArray("messages") ?: JSONArray()
             renderAiConversation(messages)
             aiAuthorizedUntilMs = parseEpochMs(session.opt("armedUntil"))
@@ -3774,6 +3777,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 withContext(Dispatchers.Main) {
                     aiProviderInput.setText(localSession?.providerId ?: "codex")
                     aiModelInput.setText(localSession?.model.orEmpty())
+                    renderAiResume(
+                        localMessages.lastOrNull { it.role == "user" }?.text,
+                        localMessages.lastOrNull { it.role == "assistant" }?.text
+                    )
                     aiAuthorizedUntilMs = localSession?.armedUntil
                     aiToolAuthorized = (aiAuthorizedUntilMs ?: 0L) > System.currentTimeMillis()
                     renderAiAuthorizationStatus()
@@ -3890,6 +3897,17 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             if (text.isNotBlank()) lines.add("$role：$text")
         }
         aiConversationText.text = lines.joinToString("\n\n").ifBlank { "还没有消息。" }
+    }
+
+    private fun renderAiResume(resume: JSONObject?) {
+        renderAiResume(resume?.optString("lastUserMessage"), resume?.optString("lastAssistantMessage"))
+    }
+
+    private fun renderAiResume(lastUserMessage: String?, lastAssistantMessage: String?) {
+        val excerpt = lastUserMessage?.trim()?.takeIf { it.isNotEmpty() }
+            ?: lastAssistantMessage?.trim()?.takeIf { it.isNotEmpty() }
+        aiSessionResume.text = excerpt?.let { "上次聊到：${it.take(140)}" }.orEmpty()
+        aiSessionResume.visibility = if (excerpt.isNullOrBlank()) View.GONE else View.VISIBLE
     }
 
     private fun refreshAiTasks() {
@@ -4493,31 +4511,135 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         val view = LayoutInflater.from(this).inflate(R.layout.memory_manager, null)
         val input = view.findViewById<EditText>(R.id.memoryInput)
         val recycler = view.findViewById<RecyclerView>(R.id.memoryRecycler)
+        val syncStatus = view.findViewById<TextView>(R.id.memorySyncStatus)
+        val confirmCandidates = view.findViewById<Button>(R.id.confirmMemoryCandidates)
         val adapter = MemoryAdapter {}
-        val refresh = { adapter.submit(MoteMemory.load(this)) }
+        var currentItems: List<MemoryItem> = MoteMemory.load(this)
+        val render: (List<MemoryItem>) -> Unit = { items ->
+            currentItems = items
+            adapter.submit(items)
+            val pending = items.count { it.status == "candidate" }
+            val unsyncedCandidate = items.any { it.status == "candidate" && it.pendingSync }
+            confirmCandidates.text = if (unsyncedCandidate) "先同步候选（$pending）" else "批量确认候选（$pending）"
+            confirmCandidates.isEnabled = pending > 0 && !unsyncedCandidate && BridgeLink.isOnline
+        }
+        val refresh = { render(MoteMemory.load(this)) }
         adapter.setOnDelete { item ->
-            MoteMemory.removeById(this, item.id)
-            workspaceRequest("/api/memories/${android.net.Uri.encode(item.id)}", "DELETE", JSONObject())
-            refresh()
+            if (!BridgeLink.isOnline) {
+                syncStatus.text = "节点离线 · 未删除；联网后重试，避免节点恢复时记忆再次出现。"
+                Toast.makeText(this, "节点离线，记忆未删除", Toast.LENGTH_SHORT).show()
+            } else {
+                workspaceRequest(
+                    "/api/memories/${android.net.Uri.encode(item.id)}", "DELETE", JSONObject(),
+                    onSuccess = {
+                        MoteMemory.removeById(this, item.id)
+                        syncStatus.text = "节点与本机缓存均已删除"
+                        refresh()
+                    },
+                    onError = { error ->
+                        syncStatus.text = "节点未确认删除，记忆保持不变：$error"
+                        Toast.makeText(this, "删除失败，记忆仍保留", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
         }
         adapter.setOnSelect { item -> showMemoryActions(item, refresh) }
         recycler.layoutManager = LinearLayoutManager(this)
         recycler.adapter = adapter
         refresh()
+        confirmCandidates.setOnClickListener {
+            val ids = currentItems.filter { it.status == "candidate" }.map { it.id }
+            if (ids.isEmpty()) return@setOnClickListener
+            confirmCandidates.isEnabled = false
+            syncStatus.text = "正在向节点确认 ${ids.size} 条候选…"
+            workspaceRequest(
+                "/api/memories/confirm-batch", "POST",
+                JSONObject().put("ids", JSONArray(ids)),
+                onSuccess = { response ->
+                    val confirmed = response.optJSONArray("confirmed") ?: JSONArray()
+                    val confirmedIds = (0 until confirmed.length()).mapNotNull { index ->
+                        confirmed.optJSONObject(index)?.optString("id")?.takeIf { it.isNotBlank() }
+                    }
+                    confirmedIds.forEach { MoteMemory.confirmById(this, it) }
+                    syncStatus.text = "节点已确认 ${confirmedIds.size} 条候选"
+                    refresh()
+                },
+                onError = { error ->
+                    syncStatus.text = "批量确认失败，候选仍保持待确认：$error"
+                    refresh()
+                }
+            )
+        }
+        if (BridgeLink.isOnline) {
+            syncStatus.text = "正在从节点同步记忆…"
+            workspaceRequest(
+                "/api/memories?limit=50",
+                onSuccess = { response ->
+                    if (!response.optBoolean("ok", true)) {
+                        syncStatus.text = "节点未接受同步；当前显示本机缓存。"
+                    } else {
+                        val remote = MemoryProtocol.parseList(response)
+                        val merged = MoteMemory.mergeRemote(this, remote)
+                        render(merged)
+                        val pending = merged.filter { it.pendingSync }
+                        if (pending.isEmpty()) {
+                            syncStatus.text = "节点记忆已同步 · 来源、召回用途与冲突提示来自节点"
+                        } else {
+                            fun syncNext(index: Int) {
+                                if (index >= pending.size) {
+                                    syncStatus.text = "节点已补交 ${pending.size} 条本机记忆"
+                                    return
+                                }
+                                syncStatus.text = "正在补交本机待同步记忆 ${index + 1}/${pending.size}…"
+                                syncMemoryToNode(pending[index]) { synced ->
+                                    if (synced == null) {
+                                        val remaining = MoteMemory.load(this).count { it.pendingSync }
+                                        syncStatus.text = "补交失败 · 还有 $remaining 条仅保存在本机，稍后可重试"
+                                    } else {
+                                        render(MoteMemory.load(this))
+                                        syncNext(index + 1)
+                                    }
+                                }
+                            }
+                            syncNext(0)
+                        }
+                    }
+                },
+                onError = { error -> syncStatus.text = "节点同步失败；显示本机缓存：$error" }
+            )
+        } else {
+            syncStatus.text = "节点离线 · 显示本机缓存，远端操作暂不可用"
+        }
+
+        fun addMemory() {
+            val value = input.text.toString().trim()
+            if (value.isBlank()) return
+            val saved = MoteMemory.add(this, value, source = "user")
+            saved.firstOrNull { it.text == value }?.let { memory ->
+                if (BridgeLink.isOnline) {
+                    syncStatus.text = "记忆已保存在本机，正在同步到节点…"
+                    syncMemoryToNode(memory) { synced ->
+                        if (synced == null) {
+                            syncStatus.text = "记忆只保存在本机；节点同步失败。"
+                        } else {
+                            render(MoteMemory.load(this))
+                            syncStatus.text = if (synced.possibleConflicts.isNotEmpty()) {
+                                "节点已保存 · 发现可能冲突，请点开记忆查看后决定是否合并"
+                            } else "记忆已保存并同步到节点"
+                        }
+                    }
+                } else syncStatus.text = "记忆已保存在本机；节点离线，尚未同步。"
+            }
+            input.setText("")
+            render(saved)
+        }
+        view.findViewById<Button>(R.id.addMemory).setOnClickListener { addMemory() }
         val container = view
 
         AlertDialog.Builder(this)
             .setTitle(R.string.memory_dialog_title)
             .setView(container)
-            .setPositiveButton("添加") { _, _ ->
-                val value = input.text.toString().trim()
-                if (value.isNotBlank()) {
-                    MoteMemory.add(this, value, source = "user")
-                        .firstOrNull { it.text == value }
-                        ?.let(::syncMemoryToNode)
-                    refresh()
-                }
-            }
+            .setPositiveButton("完成") { _, _ -> Unit }
             .setNeutralButton("隐私与数据") { _, _ -> showPrivacyCenter() }
             .setNegativeButton("关闭", null)
             .show()
@@ -5341,6 +5463,10 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
     private fun showMemoryActions(item: MemoryItem, refresh: () -> Unit) {
         val actions = buildList {
             if (item.status == "candidate") add("确认这条候选")
+            if (item.status == "candidate" && MoteMemory.load(this@MainActivity).any { it.status == "confirmed" && it.id != item.id }) {
+                add("合并到已有记忆")
+            }
+            if (item.possibleConflicts.isNotEmpty()) add("查看可能冲突（${item.possibleConflicts.size}）")
             add("编辑内容")
             add(if (item.excludedFromRecall) "恢复允许提起" else "不再提起")
             add("删除记忆")
@@ -5350,33 +5476,111 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             .setItems(actions.toTypedArray()) { _, selected ->
                 when (actions[selected]) {
                     "确认这条候选" -> {
-                        MoteMemory.confirmById(this, item.id)
-                        workspaceRequest("/api/memories/${android.net.Uri.encode(item.id)}/confirm", "POST", JSONObject())
-                        refresh()
+                        workspaceRequest(
+                            "/api/memories/${android.net.Uri.encode(item.id)}/confirm", "POST", JSONObject(),
+                            onSuccess = { MoteMemory.confirmById(this, item.id); refresh() },
+                            onError = { Toast.makeText(this, "节点未确认该候选：$it", Toast.LENGTH_LONG).show() }
+                        )
                     }
+                    "合并到已有记忆" -> showMemoryMergeTargets(item, refresh)
                     "编辑内容" -> editMemory(item, refresh)
                     "不再提起" -> {
-                        MoteMemory.setExcludedFromRecall(this, item.id, true)
-                        syncMemoryPatch(item.id, JSONObject().put("excludedFromRecall", true))
-                        refresh()
+                        setMemoryExcluded(item, true, refresh)
                     }
                     "恢复允许提起" -> {
-                        MoteMemory.setExcludedFromRecall(this, item.id, false)
-                        syncMemoryPatch(item.id, JSONObject().put("excludedFromRecall", false))
-                        refresh()
+                        setMemoryExcluded(item, false, refresh)
                     }
                     "删除记忆" -> {
-                        MoteMemory.removeById(this, item.id)
-                        workspaceRequest("/api/memories/${android.net.Uri.encode(item.id)}", "DELETE", JSONObject())
-                        refresh()
+                        if (!BridgeLink.isOnline) {
+                            Toast.makeText(this, "节点离线，未删除这条记忆", Toast.LENGTH_LONG).show()
+                        } else {
+                            workspaceRequest(
+                                "/api/memories/${android.net.Uri.encode(item.id)}", "DELETE", JSONObject(),
+                                onSuccess = { MoteMemory.removeById(this, item.id); refresh() },
+                                onError = { Toast.makeText(this, "删除失败，记忆仍保留：$it", Toast.LENGTH_LONG).show() }
+                            )
+                        }
                     }
+                    else -> if (actions[selected].startsWith("查看可能冲突")) {
+                        val details = item.possibleConflicts.joinToString("\n\n") { conflict ->
+                            "${conflict.text}\n来源：${conflict.source} · 相似度 ${(conflict.similarity * 100).toInt()}%"
+                        }
+                        AlertDialog.Builder(this)
+                            .setTitle("可能存在相反的偏好")
+                            .setMessage(details)
+                            .setPositiveButton("知道了", null)
+                            .show()
+                    } else Unit
                 }
             }
             .setNegativeButton("取消", null)
             .show()
     }
 
+    private fun showMemoryMergeTargets(candidate: MemoryItem, refresh: () -> Unit) {
+        val targets = MoteMemory.load(this).filter { it.status == "confirmed" && it.id != candidate.id }
+        if (targets.isEmpty()) {
+            Toast.makeText(this, "没有可合并的已确认记忆", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("选择合并目标")
+            .setItems(targets.map { it.text.take(64) }.toTypedArray()) { _, index ->
+                val target = targets[index]
+                val input = EditText(this).apply {
+                    setText("${target.text}；${candidate.text}")
+                    minLines = 2
+                    maxLines = 5
+                    selectAll()
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("检查合并后的记忆")
+                    .setMessage("请检查合并表述。只有点击保存后，节点才会移除候选。")
+                    .setView(input)
+                    .setPositiveButton("保存合并") { _, _ ->
+                        val text = input.text.toString().trim()
+                        if (text.isBlank()) {
+                            Toast.makeText(this, "合并内容不能为空", Toast.LENGTH_SHORT).show()
+                            return@setPositiveButton
+                        }
+                        workspaceRequest(
+                            "/api/memories/merge", "POST",
+                            JSONObject()
+                                .put("targetId", target.id)
+                                .put("candidateIds", JSONArray().put(candidate.id))
+                                .put("text", text),
+                            onSuccess = { response ->
+                                val entry = response.optJSONObject("entry")
+                                if (entry == null) {
+                                    Toast.makeText(this, "节点返回缺少合并结果；请刷新核对", Toast.LENGTH_LONG).show()
+                                } else {
+                                    val enriched = JSONObject(entry.toString()).put("possibleConflicts", response.optJSONArray("conflicts") ?: JSONArray())
+                                    val merged = MemoryProtocol.parseItems(JSONArray().put(enriched)).firstOrNull()
+                                    if (merged != null) {
+                                        val removedIds = response.optJSONArray("removedIds")
+                                        val removals = (0 until (removedIds?.length() ?: 0))
+                                            .mapNotNull { removedIds?.optString(it)?.takeIf(String::isNotBlank) }.toSet()
+                                        MoteMemory.upsertRemote(this, merged, removals)
+                                    }
+                                    refresh()
+                                    Toast.makeText(this, "记忆已由节点合并并保存", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onError = { error -> Toast.makeText(this, "节点合并失败，候选保持不变：$error", Toast.LENGTH_LONG).show() }
+                        )
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     private fun editMemory(item: MemoryItem, refresh: () -> Unit) {
+        if (!BridgeLink.isOnline) {
+            Toast.makeText(this, "节点离线，未修改记忆", Toast.LENGTH_LONG).show()
+            return
+        }
         val input = EditText(this).apply {
             setText(item.text)
             minLines = 2
@@ -5388,16 +5592,31 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             .setPositiveButton("保存") { _, _ ->
                 val text = input.text.toString().trim()
                 if (text.isNotBlank()) {
-                    MoteMemory.updateById(this, item.id, text)
-                    syncMemoryPatch(item.id, JSONObject().put("text", text))
-                    refresh()
+                    workspaceRequest(
+                        "/api/memories/${android.net.Uri.encode(item.id)}", "PATCH", JSONObject().put("text", text),
+                        onSuccess = { MoteMemory.updateById(this, item.id, text); refresh() },
+                        onError = { Toast.makeText(this, "修改未同步，原记忆保持不变：$it", Toast.LENGTH_LONG).show() }
+                    )
                 }
             }
             .setNegativeButton("取消", null)
             .show()
     }
 
-    private fun syncMemoryToNode(item: MemoryItem) {
+    private fun setMemoryExcluded(item: MemoryItem, excluded: Boolean, refresh: () -> Unit) {
+        if (!BridgeLink.isOnline) {
+            Toast.makeText(this, "节点离线，未更改记忆提取设置", Toast.LENGTH_LONG).show()
+            return
+        }
+        workspaceRequest(
+            "/api/memories/${android.net.Uri.encode(item.id)}", "PATCH",
+            JSONObject().put("excludedFromRecall", excluded),
+            onSuccess = { MoteMemory.setExcludedFromRecall(this, item.id, excluded); refresh() },
+            onError = { Toast.makeText(this, "节点未保存此更改：$it", Toast.LENGTH_LONG).show() }
+        )
+    }
+
+    private fun syncMemoryToNode(item: MemoryItem, onSynced: (MemoryItem?) -> Unit = {}) {
         workspaceRequest(
             "/api/memories",
             "POST",
@@ -5407,12 +5626,20 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 .put("source", item.source)
                 .put("status", item.status)
                 .put("explicit", item.source != "auto_extract")
-                .put("excludedFromRecall", item.excludedFromRecall)
+                .put("excludedFromRecall", item.excludedFromRecall),
+            onSuccess = { response ->
+                val entry = response.optJSONObject("entry")
+                if (entry == null) {
+                    onSynced(null)
+                } else {
+                    val enriched = JSONObject(entry.toString()).put("possibleConflicts", response.optJSONArray("conflicts") ?: JSONArray())
+                    val synced = MemoryProtocol.parseItems(JSONArray().put(enriched)).firstOrNull()
+                    if (synced != null) MoteMemory.upsertRemote(this, synced)
+                    onSynced(synced)
+                }
+            },
+            onError = { onSynced(null) }
         )
-    }
-
-    private fun syncMemoryPatch(id: String, patch: JSONObject) {
-        workspaceRequest("/api/memories/${android.net.Uri.encode(id)}", "PATCH", patch)
     }
 
     private fun showHandoffDialog() {

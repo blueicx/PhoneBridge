@@ -29,7 +29,7 @@ const { GoalBoardService, GoalBoardError } = require('./goal-board');
 const { createRealityCoordinator } = require('./reality-coordinator');
 const { ProactivePolicy } = require('./proactive-policy');
 const { PairingManager } = require('./pairing');
-const { prepareConversation } = require('./session-context');
+const { prepareConversation, summarizeConversationResume } = require('./session-context');
 const { buildCompanionSummary } = require('./companion-summary');
 const { loadTlsOptions, pairingTransport, pairingAvailabilityError, buildPairingQrPayload } = require('./tls-config');
 const { DEFAULT_THEME_ID, UI_THEMES, buildThemeCss } = require('./ui-themes');
@@ -1151,7 +1151,7 @@ taskRunner.setExecutor(async ({ task, signal, report, waitIfPaused }) => {
     ? []
     : Array.isArray(task.metadata?.memories) && task.metadata.memories.length
       ? task.metadata.memories
-      : memoryStore.selectForConversation({ remember: true, limit: 20 }).map(item => item.text);
+      : memoryStore.selectForConversation({ remember: true, query: String(task.metadata?.text || task.detail || ''), limit: 20 });
   const result = await chatWithModel(String(task.metadata?.text || task.detail || ''), configuredMemories, {
     model: session.model,
     providerId: session.providerId,
@@ -1361,7 +1361,7 @@ async function rawChatWithModel(text, memories = [], options = {}) {
         '你能够看到摄像头画面、听到麦克风、执行电脑任务，并感知手机电量和温度。'
       ]).join('\n');
   const memoryList = (Array.isArray(memories) ? memories : [])
-    .map(item => String(item || '').trim())
+    .map(item => String(item?.text || item || '').trim())
     .filter(Boolean)
     .slice(0, 20);
   const memoryBlock = memoryList.length
@@ -1380,9 +1380,14 @@ async function rawChatWithModel(text, memories = [], options = {}) {
     ? `\n手机与电脑共享的交接上下文：\n${handoffLines.join('\n')}`
     : '';
   const history = Array.isArray(options.history) ? options.history : chatHistory.slice(-16);
+  const conversation = history.slice(-16).map(item => ({ role: item.role, content: item.text || item.content || '' }));
+  const latest = conversation.at(-1);
+  if (!latest || latest.role !== 'user' || latest.content !== String(text || '')) {
+    conversation.push({ role: 'user', content: String(text || '') });
+  }
   const context = [
     { role: 'system', content: persona + memoryBlock + handoffBlock },
-    ...history.slice(-16).map(item => ({ role: item.role, content: item.text || item.content || '' })),
+    ...conversation,
   ];
   const endpoint = baseUrl + (wireApi === 'chat' ? '/chat/completions' : '/responses');
   const streamId = String(options.requestId || `chat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
@@ -1404,7 +1409,6 @@ async function rawChatWithModel(text, memories = [], options = {}) {
 
   let reply = '';
   let buffer = '';
-  let lastBroadcast = 0;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   while (true) {
@@ -1430,26 +1434,27 @@ async function rawChatWithModel(text, memories = [], options = {}) {
         reply += delta;
         options.onDelta?.(delta);
         streamChunkCount++;
-        const now = Date.now();
-        if (now - lastBroadcast > 90) {
-          lastBroadcast = now;
-          broadcast({ type:'chat_delta', id:streamId, requestId: streamId, source: options.source || 'chat', sessionId: options.sessionId || '', text:reply });
-        }
       } catch (_) {}
     }
   }
-  broadcast({ type:'chat_delta', id:streamId, requestId: streamId, source: options.source || 'chat', sessionId: options.sessionId || '', text:reply, terminal: true });
   reply = String(reply || '').trim();
   if (!reply) throw new Error('模型返回空响应');
   return { id: streamId, reply };
 }
 
 async function chatWithModel(text, memories = [], options = {}) {
+  const remember = options.remember !== false;
+  const selectedMemories = !remember
+    ? []
+    : Array.isArray(memories) && memories.length
+      ? memories
+      : memoryStore.selectForConversation({ remember: true, query: String(text || ''), limit: 20 });
   const context = prepareConversation({
     history: options.history || chatHistory.slice(-16),
-    memories: options.remember === false ? [] : memories,
+    memories: selectedMemories,
+    remember,
   });
-  memoryStore.markUsed(context.memories.map(value => memoryStore.list({ query: value, limit: 1 })[0]?.id).filter(Boolean));
+  memoryStore.markUsed(context.memoryUsage.map(item => item.id), 'conversation_context');
   const result = await aiProviderManager.chat({
     prompt: String(text || ''),
     messages: context.messages,
@@ -1457,7 +1462,8 @@ async function chatWithModel(text, memories = [], options = {}) {
     providerId: options.providerId || null,
     requestId: options.requestId || null,
     signal: options.signal || null,
-    options
+    onDelta: options.onDelta || null,
+    options: { ...options, history: context.messages, summary: context.summary, memoryUsage: context.memoryUsage }
   });
   diagnosticsCollector.recordProviderLatency(result.fallbackProvider || result.providerId, aiProviderManager.lastLatencyMs);
   if (result.degraded) diagnosticsCollector.recordDegradation();
@@ -1487,6 +1493,8 @@ async function handleChat(text, memories = [], options = {}) {
     if (remember && !chatHistory.some(item => item.requestId === historyRequestId && item.role === 'user')) {
       chatHistory.push({ requestId: historyRequestId, role: 'user', text: clean, time: nowTime() });
     }
+    let pendingDelta = '';
+    let lastDeltaBroadcastAt = 0;
     const result = await chatWithModel(clean, remember ? memories : [], {
       remember,
       history: remember ? chatHistory : chatHistory.slice(-16),
@@ -1495,9 +1503,25 @@ async function handleChat(text, memories = [], options = {}) {
       source: options.source || 'chat',
       providerId: options.providerId || null,
       signal: controller.signal,
+      onDelta: delta => {
+        pendingDelta += String(delta || '');
+        const currentTime = Date.now();
+        if (currentTime - lastDeltaBroadcastAt < 90) return;
+        lastDeltaBroadcastAt = currentTime;
+        const chunk = pendingDelta;
+        pendingDelta = '';
+        broadcast({
+          type: 'chat_delta', id: requestId, requestId,
+          source: options.source || 'chat', sessionId: options.sessionId || '', text: chunk
+        });
+      },
     });
     if (controller.signal.aborted) throw new Error('AI request cancelled');
     const reply = result.reply;
+    broadcast({
+      type: 'chat_delta', id: requestId, requestId,
+      source: options.source || 'chat', sessionId: options.sessionId || '', text: reply, terminal: true
+    });
     if (remember) {
       const assistantIndex = chatHistory.findIndex(item => item.requestId === historyRequestId && item.role === 'assistant');
       const entry = { requestId: historyRequestId, role: 'assistant', text: reply, time: nowTime() };
@@ -1529,6 +1553,7 @@ function buildSnapshotPayload() {
       selectedTask: selectedCodexTaskDetail,
     },
     chat: chatHistory.slice(-50),
+    chatResume: summarizeConversationResume(chatHistory),
     deviceHealth: deviceHealthStore.snapshot(),
     workspace: workspaceSnapshot(),
     motes: buildMoteProjection(),
@@ -1806,10 +1831,11 @@ button{transition:transform 140ms cubic-bezier(.23,1,.32,1),border-color 160ms e
 :root[data-page-hidden="true"] *{animation-play-state:paused!important}
 @media(hover:hover) and (pointer:fine){button:hover{border-color:var(--focus)}}
 body.keyboard-action .drawer-scrim,body.keyboard-action .command-drawer,body.keyboard-action button{transition:none!important}
+.stage-chat-resume{margin:0 0 9px;padding:8px 10px;border-left:2px solid var(--accent);border-radius:7px;background:var(--card);color:var(--muted);font-size:11px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 </style><div class="app-shell">
 <header class="app-top"><div class="brand"><div class="logo">Mote</div><div class="sub">PhoneBridge · 感官同伴</div></div><div class="header-actions"><div class="pill" id="status" aria-live="polite">连接中</div><button id="appearanceButton" class="quiet-button" aria-label="打开外观设置">外观</button><button id="openDrawer" class="primary" aria-haspopup="dialog" aria-controls="commandDrawer">指挥台</button><button onclick="logout()" class="quiet-button">退出</button></div></header>
 <main class="immersive-stage" id="moteStage" role="region" aria-labelledby="stageName"><div class="stage-horizon" aria-hidden="true"></div><div class="stage-radar" aria-hidden="true"></div><div class="stage-copy"><div class="stage-eyebrow">PHONEBRIDGE · COMPANION LINK</div><h1 id="stageName">星核</h1><p id="stageVoice">正在读取伙伴状态…</p><div class="stage-status" id="stageConnection" data-online="false"><span class="status-dot" aria-hidden="true"></span><span id="stageConnectionText">连接中</span></div><span class="stage-offline" id="stageOffline" role="status" aria-live="polite" hidden></span><span class="stage-feedback" id="stageFeedback" role="status" aria-live="polite" hidden></span></div><div class="mote-visual" id="moteVisual" role="button" tabindex="0" aria-label="触碰当前 Mote" aria-hidden="false"></div><div class="stage-quick-cards" id="stageQuickCards" aria-label="当前任务和提醒" aria-live="polite" hidden></div><div class="stage-chat-bubble" id="stageChatBubble" aria-live="polite" hidden><span class="stage-chat-state" id="stageChatState"></span><span class="stage-chat-reply" id="stageChatReply"></span><button id="stageChatExpand" type="button" class="quiet-button" hidden>查看完整对话</button></div><form class="stage-chat-dock" id="stageChatForm"><label class="sr-only" for="stageChatInput">和 Mote 聊聊</label><input id="stageChatInput" maxlength="2000" autocomplete="off" placeholder="和 Mote 聊聊…" aria-label="和 Mote 聊聊"><button class="primary" id="stageChatSend" type="submit" aria-label="发送消息">发送</button></form><div class="stage-actions"><button class="quiet-button" id="stageChatButton" type="button">对话记录</button><button id="stageAppearanceButton" class="quiet-button" type="button">外观与动效</button></div></main>
-<button class="drawer-scrim" id="drawerScrim" aria-label="关闭指挥台" hidden></button><aside class="command-drawer" id="commandDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true" inert><div class="drawer-bar"><div><h1 id="drawerTitle">指挥台</h1><p>任务、设备、探索与伙伴设置</p></div><button id="closeDrawer" class="drawer-close" aria-label="关闭指挥台">关闭</button></div><section class="workspace-card stage-chat-history" id="stageChatHistory" aria-labelledby="stageChatHistoryTitle"><h2 id="stageChatHistoryTitle">伙伴对话</h2><div id="stageChatHistoryList" role="log" aria-live="polite">还没有消息。</div></section><section class="appearance-settings" id="appearanceSettings" aria-labelledby="appearanceTitle"><h2 id="appearanceTitle">外观与动效</h2><label for="themeSelect">主题</label><select id="themeSelect" aria-label="选择主题">${WEB_THEME_OPTIONS}</select><label><input id="reduceMotionToggle" type="checkbox">减弱舞台动画</label><span class="sub">主题与动效偏好只保存在此浏览器；系统减弱动态效果设置始终生效。</span></section><div class="wrap">
+<button class="drawer-scrim" id="drawerScrim" aria-label="关闭指挥台" hidden></button><aside class="command-drawer" id="commandDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true" inert><div class="drawer-bar"><div><h1 id="drawerTitle">指挥台</h1><p>任务、设备、探索与伙伴设置</p></div><button id="closeDrawer" class="drawer-close" aria-label="关闭指挥台">关闭</button></div><section class="workspace-card stage-chat-history" id="stageChatHistory" aria-labelledby="stageChatHistoryTitle"><h2 id="stageChatHistoryTitle">伙伴对话</h2><p id="stageChatResume" class="stage-chat-resume" role="status" hidden></p><div id="stageChatHistoryList" role="log" aria-live="polite">还没有消息。</div></section><section class="appearance-settings" id="appearanceSettings" aria-labelledby="appearanceTitle"><h2 id="appearanceTitle">外观与动效</h2><label for="themeSelect">主题</label><select id="themeSelect" aria-label="选择主题">${WEB_THEME_OPTIONS}</select><label><input id="reduceMotionToggle" type="checkbox">减弱舞台动画</label><span class="sub">主题与动效偏好只保存在此浏览器；系统减弱动态效果设置始终生效。</span></section><div class="wrap">
 <div class="grid"><div class="panel"><h2>实时感官</h2><img id="frame"><div class="metrics" style="margin-top:12px"><div class="metric"><b id="cpu">-</b><span>手机 CPU</span></div><div class="metric"><b id="mem">-</b><span>内存</span></div><div class="metric"><b id="bat">-</b><span>电量</span></div><div class="metric"><b id="temp">-</b><span>温度</span></div></div><div class="row"><button class="primary" onclick="device('camera_on')">开眼</button><button onclick="device('camera_front')">前眼</button><button onclick="device('camera_back')">后眼</button><button onclick="device('listen_on')">监听</button><button onclick="say()">说话</button></div><div class="row"><input id="speech" placeholder="输入要在手机上播放的话" style="flex:1"></div><div class=row><select id=idleTimeout title="空闲断流时间"><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5 selected>5 分钟</option><option value=10>10 分钟</option><option value=30>30 分钟</option></select><button onclick=setIdleTimeout()>空闲断流</button></div><div class=row><select id=screenOffTimeout title="息屏自动退出时间"><option value=0>不自动退出</option><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5>5 分钟</option><option value=10 selected>10 分钟</option><option value=30>30 分钟</option><option value=60>60 分钟</option></select><button onclick=setScreenOffTimeout()>息屏退出</button></div></div>
 <div class="panel"><h2>指挥台</h2><div class="tabs"><button class="active" data-tab="tasks">任务</button><button data-tab="log">日志</button><button data-tab="sensors">传感器</button><button data-tab="frame">画面</button></div><div id="tasks"></div><div id="log" hidden></div><div id="sensors" hidden></div><div id="framebox" hidden><img id="frame2"></div><div class="row"><input id="cmd" placeholder="help / ping 8.8.8.8 / screenshot / ps / say 你好" style="flex:1"><button class="primary" onclick="sendCmd()">执行</button></div><textarea id="detail" readonly placeholder="选中任务的输出会出现在这里"></textarea></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div>
@@ -1967,6 +1993,11 @@ function renderStageChat(state=stageChat.state){
   const input=document.getElementById('stageChatInput');
   const expand=document.getElementById('stageChatExpand');
   const history=document.getElementById('stageChatHistoryList');
+  const resumeNode=document.getElementById('stageChatResume');
+  const resume=state.resume;
+  const resumeParts=[resume?.lastUserMessage?'你：'+resume.lastUserMessage:'',resume?.lastAssistantMessage?'Mote：'+resume.lastAssistantMessage:''].filter(Boolean);
+  resumeNode.textContent=resumeParts.length?'上次聊到：'+resumeParts.join(' · '):'';
+  resumeNode.hidden=resumeParts.length===0;
   const messages=Array.isArray(state.messages)?state.messages:[];
   const failedMessages=Array.isArray(state.failedMessages)?state.failedMessages:[];
   let retry=document.getElementById('stageChatRetry');
@@ -2681,7 +2712,7 @@ function connectWebPush(){
       if(payload.companionSummary)pushCache.set('/api/companion/summary',{summary:payload.companionSummary});
       if(payload.motes){pushCache.set('/api/motes',payload.motes);pushCache.set('/api/motes/behavior',{behavior:payload.motes.behavior})}
       renderStageCards(payload.workspace||{});
-      if(Array.isArray(payload.chat))stageChat.hydrate(payload.chat);
+      if(Array.isArray(payload.chat))stageChat.hydrate(payload.chat,payload.chatResume);
       refreshCompanionSummary().then(refreshMoteStage);
       if(webRefresh.state.drawerOpen){refreshWorkspace();refresh()}
     }else if(['chat_delta','chat','chat_error','chat_cancelled'].includes(payload.type)){
@@ -3140,7 +3171,13 @@ const handleHttpRequest = async (req, res) => {
       return sendJson(res, cancelled ? 200 : 404, { ok: cancelled, cancelled });
     }
     if (parsedUrl.pathname === '/api/memories' && req.method === 'GET') {
-      return sendJson(res, 200, { ok: true, ...memoryStore.snapshot(), memories: memoryStore.list({ query: parsedUrl.searchParams.get('query') || '', limit: parsedUrl.searchParams.get('limit') || 50, sensitivity: parsedUrl.searchParams.get('sensitivity') || null, status: parsedUrl.searchParams.get('status') || null }) });
+      const memories = memoryStore.list({ query: parsedUrl.searchParams.get('query') || '', limit: parsedUrl.searchParams.get('limit') || 50, sensitivity: parsedUrl.searchParams.get('sensitivity') || null, status: parsedUrl.searchParams.get('status') || null })
+        .map(memory => ({
+          ...memory,
+          possibleConflicts: memoryStore.findPotentialConflicts(memory.text, { excludeId: memory.id })
+            .map(item => ({ id: item.id, text: item.text, source: item.source, similarity: item.similarity }))
+        }));
+      return sendJson(res, 200, { ok: true, ...memoryStore.snapshot(), memories });
     }
     if (parsedUrl.pathname === '/api/memories' && req.method === 'POST') {
       try {
@@ -3151,6 +3188,23 @@ const handleHttpRequest = async (req, res) => {
     }
     if (parsedUrl.pathname === '/api/memories/export' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, memories: memoryStore.export({ includeSensitive: parsedUrl.searchParams.get('includeSensitive') === 'true' }) });
+    }
+    if (parsedUrl.pathname === '/api/memories/confirm-batch' && req.method === 'POST') {
+      try {
+        const payload = await readJson(req);
+        if (!Array.isArray(payload.ids) || payload.ids.length > 100) throw new Error('memory ids must be an array of at most 100 entries');
+        const result = memoryStore.confirmMany(payload.ids);
+        for (const memory of result.confirmed) broadcast({ type: 'workspace.memory', memory, revision: result.revision });
+        return sendJson(res, 200, { ok: true, ...result });
+      } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
+    }
+    if (parsedUrl.pathname === '/api/memories/merge' && req.method === 'POST') {
+      try {
+        const result = memoryStore.mergeCandidates(await readJson(req));
+        broadcast({ type: 'workspace.memory', memory: result.entry, revision: result.revision });
+        for (const id of result.removedIds) broadcast({ type: 'workspace.memory', id, operation: 'remove', revision: result.revision });
+        return sendJson(res, 200, { ok: true, ...result });
+      } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
     }
     const memoryMatch = parsedUrl.pathname.match(/^\/api\/memories\/([^/]+)$/);
     const memoryConfirmMatch = parsedUrl.pathname.match(/^\/api\/memories\/([^/]+)\/confirm$/);
@@ -3505,7 +3559,8 @@ const handleHttpRequest = async (req, res) => {
         return sendJson(res, 202, { ok: true, message, task, requestId: task.metadata.requestId });
       }
       if (suffix === 'messages' && req.method === 'GET') {
-        return sendJson(res, 200, { ok: true, messages: workspaceStore.getSession(sessionId).messages });
+        const messages = workspaceStore.getSession(sessionId).messages;
+        return sendJson(res, 200, { ok: true, messages, resume: summarizeConversationResume(messages) });
       }
       if (suffix === 'authorize' && req.method === 'POST') {
         const payload = await readJson(req);
@@ -3533,7 +3588,10 @@ const handleHttpRequest = async (req, res) => {
           return sendJson(res, 200, { ok: true, session });
         } catch (error) { return sendJson(res, 400, { ok: false, error: error.message }); }
       }
-      if (!suffix && req.method === 'GET') return sendJson(res, 200, { ok: true, session: workspaceStore.getSession(sessionId) });
+      if (!suffix && req.method === 'GET') {
+        const session = workspaceStore.getSession(sessionId);
+        return sendJson(res, 200, { ok: true, session, resume: summarizeConversationResume(session.messages) });
+      }
       if (!suffix && req.method === 'PATCH') return sendJson(res, 200, { ok: true, session: workspaceStore.updateSession(sessionId, await readJson(req)) });
     }
     if (parsedUrl.pathname === '/api/tools' && req.method === 'GET') {

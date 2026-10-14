@@ -115,6 +115,23 @@ test('history hydration deduplicates in-flight messages by request id and repeat
   assert.equal(chat.state.messages.filter(message => message.text === '旧历史').length, 1);
 });
 
+test('session resume survives an empty history snapshot and updates when history arrives', () => {
+  const { chat } = createChatHarness();
+  const resume = {
+    lastUserMessage: '上次我提到正在准备一个演示。',
+    lastAssistantMessage: '我们最后决定先完成最小可用版本。',
+    updatedAt: '2026-10-14T08:00:00.000Z',
+  };
+
+  chat.hydrate([], resume);
+  assert.deepEqual(chat.state.resume, resume);
+  assert.equal(chat.state.messages.length, 0);
+
+  chat.hydrate([{ role: 'user', text: '正在准备一个演示。' }], null);
+  assert.deepEqual(chat.state.resume, resume);
+  assert.equal(chat.state.messages.length, 1);
+});
+
 test('a completed server turn clears the retry marker after a reconnect snapshot', () => {
   const { chat, sent } = createChatHarness();
   chat.send('断线期间已完成');

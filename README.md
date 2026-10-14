@@ -67,7 +67,18 @@
 - Web 舞台最多显示两张任务、审批、提醒或日常活动卡；卡片从推送摘要刷新，提供开始/暂停/继续/审批/打开详情。任务审批仍需显式确认，舞台仅呈现安全摘要、不暴露工具参数。
 - Android 沉浸舞台显示最多两张任务、审批、提醒、结果或活动卡；操作复用既有任务和审批 API。日常活动摘要只包含标题、状态、用时和更新时间，不读取反思文本；启动先从 Room 镜像恢复，在线后再同步。
 - 验证：Node **263/263**；无头 Chromium 的聊天重试、卡片/活动推送、可见性/抽屉调度、断线恢复和窄屏检查通过；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 成功；性能预算、密钥扫描和 `git diff --check` 通过。
-- 远端 Actions 与实机尚未验收；本批未连接 ADB 或操作 Xperia。批次 2 提交后需检查同一 SHA 的全部 GitHub Actions job，再按可用设备记录沉浸首屏、PTT、卡片触控和断线恢复。
+- 批次 2 提交 `71f55e517b179e2ae878facbbafb02546a0694c7` 的 GitHub Actions [run 38531370595](https://github.com/blueicx/PhoneBridge/actions/runs/38531370595) 全部通过（Node、Android、API 34 emulator、artifact verify），并上传 Debug APK 与校验清单 artifact。实机尚未验收，本批未连接 ADB 或操作 Xperia。
+
+实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+
+## 2026-10-14 大版本深化·批次 3：连续对话与记忆
+
+- OpenAI-compatible 与 Gemini-compatible provider 现在读取真实 SSE 增量，跨网络块正确处理 UTF-8；取消会终止上游请求并释放响应流。实时 delta 只发送新增片段，避免客户端拼接出重复前缀；超时、失败和部分输出不会切换到另一联网 provider。
+- 会话上下文按预算压缩并提供“上次聊到”摘要；关闭记忆的单轮请求不检索长期记忆、不创建会话摘要，也不写入记忆。记忆增加来源、使用原因、冲突提示、批量确认和用户编辑合并。
+- Android 记忆列表显示来源、最近使用原因和待同步状态；新建记忆离线时保留为待同步，本地更新/删除在节点不可达时明确提示重试，不再乐观改本地状态造成“已成功”错觉。
+- 复用现有聆听/识别/生成/播放语音状态机，不再增加平行状态模型。Session resume 在 Web 抽屉与 Android 会话空间展示。
+- 验证：Node **276/276**；Android JVM **189/189（49 suites）**、Lint、Debug 构建通过；真实本地服务与 Chromium 浏览器检查通过；模拟 SSE 集成覆盖增量顺序与 remember=false 隐私隔离。性能预算 `elapsedMs=1.27`，完整快照 **1694 bytes**、轻量摘要 **48 bytes**、缓存命中 **10000**、突发广播 **1**；Debug APK 门禁、密钥扫描、工作流契约与 `git diff --check` 通过。
+- 本批的服务端 SSE 端到端使用本地模拟 provider；没有真实 provider 凭据或 Xperia 实测证据。远端 Actions 在批次提交推送后确认，实机聊天/PTT、打断与恢复仍待设备验收。
 
 实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 

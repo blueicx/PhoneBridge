@@ -33,7 +33,12 @@ object MoteMemory {
                             source = item.optString("source", "user"),
                             status = item.optString("status", "confirmed").takeIf { it in setOf("candidate", "confirmed") } ?: "confirmed",
                             excludedFromRecall = item.optBoolean("excludedFromRecall", false),
-                            updatedAtMs = item.optLong("updatedAtMs", created)
+                            updatedAtMs = item.optLong("updatedAtMs", created),
+                            lastUsedReason = item.optString("lastUsedReason", ""),
+                            provenance = item.optJSONArray("provenance").toStringList().ifEmpty { listOf(item.optString("source", "user")) },
+                            mergedFrom = item.optJSONArray("mergedFrom").toStringList(),
+                            possibleConflicts = item.optJSONArray("possibleConflicts").toMemoryConflicts(),
+                            pendingSync = item.optBoolean("pendingSync", false)
                         )
                     )
                 }
@@ -57,6 +62,20 @@ object MoteMemory {
                     .put("status", item.status)
                     .put("excludedFromRecall", item.excludedFromRecall)
                     .put("updatedAtMs", item.updatedAtMs)
+                    .put("lastUsedReason", item.lastUsedReason)
+                    .put("provenance", JSONArray(item.provenance))
+                    .put("mergedFrom", JSONArray(item.mergedFrom))
+                    .put("possibleConflicts", JSONArray().apply {
+                        item.possibleConflicts.forEach { conflict ->
+                            put(JSONObject()
+                                .put("id", conflict.id)
+                                .put("text", conflict.text)
+                                .put("source", conflict.source)
+                                .put("similarity", conflict.similarity)
+                                .put("reason", conflict.reason))
+                        }
+                    })
+                    .put("pendingSync", item.pendingSync)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -82,7 +101,8 @@ object MoteMemory {
                     importance = detectImportance(clean),
                     source = source,
                     status = if (status == "candidate") "candidate" else "confirmed",
-                    updatedAtMs = now
+                    updatedAtMs = now,
+                    pendingSync = true
                 )
             )
         } else {
@@ -96,7 +116,8 @@ object MoteMemory {
                     importance = detectImportance(clean),
                     source = source,
                     status = if (status == "candidate") "candidate" else "confirmed",
-                    updatedAtMs = now
+                    updatedAtMs = now,
+                    pendingSync = true
                 )
             )
         }
@@ -108,7 +129,23 @@ object MoteMemory {
     fun addCandidate(context: Context, text: String, source: String = "auto_extract"): List<MemoryItem> =
         add(context, text, source = source, status = "candidate")
 
+    fun mergeRemote(context: Context, remote: List<MemoryItem>): List<MemoryItem> {
+        val merged = MemoryProtocol.mergeRemote(remote, load(context))
+        save(context, merged)
+        return merged.toMutableList()
+    }
+
+    fun upsertRemote(context: Context, item: MemoryItem, removeIds: Set<String> = emptySet()): List<MemoryItem> {
+        val existing = load(context).filterNot { it.id in removeIds }
+        val merged = MemoryProtocol.mergeRemote(listOf(item), existing)
+        save(context, merged)
+        return merged.toMutableList()
+    }
+
     fun confirmById(context: Context, id: String): List<MemoryItem> = updateById(context, id) { it.copy(status = "confirmed") }
+
+    fun markSyncedById(context: Context, id: String): List<MemoryItem> =
+        updateById(context, id) { it.copy(pendingSync = false) }
 
     fun setExcludedFromRecall(context: Context, id: String, excluded: Boolean): List<MemoryItem> =
         updateById(context, id) { it.copy(excludedFromRecall = excluded) }
@@ -159,13 +196,13 @@ object MoteMemory {
         }.sortedByDescending { it.second }.take(limit).map { it.first }
     }
 
-    fun touch(context: Context, items: List<MemoryItem>) {
+    fun touch(context: Context, items: List<MemoryItem>, reason: String = "conversation_recall") {
         if (items.isEmpty()) return
         val all = load(context)
         val now = System.currentTimeMillis()
         val touchedIds = items.map { it.id }.toSet()
         val updated = all.map {
-            if (it.id in touchedIds) it.copy(lastUsedAtMs = now, useCount = it.useCount + 1) else it
+            if (it.id in touchedIds) it.copy(lastUsedAtMs = now, useCount = it.useCount + 1, lastUsedReason = reason) else it
         }
         save(context, updated)
     }
@@ -197,5 +234,33 @@ object MoteMemory {
     fun clear(context: Context): List<MemoryItem> {
         save(context, emptyList())
         return mutableListOf()
+    }
+
+    private fun org.json.JSONArray?.toStringList(): List<String> {
+        if (this == null) return emptyList()
+        return buildList {
+            for (index in 0 until length()) {
+                val value = optString(index).trim()
+                if (value.isNotEmpty()) add(value)
+            }
+        }.distinct().take(100)
+    }
+
+    private fun org.json.JSONArray?.toMemoryConflicts(): List<MemoryConflict> {
+        if (this == null) return emptyList()
+        return buildList {
+            for (index in 0 until length()) {
+                val value = optJSONObject(index) ?: continue
+                val text = value.optString("text").trim()
+                if (text.isNotEmpty()) add(
+                    MemoryConflict(
+                        id = value.optString("id"), text = text,
+                        source = value.optString("source", "user"),
+                        similarity = value.optDouble("similarity", 0.0).toFloat().coerceIn(0f, 1f),
+                        reason = value.optString("reason", "")
+                    )
+                )
+            }
+        }.take(20)
     }
 }

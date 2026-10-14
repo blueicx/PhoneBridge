@@ -4,10 +4,13 @@
 
 - 当前实施位于 `F:\CodexApps\PhoneBridge-worktrees\integrated-enhancement` 的 `feature/integrated-enhancement`，本轮大版本深化按六批推进，不修改 `main`。本节优先于下方旧日期交接记录。
 - 批次 1 已提交 `cfe0f97` 并推送；GitHub Actions run [38350063660](https://github.com/blueicx/PhoneBridge/actions/runs/38350063660) 所有 job 成功。实现包含 Web 可见性/请求调度、缓存舞台优先、Android 后台降频和并行 CI。
-- 批次 2 已完成本地实现：Web 舞台直接聊天、流式气泡、独立停止/重试、最多两张任务/审批/日常活动卡；失败消息保留、重试沿用服务端 turn ID、断线恢复按请求 ID 合并历史，迟到的旧回复不覆盖新会话。Android 舞台显示任务/审批/活动卡，活动状态可从 Room 镜像先行恢复。
-- 批次 2 本地证据：Node **263/263**；真实服务进程 + Chromium 浏览器测试通过（聊天/重试、卡片实时更新、WS 优先、抽屉与页面隐藏、窄屏）；Android `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 成功；性能预算输出 `elapsedMs=1.108`、summary **48 bytes**、缓存命中 **10000**、突发广播 **1**；敏感扫描、CI 工作流契约和 `git diff --check` 通过。批次 2 的提交、推送和最新 SHA Actions 尚待完成。
+- 批次 2 已提交 `71f55e5` 并推送；Web 舞台直接聊天、流式气泡、停止/重试、任务/审批/活动卡及 Android Room 先行恢复均已落地。
+- 批次 2 提交 `71f55e5` 已推送；GitHub Actions run [38531370595](https://github.com/blueicx/PhoneBridge/actions/runs/38531370595) 在同一 SHA 上 Node、Android、API 34 emulator 和 artifact verify 四个 job 全部成功。已上传 artifact `phonebridge-debug-71f55e517b179e2ae878facbbafb02546a0694c7`（Debug APK + 校验清单）。
+- 批次 3 本地实现完成、提交前复核中：OpenAI/Gemini-compatible 使用真实 SSE 增量读取，支持上游取消、UTF-8 分块和预算记账；会话摘要/恢复与“本轮不记忆”隔离；记忆来源、冲突候选、批量确认/合并；Android 展示记忆来源与待同步状态，离线编辑/删除不再假报成功。语音复用已有统一状态机。
+- 批次 3 本地证据：Node **276/276**；Android JVM **189/189（49 suites）**、Lint 与 Debug APK 构建成功；真实本地节点 + Chromium 运行时检查通过；性能预算 `elapsedMs=1.27`、完整快照 **1694 bytes**、摘要 **48 bytes**、缓存命中 **10000**、突发广播 **1**；APK 门禁、敏感扫描、CI 工作流契约和差异检查通过。流式端到端使用本地模拟 SSE provider，不代表真实在线 provider 或手机体验已验证。
+- 批次 3 GitHub Actions 尚待提交推送后验收；第三批服务端集成测试改为动态端口，避免与并行 API 测试争用固定端口。
 - 实机边界：本轮未连接 ADB、未安装/启动/操作手机。Xperia 首屏、PTT、卡片触控、冷启动、帧耗时和两小时稳定性仍待实机验收，不以浏览器/构建证据代替。正式 Release 签名仍遵守独立加密恢复副本门禁。
-- 后续按批次 3→6 继续，逐批更新 README/HANDOFF、验证、提交并推送；最终总验收仍覆盖 Node、Android JVM/Lint/Debug、Room migration、协议/敏感扫描、浏览器、性能和实际可用设备证据。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+- 下一步：提交并推送批次 3、确认该 SHA 的 Actions；之后继续批次 4→6。最终总验收仍覆盖 Node、Android JVM/Lint/Debug、Room migration、协议/敏感扫描、浏览器、性能和实际可用设备证据。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 
 更新时间：2026-10-14（本节为当前状态；下面 2026-10-03 及更早内容为历史交接）
 

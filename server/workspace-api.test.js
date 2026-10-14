@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -10,6 +11,17 @@ const { WebSocket } = require('ws');
 const PORT = 19641;
 const TOKEN = 'workspace-api-test-token-1234567890';
 const BASE = `http://127.0.0.1:${PORT}`;
+
+async function getAvailablePort() {
+  const probe = http.createServer();
+  await new Promise((resolve, reject) => {
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', resolve);
+  });
+  const { port } = probe.address();
+  await new Promise((resolve, reject) => probe.close(error => error ? reject(error) : resolve()));
+  return port;
+}
 
 async function request(path, options = {}) {
   const headers = { 'x-phonebridge-token': TOKEN, ...(options.headers || {}) };
@@ -184,6 +196,42 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     const confirmedMemory = await request('/api/memories/api-memory-candidate/confirm', { method: 'POST' });
     assert.equal(confirmedMemory.response.status, 200);
     assert.equal(confirmedMemory.body.entry.status, 'confirmed');
+    const positivePreference = await request('/api/memories', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'memory-positive-preference', text: '我喜欢安静的夜间提醒', source: 'user', explicit: true }),
+    });
+    assert.equal(positivePreference.response.status, 201);
+    const conflictCandidate = await request('/api/memories', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'memory-negative-candidate', text: '我不喜欢安静的夜间提醒', source: 'auto_extract', status: 'candidate' }),
+    });
+    assert.deepEqual(conflictCandidate.body.conflicts.map(item => item.id), ['memory-positive-preference']);
+    const batchConfirmed = await request('/api/memories/confirm-batch', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['memory-negative-candidate', 'api-memory-candidate', 'unknown-memory'] }),
+    });
+    assert.equal(batchConfirmed.response.status, 200);
+    assert.deepEqual(batchConfirmed.body.confirmed.map(item => item.id), ['memory-negative-candidate']);
+    assert.equal(batchConfirmed.body.revision >= 1, true);
+
+    await request('/api/memories', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'memory-merge-target', text: '晚上提醒希望柔和', source: 'auto_extract', status: 'candidate' }),
+    });
+    await request('/api/memories', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'memory-merge-source', text: '夜间通知亮度偏低', source: 'conversation_extract', status: 'candidate' }),
+    });
+    const mergedMemories = await request('/api/memories/merge', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ targetId: 'memory-merge-target', candidateIds: ['memory-merge-source'], text: '用户希望夜间提醒保持柔和低亮度' }),
+    });
+    assert.equal(mergedMemories.response.status, 200);
+    assert.deepEqual(mergedMemories.body.entry.provenance, ['auto_extract', 'conversation_extract']);
+    assert.deepEqual(mergedMemories.body.removedIds, ['memory-merge-source']);
+    const candidateListing = await request('/api/memories?status=candidate');
+    assert.equal(candidateListing.body.memories.some(item => item.id === 'memory-merge-target'), true);
+    assert.equal(candidateListing.body.memories.find(item => item.id === 'memory-merge-target').provenance.length, 2);
     const excludedMemory = await request('/api/memories/api-memory-candidate', {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ excludedFromRecall: true }),
@@ -418,6 +466,10 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.equal(message.body.task.source, 'conversation');
     assert.equal(message.body.task.metadata.sessionId, sessionId);
     assert.equal(message.body.task.metadata.messageId, message.body.message.id);
+    const resumedMessages = await request(`/api/workspace/sessions/${sessionId}/messages`);
+    assert.equal(resumedMessages.body.resume.lastUserMessage, '只保存，不调用模型');
+    const resumedSession = await request(`/api/workspace/sessions/${sessionId}`);
+    assert.equal(resumedSession.body.resume.lastUserMessage, '只保存，不调用模型');
 
     const tasks = await request('/api/tasks');
     assert.ok(tasks.body.tasks.some(task => task.id === message.body.task.id));
@@ -585,6 +637,136 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     if (child.exitCode === null) {
       await new Promise(resolve => child.once('exit', resolve));
     }
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('configured provider streams live chat deltas and remember=false excludes memory and summary context', { timeout: 25_000 }, async () => {
+  const chatPort = await getAvailablePort();
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phonebridge-stream-test-'));
+  const providerBodies = [];
+  const upstream = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      providerBodies.push(JSON.parse(body));
+      res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+      res.write('data: {"choices":[{"delta":{"content":"真实"}}]}\n\n');
+      setTimeout(() => {
+        if (res.destroyed) return;
+        res.write('data: {"choices":[{"delta":{"content":"流式"}}]}\n\n');
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }, 130);
+    });
+  });
+  await new Promise((resolve, reject) => {
+    upstream.once('error', reject);
+    upstream.listen(0, '127.0.0.1', resolve);
+  });
+  const providerPort = upstream.address().port;
+  const child = spawn(process.execPath, ['index.js'], {
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      PHONEBRIDGE_PORT: String(chatPort),
+      PHONEBRIDGE_TOKEN: TOKEN,
+      PHONEBRIDGE_RUNTIME_DIR: runtimeDir,
+      PHONEBRIDGE_LOCK_FILE: path.join(runtimeDir, 'node.lock')
+    },
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  const chatRequest = async (path, options = {}) => {
+    const response = await fetch(`http://127.0.0.1:${chatPort}${path}`, {
+      ...options,
+      headers: { 'x-phonebridge-token': TOKEN, ...(options.headers || {}) }
+    });
+    return { response, body: await response.json() };
+  };
+  try {
+    const started = Date.now();
+    let serverReady = false;
+    while (Date.now() - started < 12_000) {
+      if (child.exitCode !== null) throw new Error(`stream test server exited with ${child.exitCode}`);
+      try {
+        if ((await chatRequest('/api/ai/settings')).response.ok) {
+          serverReady = true;
+          break;
+        }
+      } catch (_) {}
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.equal(serverReady, true, 'stream test server should listen on its dynamically allocated port');
+    const configured = await chatRequest('/api/ai/settings', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        activeProviderId: 'openai',
+        providers: { openai: { endpoint: `http://127.0.0.1:${providerPort}/v1`, apiKey: 'local-test-key-12345', model: 'sse-test' } }
+      })
+    });
+    assert.equal(configured.response.status, 200);
+    await chatRequest('/api/memories', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'stream-memory', text: '我喜欢安静的夜间提醒', source: 'user-confirmed', explicit: true })
+    });
+
+    const socket = new WebSocket(`ws://127.0.0.1:${chatPort}?token=${encodeURIComponent(TOKEN)}`);
+    await new Promise((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('stream socket snapshot timed out')), 5000);
+      socket.once('message', data => {
+        clearTimeout(timer);
+        try {
+          assert.equal(JSON.parse(data.toString()).type, 'snapshot');
+          resolve();
+        } catch (error) { reject(error); }
+      });
+    });
+
+    const runChat = async (requestId, remember) => new Promise((resolve, reject) => {
+      const events = [];
+      const timer = setTimeout(() => {
+        socket.off('message', onMessage);
+        reject(new Error(`stream chat timed out: ${requestId}`));
+      }, 8000);
+      const onMessage = data => {
+        const message = JSON.parse(data.toString());
+        if (message.requestId !== requestId) return;
+        events.push(message);
+        if (message.type !== 'chat') return;
+        clearTimeout(timer);
+        socket.off('message', onMessage);
+        resolve(events);
+      };
+      socket.on('message', onMessage);
+      socket.send(JSON.stringify({
+        type: 'chat', requestId, text: '我喜欢安静的夜间提醒', remember, source: 'stream-integration-test'
+      }));
+    });
+
+    const privateTurn = await runChat('stream-private-turn', false);
+    const privateDeltas = privateTurn.filter(item => item.type === 'chat_delta');
+    assert.equal(privateDeltas.length >= 2, true);
+    assert.equal(privateDeltas.filter(item => !item.terminal).map(item => item.text).join(''), '真实流式');
+    assert.equal(privateDeltas.at(-1).terminal, true);
+    assert.equal(privateDeltas.at(-1).text, '真实流式');
+    assert.equal(providerBodies[0].messages.some(item => item.content.includes('安静的夜间提醒') && item.role === 'system'), false);
+    assert.equal(providerBodies[0].messages.some(item => item.content === '我喜欢安静的夜间提醒' && item.role === 'user'), true);
+    assert.equal(providerBodies[0].messages.some(item => item.content.includes('早期会话摘要')), false);
+
+    await runChat('stream-memory-turn', true);
+    assert.equal(providerBodies[1].messages.some(item => item.role === 'system' && item.content.includes('用户确认的长期记忆')), true);
+    const usedMemory = await chatRequest('/api/memories?query=安静');
+    assert.equal(usedMemory.body.memories.find(item => item.id === 'stream-memory').lastUsedReason, 'conversation_context');
+    socket.close();
+  } finally {
+    child.kill();
+    if (child.exitCode === null) await new Promise(resolve => child.once('exit', resolve));
+    await new Promise(resolve => upstream.close(resolve));
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
 });

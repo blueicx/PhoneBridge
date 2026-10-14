@@ -158,10 +158,10 @@ test('OpenAI-compatible provider sends the selected model and returns its respon
     },
     fetchImpl: async (url, init) => {
       request = { url, init };
-      return {
-        ok: true,
-        json: async () => ({ choices: [{ message: { content: '来自兼容 provider' } }] })
-      };
+      return createSseResponse([
+        'data: {"choices":[{"delta":{"content":"来自兼容 provider"}}]}\n\n',
+        'data: [DONE]\n\n'
+      ]);
     }
   });
 
@@ -265,4 +265,135 @@ test('stream failures fall back only to local rules and keep yielding bounded ch
   assert.equal(deltas.join(''), '本地继续陪你。');
   assert.equal(deltas.every(delta => delta.length <= 24), true);
   assert.equal(manager.degradationCount, 1);
+});
+
+function createSseResponse(chunks, { onCancel = () => {} } = {}) {
+  const encoder = new TextEncoder();
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: name => name.toLowerCase() === 'content-type' ? 'text/event-stream' : null },
+    body: new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk instanceof Uint8Array ? chunk : encoder.encode(chunk));
+        controller.close();
+      },
+      cancel(reason) { onCancel(reason); }
+    })
+  };
+}
+
+test('OpenAI-compatible adapter reads actual SSE deltas across UTF-8 chunk boundaries', async () => {
+  let request;
+  const first = 'data: {"choices":[{"delta":{"content":"你"}}]}\n\n';
+  const second = 'data: {"choices":[{"delta":{"content":"好"}}]}\n\ndata: [DONE]\n\n';
+  const bytes = new TextEncoder().encode(first + second);
+  const splitAt = new TextEncoder().encode(first).length + 29;
+  const chunks = [bytes.slice(0, splitAt), bytes.slice(splitAt)];
+  const manager = new AiProviderManager({
+    activeProviderId: 'openai',
+    configs: { openai: { endpoint: 'https://provider.test/v1', apiKey: fakeOpenAiKey, model: 'unit-stream' } },
+    fetchImpl: async (url, init) => {
+      request = { url, init };
+      return createSseResponse(chunks);
+    }
+  });
+
+  const deltas = [];
+  for await (const delta of manager.stream({ requestId: 'openai-sse', prompt: '你好' })) deltas.push(delta);
+
+  assert.equal(deltas.join(''), '你好');
+  assert.equal(request.url, 'https://provider.test/v1/chat/completions');
+  assert.equal(JSON.parse(request.init.body).stream, true);
+  assert.equal(JSON.parse(request.init.body).model, 'unit-stream');
+});
+
+test('Gemini-compatible adapter streams SSE and maps assistant history to model content', async () => {
+  let request;
+  const manager = new AiProviderManager({
+    activeProviderId: 'gemini',
+    configs: { gemini: { endpoint: 'https://provider.test/v1beta', apiKey: fakeGeminiKey, model: 'unit-gemini' } },
+    fetchImpl: async (url, init) => {
+      request = { url, init };
+      return createSseResponse([
+        'data: {"candidates":[{"content":{"parts":[{"text":"续上"}]}}]}\n\n',
+        'data: [DONE]\n\n'
+      ]);
+    }
+  });
+
+  const deltas = [];
+  for await (const delta of manager.stream({
+    requestId: 'gemini-sse',
+    prompt: '当前问题',
+    messages: [
+      { role: 'system', text: '保持温暖' },
+      { role: 'user', text: '上一句' },
+      { role: 'assistant', text: '上一答' },
+      { role: 'user', text: '当前问题' }
+    ]
+  })) deltas.push(delta);
+
+  const body = JSON.parse(request.init.body);
+  assert.equal(deltas.join(''), '续上');
+  assert.match(request.url, /:streamGenerateContent\?alt=sse&key=/);
+  assert.deepEqual(body.systemInstruction.parts, [{ text: '保持温暖' }]);
+  assert.deepEqual(body.contents.map(item => item.role), ['user', 'model', 'user']);
+  assert.equal(body.contents[1].parts[0].text, '上一答');
+});
+
+test('cancelling a network stream aborts the fetch and releases its response reader', async () => {
+  let requestSignal;
+  let readerCancelled = false;
+  const response = {
+    ok: true,
+    status: 200,
+    headers: { get: () => 'text/event-stream' },
+    body: new ReadableStream({ cancel() { readerCancelled = true; } })
+  };
+  const manager = new AiProviderManager({
+    activeProviderId: 'openai',
+    configs: { openai: { apiKey: fakeOpenAiKey, model: 'unit-stream' } },
+    fetchImpl: async (_url, init) => { requestSignal = init.signal; return response; }
+  });
+  const iterator = manager.stream({ requestId: 'cancel-sse', prompt: '停下' });
+  const pending = iterator.next();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(manager.cancel('cancel-sse'), true);
+  await assert.rejects(pending, /cancel/i);
+  assert.equal(requestSignal.aborted, true);
+  assert.equal(readerCancelled, true);
+});
+
+test('chat consumes adapter stream deltas and reports each increment before completion', async () => {
+  const seen = [];
+  const manager = new AiProviderManager({
+    activeProviderId: 'openai',
+    configs: { openai: { apiKey: fakeOpenAiKey, model: 'unit-stream' } },
+    fetchImpl: async () => createSseResponse([
+      'data: {"choices":[{"delta":{"content":"逐"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"步"}}]}\n\n',
+      'data: [DONE]\n\n'
+    ])
+  });
+
+  const result = await manager.chat({ requestId: 'chat-over-sse', prompt: '继续', onDelta: delta => seen.push(delta) });
+
+  assert.equal(result.reply, '逐步');
+  assert.deepEqual(seen, ['逐', '步']);
+});
+
+test('direct provider streams charge the configured output budget on successful completion', async () => {
+  const manager = new AiProviderManager({
+    activeProviderId: 'custom',
+    dailyOutputTokenBudget: 4,
+    adapters: { custom: { stream: async function* () { yield '12345678'; } } }
+  });
+
+  const chunks = [];
+  for await (const chunk of manager.stream({ requestId: 'budgeted-stream', prompt: 'budget' })) chunks.push(chunk);
+
+  assert.equal(chunks.join(''), '12345678');
+  assert.equal(manager.getSettings().dailyOutputTokens, 2);
 });
