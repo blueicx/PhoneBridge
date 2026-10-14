@@ -26,7 +26,11 @@ class ExplorationLogPresentationTest {
         val confirmed = entry(ExplorationLogStatus.CONFIRMED).copy(
             coarseRegion = "camera",
             moteId = "sprite",
-            reward = ExplorationLogReward(xp = 5, items = listOf(ExplorationLogItem("item_01", 2)))
+            reward = ExplorationLogReward(xp = 5, items = listOf(ExplorationLogItem("item_01", 2))),
+            encounter = ExplorationLogEncounter(
+                id = "echo-beacon", title = "回声信标", action = "skill", actionLabel = "使用 Mote 特长",
+                quality = "默契契合", outcome = "信号重新排成序列。", moteId = "sprite", moteName = "叶狐"
+            )
         )
 
         val presentation = ExplorationLogPresentation.from(confirmed)
@@ -36,6 +40,8 @@ class ExplorationLogPresentationTest {
         assertEquals("仅镜头，未使用位置", presentation.regionLabel)
         assertTrue(presentation.detailText.contains(confirmed.eventId))
         assertTrue(presentation.detailText.contains("Mote sprite"))
+        assertTrue(presentation.detailText.contains("回声信标"))
+        assertTrue(presentation.detailText.contains("信号重新排成序列。"))
         assertTrue(presentation.canOpenReality)
         assertTrue(presentation.isReadOnly)
     }

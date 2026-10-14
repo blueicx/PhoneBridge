@@ -135,6 +135,10 @@ test('PhoneBridge Authentication Flow', async (t) => {
     assert.match(appScript, /\/api\/reality\/log\?limit=50/);
     assert.match(appScript, /entry\.status==='confirmed'/);
     assert.match(appScript, /async function openRealityLogRecord/);
+    assert.match(appScript, /entry\.encounter/);
+    assert.match(appScript, /realityAction\(id, action, clueType, selectedAction/);
+    assert.match(res.body, /仔细观察/);
+    assert.match(res.body, /使用 Mote 特长/);
     for (const field of realityFixture.allowedServerEntryFields) {
       assert.ok(appScript.includes(`entry.${field}`), `Web exploration history must consume fixture field ${field}`);
     }

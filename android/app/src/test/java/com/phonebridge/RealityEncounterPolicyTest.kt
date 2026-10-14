@@ -26,6 +26,20 @@ class RealityEncounterPolicyTest {
     }
 
     @Test
+    fun encounterPromptCombinesMoteObservationWithAuthoredScenario() {
+        val prompt = RealityEncounterPolicy.encounterPrompt(
+            "回声信标",
+            "断续的脉冲正从边缘传来，先判断它在回应什么。",
+            "叶狐：我听见了细小的变化。"
+        )
+
+        assertEquals(
+            "叶狐：我听见了细小的变化。\n\n回声信标\n断续的脉冲正从边缘传来，先判断它在回应什么。",
+            prompt
+        )
+    }
+
+    @Test
     fun trackingCopyExplainsLostAnchorAndRepositionMode() {
         val lost = RealityTrackingSnapshot(
             status = RealityTrackingStatus.TRACKING,

@@ -35,6 +35,10 @@ data class ExplorationLogPresentation(
                 add("收据 ${entry.eventId}")
                 entry.moteId?.let { add("Mote $it") }
                 entry.observation?.takeIf(String::isNotBlank)?.let(::add)
+                entry.encounter?.let { encounter ->
+                    add("遭遇：${encounter.title} · ${encounter.moteName}选择${encounter.actionLabel} · ${encounter.quality}")
+                    add(encounter.outcome)
+                }
                 reward?.let(::add)
             }.joinToString("\n")
             return ExplorationLogPresentation(

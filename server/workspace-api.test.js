@@ -539,10 +539,16 @@ test('workspace APIs preserve auth and close the session-to-task loop', { timeou
     assert.equal(story.body.story.length, 32);
     assert.equal(story.body.story.find(item => item.id === 'first-awakening').completed, true);
     assert.equal(story.body.story.find(item => item.id === 'exclusive-mote').branches.length, 2);
+    assert.equal(story.body.story.find(item => item.id === 'exclusive-mote').steps.length, 3);
     const unknownStoryBranch = await request('/api/motes/story/not-a-story/branch', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ choiceId: 'go-further' }),
     });
     assert.equal(unknownStoryBranch.response.status, 409);
+    const unknownStoryStep = await request('/api/motes/story/not-a-story/advance', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: 'unknown-story-step', stepId: 'chapter-1' }),
+    });
+    assert.equal(unknownStoryStep.response.status, 409);
+    assert.equal(unknownStoryStep.body.code, 'story_step_conflict');
     const claimedStory = await request('/api/motes/story/first-awakening/claim', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ claimId: 'api-story-1' }),
     });

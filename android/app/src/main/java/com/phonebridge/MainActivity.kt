@@ -2844,7 +2844,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                         confirmRealityClueLocally(node.id)
                         loadRealityRewardReceipt(submission.eventId)
                     } else {
-                        showRealityEncounterChoices(node, submission, observation, null)
+                        showRealityEncounterChoices(node, submission, observation, null, response.optJSONObject("encounter"))
                     }
                 },
                 onError = { error ->
@@ -3003,11 +3003,16 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
         submission: RealityClueSubmission,
         observation: String,
         statusMessage: String?,
+        encounter: JSONObject? = null,
     ) {
         val actions = listOf("observe", "soothe", "dodge", "skill")
         val labels = listOf("仔细观察", "与 Mote 共鸣", "绕开干扰", "使用 Mote 特长")
         val message = buildString {
-            append(observation)
+            append(RealityEncounterPolicy.encounterPrompt(
+                encounter?.optString("title"),
+                encounter?.optString("prompt"),
+                observation,
+            ))
             if (!statusMessage.isNullOrBlank()) append("\n\n$statusMessage")
         }
         androidx.appcompat.app.AlertDialog.Builder(this)
@@ -7314,6 +7319,7 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 val progress = when {
                     story.claimed -> "已完成 · 已领取"
                     story.completed -> "已完成 · 待领取 ${story.rewardXp} XP"
+                    story.started -> "进行中 · ${story.stepIndex}/3"
                     else -> "未完成"
                 }
                 text = "专属剧情：${story.title}（$progress）\n完成条件：${story.completion}"
@@ -7321,6 +7327,25 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
                 setTextColor(Color.parseColor("#AFC9C0"))
                 setPadding(dp(12), 0, dp(12), dp(6))
             })
+            if (story.started && !story.completed) {
+                story.currentStep?.let { step ->
+                    container.addView(TextView(this).apply {
+                        text = "下一章：${step.title}\n${step.description}"
+                        textSize = 12f
+                        setTextColor(Color.parseColor("#C7D6E7"))
+                        setPadding(dp(12), 0, dp(12), dp(6))
+                    })
+                    if (story.moteId == activeProfileId) {
+                        val advanceButton = Button(this).apply {
+                            text = "继续剧情 · ${story.stepIndex + 1}/3"
+                            isAllCaps = false
+                            contentDescription = "继续${story.moteName}专属剧情，第${story.stepIndex + 1}章"
+                        }
+                        advanceButton.setOnClickListener { advanceMoteStory(story, advanceButton) }
+                        container.addView(advanceButton)
+                    }
+                }
+            }
             if (story.branchOutcome.isNotBlank()) {
                 container.addView(TextView(this).apply {
                     text = "结局：${story.branchOutcome}"
@@ -7395,6 +7420,31 @@ class MainActivity : AppCompatActivity(), CompanionView.Listener, BridgeLink.Lis
             onError = { error ->
                 Toast.makeText(this, "剧情选择失败：$error", Toast.LENGTH_LONG).show()
                 renderMoteDexDialog()
+            },
+        )
+    }
+
+    private fun advanceMoteStory(story: MoteStoryEntry, button: Button) {
+        val step = story.currentStep ?: return
+        button.isEnabled = false
+        workspaceRequest(
+            "/api/motes/story/${android.net.Uri.encode(story.id)}/advance",
+            "POST",
+            JSONObject()
+                .put("eventId", "story-step:${story.id}:${step.id}")
+                .put("stepId", step.id),
+            onSuccess = { response ->
+                response.optJSONArray("story")?.let { stories ->
+                    moteStoryJson = JSONArray(stories.toString())
+                    getSharedPreferences("mote_roster", Context.MODE_PRIVATE).edit()
+                        .putString("story", moteStoryJson.toString())
+                        .apply()
+                    renderMoteDexDialog()
+                }
+            },
+            onError = { error ->
+                button.isEnabled = true
+                Toast.makeText(this, "剧情暂未推进：$error；可用相同进度安全重试", Toast.LENGTH_LONG).show()
             },
         )
     }

@@ -31,6 +31,40 @@ test('reality coordinator centralizes clue processing and progress projection', 
   assert.equal(progress.revision, 7);
 });
 
+test('coordinator derives encounter presentation from the server-selected Mote and client action only', () => {
+  let recorded = null;
+  const coordinator = createRealityCoordinator({
+    now: () => Date.parse('2026-10-14T04:00:00.000Z'),
+    moteStore: {
+      getState: () => ({ activeId: 'sprite', exploration: { targetId: 'sprite' } }),
+      collectClue: () => ({ duplicate: false, state: {} }),
+    },
+    moteGrowthStore: {
+      snapshot: () => ({ boosts: [] }),
+      recordClue: payload => {
+        recorded = payload;
+        return { businessStatus: 'accepted', reason: 'reward_applied', revision: 1, reward: { xp: 4 }, state: {} };
+      },
+    },
+    realityEngine: { snapshot: () => ({}), setBoosts: () => {} },
+  });
+
+  const result = coordinator.applyMoteClue({
+    eventId: 'reality-lens:v2:2026-10-14:camera:object:offline-encounter',
+    clueType: 'object',
+    region: 'camera',
+    actions: ['skill'],
+    xpBonus: 9999,
+    encounter: { outcome: 'CLIENT-CONTROLLED' },
+  });
+
+  assert.equal(recorded.encounter.action, 'skill');
+  assert.equal(recorded.encounter.moteId, 'sprite');
+  assert.ok(recorded.encounter.xpBonus >= 1 && recorded.encounter.xpBonus <= 2);
+  assert.equal(recorded.encounter.outcome.includes('CLIENT'), false);
+  assert.equal(result.businessStatus, 'accepted');
+});
+
 test('reality coordinator rejects precise regions before a store can mutate', () => {
   let called = false;
   const coordinator = createRealityCoordinator({

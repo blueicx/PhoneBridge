@@ -22,7 +22,7 @@ test('shared reality-log fixture matches the receipt projection privacy allowlis
         createdAt: expected.occurredAt,
         region: expected.coarseRegion,
         clueType: expected.clueType,
-        reward: { xp: expected.reward.xp },
+        reward: { xp: expected.reward.xp, encounter: expected.encounter },
       }],
     },
     realityEngine: { listReceipts: () => [] },

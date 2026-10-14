@@ -2,7 +2,7 @@
 
 const { MOTE_PROFILES } = require('./mote-profiles');
 
-const STORY_VERSION = 3;
+const STORY_VERSION = 4;
 const MAX_SEEN_EVENTS = 1024;
 
 const SHARED_STORY_EVENTS = Object.freeze([
@@ -43,6 +43,29 @@ const EXCLUSIVE_STORY_DEFINITIONS = Object.freeze([
   { moteId: 'shadow_moth', title: '影蛾的信任', description: '在不催促的陪伴里，让影蛾逐渐愿意靠近。', trigger: 'relationship_2', completion: '激活影蛾并将关系提升至 2 级', reward: { xp: 11 } },
 ]);
 
+const STORY_CHAPTERS = Object.freeze({
+  mote: ['铺开星图', '验证关键假设', '记录推演结果'],
+  sprite: ['听见风向', '追随新线索', '决定下一段路'],
+  ghost: ['留出安静', '说出真实感受', '共同守住边界'],
+  circuit: ['定位故障', '恢复连接', '复盘保护措施'],
+  cloud_whale: ['标记远方', '规划航线', '完成长线回望'],
+  rimuru: ['找到舒服节奏', '交换一个想法', '留下共同回声'],
+  ember_sprig: ['选定眼前一步', '迅速采取行动', '确认勇气成果'],
+  prism_moth: ['捕捉第一束折光', '比较变化角度', '拼出清晰图案'],
+  moss_tortoise: ['检查彼此状态', '建立守护习惯', '一起稳步完成'],
+  orbit_raven: ['扫描远方信号', '标记值得关注的变化', '回到可靠航路'],
+  tide_otter: ['找到新的岸线', '收集水纹线索', '选择轻快的方向'],
+  moon_deer: ['停驻在安静时刻', '分享一段心事', '把温柔记下来'],
+  stone_mole: ['发现边缘变化', '追踪微小细节', '挖出物体注脚'],
+  wind_marten: ['捕捉顺风时机', '把步骤衔接起来', '轻快抵达目标'],
+  volt_sparrow: ['识别信号断点', '重新接通信号', '确认防护状态'],
+  frost_hare: ['锁定清晰光点', '稳定观察视线', '保存这一瞬间'],
+  bloom_sprite: ['发现一枚新芽', '一起照料成长', '记录新的变化'],
+  crystal_lizard: ['分解颜色光谱', '辨认折射角度', '拼合最终判断'],
+  dune_fox: ['选定可靠地标', '稳步穿过旷野', '带回一段记忆'],
+  shadow_moth: ['观察视野边缘', '慢慢建立信任', '悄然靠近彼此'],
+});
+
 const PROFILE_BY_ID = new Map(MOTE_PROFILES.map(profile => [profile.id, profile]));
 const AFFINITY_LABELS = Object.freeze({
   planning: '计划', analysis: '分析', exploration: '探索', creative: '创意', reflection: '回顾',
@@ -63,6 +86,11 @@ const MOTE_EXCLUSIVE_STORIES = Object.freeze(EXCLUSIVE_STORY_DEFINITIONS.map((ev
     moteName,
     exclusive: true,
     sortOrder: index,
+    steps: Object.freeze((STORY_CHAPTERS[event.moteId] || ['发现线索', '共同回应', '留下回忆']).map((title, stepIndex) => Object.freeze({
+      id: `chapter-${stepIndex + 1}`,
+      title,
+      description: `${moteName}与你一起${title}。${event.description}`,
+    }))),
     branches: Object.freeze([
       Object.freeze({
         id: 'go-further',
@@ -89,6 +117,12 @@ function initialState(now) {
     completed: [],
     claimed: [],
     branchChoices: [],
+    storyProgress: Object.fromEntries(MOTE_EXCLUSIVE_STORIES.map(event => [event.id, {
+      started: false,
+      stepIndex: 0,
+      startedAt: null,
+      stepReceipts: [],
+    }])),
     seenEventIds: [],
     revision: 0,
     updatedAt: Number(now),
@@ -115,6 +149,26 @@ function normalizeState(value, now) {
       ...(item.branchOutcome ? { branchOutcome: String(item.branchOutcome) } : {}),
     })).filter(item => MOTE_STORY_EVENTS.some(event => event.id === item.id))
     : [];
+  const completedById = new Map(completed.map(item => [item.id, item]));
+  const savedProgress = source.storyProgress && typeof source.storyProgress === 'object' ? source.storyProgress : {};
+  const storyProgress = Object.fromEntries(MOTE_EXCLUSIVE_STORIES.map(event => {
+    const saved = savedProgress[event.id] && typeof savedProgress[event.id] === 'object' ? savedProgress[event.id] : {};
+    const completedEntry = completedById.get(event.id);
+    const rawStepIndex = Number(saved.stepIndex);
+    const stepIndex = completedEntry ? 3 : Number.isFinite(rawStepIndex) ? Math.max(0, Math.min(3, Math.floor(rawStepIndex))) : 0;
+    const validStepIds = new Set(event.steps.map(step => step.id));
+    const stepReceipts = Array.isArray(saved.stepReceipts)
+      ? saved.stepReceipts.filter(receipt => receipt && validStepIds.has(String(receipt.stepId)) && String(receipt.eventId || '').trim())
+        .map(receipt => ({ eventId: String(receipt.eventId), stepId: String(receipt.stepId), advancedAt: Number(receipt.advancedAt) || Number(now) }))
+        .slice(-3)
+      : [];
+    return [event.id, {
+      started: Boolean(saved.started) || stepIndex > 0 || Boolean(completedEntry),
+      stepIndex,
+      startedAt: Number(saved.startedAt) || completedEntry?.completedAt || null,
+      stepReceipts,
+    }];
+  }));
   const exclusiveEventById = new Map(MOTE_EXCLUSIVE_STORIES.map(event => [event.id, event]));
   const branchChoices = Array.isArray(source.branchChoices)
     ? source.branchChoices.filter(item => item && item.id && item.choiceId).map(item => ({
@@ -140,6 +194,7 @@ function normalizeState(value, now) {
     completed: [...new Map(completed.map(item => [item.id, item])).values()],
     claimed: [...new Map(claimed.map(item => [item.id, item])).values()],
     branchChoices: [...new Map(branchChoices.map(item => [item.id, item])).values()],
+    storyProgress,
     seenEventIds: [...new Set((Array.isArray(source.seenEventIds) ? source.seenEventIds : []).map(String).filter(Boolean))].slice(-MAX_SEEN_EVENTS),
     revision: Math.max(0, Number(source.revision) || 0),
     updatedAt: Number(source.updatedAt) || Number(now),
@@ -214,7 +269,8 @@ class MoteStoryStore {
   snapshot() { return clone(this.state); }
 
   reset() {
-    const deleted = this.state.completed.length + this.state.claimed.length + this.state.branchChoices.length;
+    const deleted = this.state.completed.length + this.state.claimed.length + this.state.branchChoices.length
+      + Object.values(this.state.storyProgress || {}).filter(progress => progress.started).length;
     this.state = initialState(this.now());
     this._save();
     return { deleted };
@@ -226,6 +282,9 @@ class MoteStoryStore {
     const branchChoices = new Map(this.state.branchChoices.map(item => [item.id, item]));
     return MOTE_STORY_EVENTS.map(event => ({
       ...clone(event),
+      started: event.exclusive ? Boolean(this.state.storyProgress[event.id]?.started) : false,
+      stepIndex: event.exclusive ? Number(this.state.storyProgress[event.id]?.stepIndex) || 0 : 0,
+      currentStep: event.exclusive ? clone(event.steps[this.state.storyProgress[event.id]?.stepIndex] || null) : null,
       completed: completed.has(event.id),
       completedAt: completed.get(event.id)?.completedAt || null,
       claimed: claimed.has(event.id),
@@ -242,25 +301,78 @@ class MoteStoryStore {
     const eventId = String(source.eventId || `story-eval:${this.state.revision + 1}`).trim();
     if (!eventId) throw new Error('story eventId is required');
     if (this.state.seenEventIds.includes(eventId)) {
-      return { duplicate: true, newlyCompleted: [], events: this.list(), state: this.snapshot() };
+      return { duplicate: true, newlyCompleted: [], startedStories: [], events: this.list(), state: this.snapshot() };
     }
+    const previousState = clone(this.state);
     this.state.seenEventIds.push(eventId);
     this.state.seenEventIds = this.state.seenEventIds.slice(-MAX_SEEN_EVENTS);
     const completedIds = new Set(this.state.completed.map(item => item.id));
     const newlyCompleted = [];
+    const startedStories = [];
     const exclusiveTriggers = new Set(Array.isArray(source.exclusiveTriggers) ? source.exclusiveTriggers.map(String) : []);
     for (const event of MOTE_STORY_EVENTS) {
-      if (event.exclusive && String(source.activeId || '') !== event.moteId) continue;
-      if (event.exclusive && !exclusiveTriggers.has(event.trigger)) continue;
       if (completedIds.has(event.id) || !matchesTrigger(event, source)) continue;
+      if (event.exclusive) {
+        if (String(source.activeId || '') !== event.moteId || !exclusiveTriggers.has(event.trigger)) continue;
+        const progress = this.state.storyProgress[event.id];
+        if (progress.started) continue;
+        progress.started = true;
+        progress.startedAt = Number(this.now());
+        startedStories.push(event.id);
+        continue;
+      }
       const completion = { id: event.id, sourceEventId: eventId, completedAt: Number(this.now()) };
       this.state.completed.push(completion);
       completedIds.add(event.id);
       newlyCompleted.push({ ...clone(event), ...completion, completed: true, claimed: false });
     }
     this.state.revision += 1;
-    this._save();
-    return { duplicate: false, newlyCompleted, events: this.list(), state: this.snapshot() };
+    try { this._save(); } catch (error) { this.state = previousState; throw error; }
+    return { duplicate: false, newlyCompleted, startedStories, events: this.list(), state: this.snapshot() };
+  }
+
+  advance({ storyId, eventId, stepId, activeId } = {}) {
+    const normalizedStoryId = String(storyId || '').trim();
+    const normalizedEventId = String(eventId || '').trim();
+    const normalizedStepId = String(stepId || '').trim();
+    const event = MOTE_EXCLUSIVE_STORIES.find(item => item.id === normalizedStoryId);
+    if (!event) throw new Error('exclusive story not found');
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(normalizedEventId)) throw new Error('story step eventId is required and must contain safe characters');
+    const priorReceipt = Object.entries(this.state.storyProgress).flatMap(([id, progress]) =>
+      (progress.stepReceipts || []).map(receipt => ({ ...receipt, storyId: id })))
+      .find(receipt => receipt.eventId === normalizedEventId);
+    if (priorReceipt) {
+      if (priorReceipt.storyId !== normalizedStoryId || priorReceipt.stepId !== normalizedStepId) throw new Error('story step eventId was reused');
+      const listedEvent = this.list().find(item => item.id === normalizedStoryId);
+      return { duplicate: true, event: listedEvent, receipt: clone(priorReceipt), state: this.snapshot() };
+    }
+    if (String(activeId || '') !== event.moteId) throw new Error('the story Mote must be active');
+    const progress = this.state.storyProgress[normalizedStoryId];
+    if (!progress?.started) throw new Error('story has not started');
+    const currentStep = event.steps[progress.stepIndex];
+    if (!currentStep || normalizedStepId !== currentStep.id) throw new Error('story step is out of order or already complete');
+    if (this.state.completed.some(item => item.id === normalizedStoryId)) throw new Error('story is already complete');
+
+    const previousState = clone(this.state);
+    const receipt = {
+      storyId: normalizedStoryId,
+      eventId: normalizedEventId,
+      stepId: normalizedStepId,
+      advancedAt: Number(this.now()),
+    };
+    progress.stepReceipts.push({ eventId: normalizedEventId, stepId: normalizedStepId, advancedAt: receipt.advancedAt });
+    progress.stepIndex += 1;
+    if (progress.stepIndex >= event.steps.length) {
+      this.state.completed.push({ id: normalizedStoryId, sourceEventId: normalizedEventId, completedAt: receipt.advancedAt });
+    }
+    this.state.revision += 1;
+    try { this._save(); } catch (error) { this.state = previousState; throw error; }
+    return {
+      duplicate: false,
+      event: this.list().find(item => item.id === normalizedStoryId),
+      receipt,
+      state: this.snapshot(),
+    };
   }
 
   claim(id, claimId) {

@@ -27,6 +27,7 @@ const { MoteGrowthStore } = require('./mote-growth');
 const { DailyRoutinesStore } = require('./daily-routines');
 const { GoalBoardService, GoalBoardError } = require('./goal-board');
 const { createRealityCoordinator } = require('./reality-coordinator');
+const { describeExplorationEncounter } = require('./exploration-encounters');
 const { ProactivePolicy } = require('./proactive-policy');
 const { PairingManager } = require('./pairing');
 const { prepareConversation, summarizeConversationResume } = require('./session-context');
@@ -37,6 +38,7 @@ const { browserRendererScript } = require('./web-stage');
 const { browserStageCardsScript } = require('./web-stage-cards');
 const { browserStageChatScript } = require('./web-stage-chat');
 const { browserStageHabitatScript } = require('./web-stage-habitat');
+const { browserMoteStoriesScript } = require('./web-stage-stories');
 const { browserRuntimeScript } = require('./web-runtime');
 const fs = require('fs');
 const path = require('path');
@@ -49,6 +51,7 @@ const MOTE_STAGE_SCRIPT = browserRendererScript();
 const WEB_STAGE_CARDS_SCRIPT = browserStageCardsScript();
 const WEB_STAGE_CHAT_SCRIPT = browserStageChatScript();
 const WEB_STAGE_HABITAT_SCRIPT = browserStageHabitatScript();
+const WEB_MOTE_STORIES_SCRIPT = browserMoteStoriesScript();
 const WEB_RUNTIME_SCRIPT = browserRuntimeScript();
 
 const PORT = process.env.PHONEBRIDGE_PORT || 9501;
@@ -569,11 +572,12 @@ function progressMoteStory(eventId, extra = {}, { emit = true } = {}) {
     eventId,
     exclusiveTriggers: deriveExclusiveTriggers(extra),
   });
-  if (emit && result.newlyCompleted.length) {
+  if (emit && (result.newlyCompleted.length || result.startedStories.length)) {
     broadcast({
       type: 'mote.story',
       story: result.events,
       newlyCompleted: result.newlyCompleted,
+      startedStories: result.startedStories,
       state: result.state,
     });
   }
@@ -1841,7 +1845,7 @@ body.keyboard-action .drawer-scrim,body.keyboard-action .command-drawer,body.key
 <button class="drawer-scrim" id="drawerScrim" aria-label="关闭指挥台" hidden></button><aside class="command-drawer" id="commandDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true" inert><div class="drawer-bar"><div><h1 id="drawerTitle">指挥台</h1><p>任务、设备、探索与伙伴设置</p></div><button id="closeDrawer" class="drawer-close" aria-label="关闭指挥台">关闭</button></div><section class="workspace-card stage-chat-history" id="stageChatHistory" aria-labelledby="stageChatHistoryTitle"><h2 id="stageChatHistoryTitle">伙伴对话</h2><p id="stageChatResume" class="stage-chat-resume" role="status" hidden></p><div id="stageChatHistoryList" role="log" aria-live="polite">还没有消息。</div></section><section class="appearance-settings" id="appearanceSettings" aria-labelledby="appearanceTitle"><h2 id="appearanceTitle">外观与动效</h2><label for="themeSelect">主题</label><select id="themeSelect" aria-label="选择主题">${WEB_THEME_OPTIONS}</select><label><input id="reduceMotionToggle" type="checkbox">减弱舞台动画</label><span class="sub">主题与动效偏好只保存在此浏览器；系统减弱动态效果设置始终生效。</span></section><div class="wrap">
 <div class="grid"><div class="panel"><h2>实时感官</h2><img id="frame"><div class="metrics" style="margin-top:12px"><div class="metric"><b id="cpu">-</b><span>手机 CPU</span></div><div class="metric"><b id="mem">-</b><span>内存</span></div><div class="metric"><b id="bat">-</b><span>电量</span></div><div class="metric"><b id="temp">-</b><span>温度</span></div></div><div class="row"><button class="primary" onclick="device('camera_on')">开眼</button><button onclick="device('camera_front')">前眼</button><button onclick="device('camera_back')">后眼</button><button onclick="device('listen_on')">监听</button><button onclick="say()">说话</button></div><div class="row"><input id="speech" placeholder="输入要在手机上播放的话" style="flex:1"></div><div class=row><select id=idleTimeout title="空闲断流时间"><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5 selected>5 分钟</option><option value=10>10 分钟</option><option value=30>30 分钟</option></select><button onclick=setIdleTimeout()>空闲断流</button></div><div class=row><select id=screenOffTimeout title="息屏自动退出时间"><option value=0>不自动退出</option><option value=1>1 分钟</option><option value=3>3 分钟</option><option value=5>5 分钟</option><option value=10 selected>10 分钟</option><option value=30>30 分钟</option><option value=60>60 分钟</option></select><button onclick=setScreenOffTimeout()>息屏退出</button></div></div>
 <div class="panel"><h2>指挥台</h2><div class="tabs"><button class="active" data-tab="tasks">任务</button><button data-tab="log">日志</button><button data-tab="sensors">传感器</button><button data-tab="frame">画面</button></div><div id="tasks"></div><div id="log" hidden></div><div id="sensors" hidden></div><div id="framebox" hidden><img id="frame2"></div><div class="row"><input id="cmd" placeholder="help / ping 8.8.8.8 / screenshot / ps / say 你好" style="flex:1"><button class="primary" onclick="sendCmd()">执行</button></div><textarea id="detail" readonly placeholder="选中任务的输出会出现在这里"></textarea></div></div>
-<div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div>
+<div class="panel" style="grid-column:1/-1"><h2>工作台 · Mote 图鉴 · 自治 · 诊断与时间线</h2><div id="diagnosticsSummary" class="sub" style="color:var(--mint);margin-bottom:6px">诊断数据加载中…</div><div id="workspaceSummary" class="sub">加载中…</div><div id="companionSummary" class="sub" style="margin-top:8px;color:var(--amber)">统一伴侣摘要加载中…</div><div class="row"><select id="aiProviderSelect" style="min-width:180px"></select><button onclick="probeSelectedProvider()">探测 Provider</button><span id="aiProbeResult" class="sub" style="align-self:center"></span></div><div id="moteRoster" class="row" style="flex-wrap:wrap"></div><section class="workspace-card" aria-labelledby="moteStoryTitle" style="margin-top:12px"><h3 id="moteStoryTitle">当前伙伴 · 专属剧情</h3><div id="moteStoryStatus" class="status-note" role="status" aria-live="polite">剧情加载中…</div><div id="moteStoryPanel" aria-live="polite"></div></section><div class="row"><button class="primary" onclick="stopAutonomy()">Emergency Stop</button><button onclick="refreshWorkspace()">刷新工作台</button></div>
 <div id="dailyWorkspace" class="routine-goal-grid"><section class="workspace-card"><h3>日常与习惯</h3><div id="routineStatus" class="status-note" role="status" aria-live="polite">日常记录加载中…</div><div id="routineList"></div></section><section class="workspace-card"><h3>个人目标</h3><label class="sub" for="goalTitle">写下一个想推进的目标</label><div class="row"><input id="goalTitle" maxlength="120" placeholder="例如：完成一个小型作品" style="flex:1;min-width:0"></div><textarea id="goalDescription" maxlength="2000" placeholder="可选说明；仅在点击生成草案时发给当前 provider"></textarea><div class="goal-actions"><button id="goalCreateButton" class="primary" onclick="createGoalFromWeb()">创建目标</button><button onclick="refreshDailyWorkspace()">刷新日常与目标</button></div><div id="goalStatus" class="status-note" role="status" aria-live="polite">目标加载中…</div><div id="goalList"></div></section></div><div id="goalDraftPanel" class="workspace-card" style="margin-top:12px" hidden></div></div>
 <div class="panel" style="grid-column:1/-1"><h2>手机安全配对</h2><div class="row"><button onclick="startPairing()">生成五分钟二维码</button><span id="pairingStatus" class="sub" aria-live="polite">在手机“节点”中选择“扫码配对”</span></div><img id="pairingQr" alt="手机配对二维码" style="display:none;width:min(300px,100%);margin-top:12px;background:white;border-radius:12px;padding:8px"></div>
 <div class="panel" id="realityPanel" style="grid-column:1/-1"><h2>现实探索</h2><div class="sub">只输入粗区域 ID，不上传精确位置；例如 <code>cell:1561:6073</code>。</div><div class="row"><input id="realityRegion" placeholder="粗区域 ID" style="flex:1"><button class="primary" onclick="refreshReality()">刷新事件</button></div><div id="realitySummary" class="sub" style="margin-top:8px">尚未加载现实事件</div></div>
@@ -1849,7 +1853,7 @@ body.keyboard-action .drawer-scrim,body.keyboard-action .command-drawer,body.key
 <div class="panel" style="grid-column:1/-1"><h2>探索记录</h2><div id="realityLogStatus" class="status-note" role="status" aria-live="polite">探索记录加载中…</div><div id="realityLogList" aria-label="分页探索记录"></div><div class="row"><button id="realityLogMore" onclick="refreshRealityLog({cursor:realityLogCursor})" hidden>加载更早记录</button></div><div id="realityLogDetail" class="workspace-card" style="margin-top:10px" aria-live="polite">选择一条记录查看安全收据详情。</div></div>
 <div class="panel" style="grid-column:1/-1"><h2>隐私与数据</h2><div id="privacySummary" class="sub">数据概览加载中…</div><div id="privacyCategories" class="privacy-checklist" aria-label="选择要处理的数据类别"></div><div id="privacyMigration" class="sub" role="status" style="margin-top:8px"></div><div class="sub" style="margin-top:8px">导出使用口令加密；口令仅本次请求使用。删除需输入确认语句，服务端只保留类别与结果收据。请在上方逐项勾选类别；日常与个人目标可单独导出或删除。</div><div class="row"><button class="primary" onclick="exportPrivacy()">导出选定类别</button><button onclick="deletePrivacy()">删除选定类别</button><button onclick="refreshPrivacy()">刷新概览</button></div><div id="privacyResult" class="sub" aria-live="polite" style="margin-top:8px"></div></div>
 </div></aside></div>
-<script>${MOTE_STAGE_SCRIPT}${WEB_STAGE_CARDS_SCRIPT}${WEB_STAGE_CHAT_SCRIPT}${WEB_STAGE_HABITAT_SCRIPT}${WEB_RUNTIME_SCRIPT}</script><script>
+<script>${MOTE_STAGE_SCRIPT}${WEB_STAGE_CARDS_SCRIPT}${WEB_STAGE_CHAT_SCRIPT}${WEB_STAGE_HABITAT_SCRIPT}${WEB_MOTE_STORIES_SCRIPT}${WEB_RUNTIME_SCRIPT}</script><script>
 let selected='';
 let companionSummaryRevision = '';
 let currentCompanionSummary = null;
@@ -1915,6 +1919,9 @@ function api(p,o={}){
 let habitatStorage=null;try{habitatStorage=window.localStorage}catch(_){}
 const habitatController=new window.StageHabitatController({document,api,storage:habitatStorage,onFeedback:stageStatus});
 habitatController.load();
+let storyStorage=null;try{storyStorage=window.localStorage}catch(_){}
+const moteStoryController=new window.MoteStoryController({document,api,storage:storyStorage,activeMoteId:'mote'});
+moteStoryController.load();
 const webThemeIds=${WEB_THEME_IDS};
 const themeSelect=document.getElementById('themeSelect');
 const reduceMotionToggle=document.getElementById('reduceMotionToggle');
@@ -2144,6 +2151,7 @@ async function refreshMoteStage(){
   const roster=motesResponse?.roster;
   const activeId=summary?.mote?.id||motesResponse?.state?.activeId||cached?.profile?.id;
   const profile=roster?.find(item=>item.id===activeId)||roster?.find(item=>item.active)||(cached?.profile?.id===activeId?cached.profile:null)||DEFAULT_STAGE_PROFILE;
+  moteStoryController.setActiveMote(profile.id);
   const behavior=(behaviorResponse?behaviorResponse.behavior:null)||motesResponse?.behavior||cached?.behavior||{};
   const requestsUnavailable=results.every(result=>result.status==='rejected');
   const offline=requestsUnavailable||!summary||summary.connection?.online!==true;
@@ -2508,16 +2516,36 @@ async function refreshReality(){
   try{
     const [state, events] = await Promise.all([api('/api/reality/state'), api('/api/reality/events?region='+encodeURIComponent(region))]);
     const inventoryCount=Object.values(state.state.inventory||{}).reduce((a,b)=>a+(Number(b)||0),0);
-    realitySummary.innerHTML='<b>区域 '+esc(region)+'</b> · 事件 '+events.events.length+' · Mote Lv.'+(state.state.level||1)+' · XP '+(state.state.xp||0)+' · 物品 '+inventoryCount+'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px">'+events.events.map(e=>'<div class=item><b>'+esc(e.kind)+' / '+esc(e.clueType)+'</b><div class=sub>'+esc(e.distanceBand)+' · '+e.bearing+'° · 难度 '+e.difficulty+'</div><div class=row><button onclick="realityAction('+jsAttr(e.id)+','+jsAttr('start')+','+jsAttr(e.clueType)+')">遭遇</button><button class=primary onclick="realityAction('+jsAttr(e.id)+','+jsAttr('resolve')+','+jsAttr(e.clueType)+')">收集</button></div></div>').join('')+'</div>';
+    const actionMarkup=events.events.map(e=>renderRealityEventCard(e)).join('');
+    realitySummary.innerHTML='<b>区域 '+esc(region)+'</b> · 事件 '+events.events.length+' · Mote Lv.'+(state.state.level||1)+' · XP '+(state.state.xp||0)+' · 物品 '+inventoryCount+'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-top:10px">'+actionMarkup+'</div>';
   }catch(error){ realitySummary.textContent='现实事件加载失败：'+error.message; }
 }
-async function realityAction(id, action, clueType){
+function renderRealityEventCard(event){
+  const choices=[['observe','仔细观察'],['soothe','与 Mote 共鸣'],['dodge','绕开干扰'],['skill','使用 Mote 特长']];
+  const actions=choices.map(([choice,label])=>'<button class="quiet-button" aria-label="'+esc(label)+'" onclick="realityAction('+jsAttr(event.id)+','+jsAttr('resolve')+','+jsAttr(event.clueType)+','+jsAttr(choice)+')">'+esc(label)+'</button>').join('');
+  return '<div class=item><b>'+esc(event.kind)+' / '+esc(event.clueType)+'</b><div class=sub>'+esc(event.distanceBand)+' · '+event.bearing+'° · 难度 '+event.difficulty+'</div><div class=row><button onclick="realityAction('+jsAttr(event.id)+','+jsAttr('start')+','+jsAttr(event.clueType)+')">开启遭遇</button>'+actions+'</div></div>';
+}
+function showRealityEncounterOutcome(encounter){
+  if(!encounter||!realitySummary)return;
+  const card=document.createElement('div');card.className='item';card.style.marginTop='8px';
+  const title=document.createElement('b');title.textContent=String(encounter.moteName||'Mote')+' · '+String(encounter.title||'探索回应')+' · '+String(encounter.actionLabel||'');card.appendChild(title);
+  const outcome=document.createElement('div');outcome.className='sub';outcome.textContent=String(encounter.quality||'')+' · '+String(encounter.outcome||'');card.appendChild(outcome);realitySummary.appendChild(card);
+}
+function showRealityEncounterPrompt(encounter){
+  if(!encounter||!realitySummary)return;
+  const card=document.createElement('div');card.className='item';card.style.marginTop='8px';
+  const title=document.createElement('b');title.textContent=String(encounter.moteName||'Mote')+' · '+String(encounter.title||'探索遭遇');card.appendChild(title);
+  const prompt=document.createElement('div');prompt.className='sub';prompt.textContent=String(encounter.prompt||'');card.appendChild(prompt);realitySummary.appendChild(card);
+}
+async function realityAction(id, action, clueType, selectedAction='observe'){
   const region = realityRegion.value.trim();
   if(!region) return;
   try{
-    const response=await api('/api/reality/events/'+encodeURIComponent(id)+'/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({region,clueType,actions:action==='start'?[]:['observe']})});
+    const response=await api('/api/reality/events/'+encodeURIComponent(id)+'/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({region,clueType,actions:action==='start'?[]:[selectedAction]})});
     realitySummary.dataset.lastAction=id+':'+action+':'+JSON.stringify(response.reward||response.encounter||{});
     await refreshReality();
+    if(action==='start')showRealityEncounterPrompt(response.encounter);
+    if(action==='resolve'){showRealityEncounterOutcome(response.encounter||response.growth?.reward?.encounter);await refreshRealityLog({reset:true})}
   }catch(error){ realitySummary.textContent='现实动作失败：'+error.message; }
 }
 
@@ -2542,6 +2570,7 @@ function renderRealityLogDetail(entry){
   if(entry.status==='confirmed'){
     const reward=document.createElement('div');reward.className='sub';reward.style.marginTop='8px';reward.textContent=realityLogRewardLabel(entry);root.appendChild(reward);
     const observation=document.createElement('div');observation.className='sub';observation.style.marginTop='6px';observation.textContent=String(entry.observation||'');root.appendChild(observation);
+    if(entry.encounter){const encounter=document.createElement('div');encounter.className='workspace-card';encounter.style.marginTop='8px';const encounterTitle=document.createElement('b');encounterTitle.textContent='遭遇：'+String(entry.encounter.title||'探索回应')+' · '+String(entry.encounter.moteName||'Mote')+'选择'+String(entry.encounter.actionLabel||'');encounter.appendChild(encounterTitle);const encounterOutcome=document.createElement('div');encounterOutcome.className='sub';encounterOutcome.textContent=String(entry.encounter.quality||'')+' · '+String(entry.encounter.outcome||'');encounter.appendChild(encounterOutcome);root.appendChild(encounter)}
     const jump=makeWorkspaceButton('在 Reality 中只读查看',()=>openRealityLogRecord(entry.eventId),true);jump.style.marginTop='8px';root.appendChild(jump);
   }else{
     const note=document.createElement('div');note.className='sub';note.style.marginTop='8px';note.textContent='这条记录没有服务端确认收据；不会显示奖励，也不能再次提交。';root.appendChild(note);
@@ -2718,6 +2747,7 @@ function connectWebPush(){
       if(payload.telemetry&&payload.logs)pushCache.set('/api/state',payload);
       if(payload.companionSummary)pushCache.set('/api/companion/summary',{summary:payload.companionSummary});
       if(payload.motes){pushCache.set('/api/motes',payload.motes);pushCache.set('/api/motes/behavior',{behavior:payload.motes.behavior})}
+      if(Array.isArray(payload.motes?.story))moteStoryController.update(payload.motes.story);
       habitatController.load();
       renderStageCards(payload.workspace||{});
       if(Array.isArray(payload.chat))stageChat.hydrate(payload.chat,payload.chatResume);
@@ -2735,6 +2765,8 @@ function connectWebPush(){
     }else if(['chat_delta','chat','chat_error','chat_cancelled'].includes(payload.type)){
       stageChat.handle(payload);
     }else if(/^(mote\.|task\.|attention\.|reality\.|workspace\.)/.test(payload.type||'')){
+      if(payload.type==='mote.story'&&Array.isArray(payload.story))moteStoryController.update(payload.story);
+      if(payload.type==='mote.roster'&&Array.isArray(payload.story))moteStoryController.update(payload.story);
       if(payload.type==='reality.growth'&&payload.state)habitatController.updateFromState(payload.state);
       pushCache.clear();clearTimeout(pushRefreshTimer);
       pushRefreshTimer=setTimeout(()=>{if(!document.hidden){refreshCompanionSummary().then(refreshMoteStage);refreshStageCardsNow();if(webRefresh.state.drawerOpen){refreshWorkspace();refresh();refreshDailyWorkspace();refreshDiagnosticsAndTimeline()}}},80);
@@ -3372,6 +3404,25 @@ const handleHttpRequest = async (req, res) => {
       const story = progressMoteStory('story:snapshot');
       return sendJson(res, 200, { ok: true, story: story.events, state: story.state });
     }
+    const storyAdvanceMatch = parsedUrl.pathname.match(/^\/api\/motes\/story\/([^/]+)\/advance$/);
+    if (storyAdvanceMatch && req.method === 'POST') {
+      try {
+        const storyId = decodeURIComponent(storyAdvanceMatch[1]);
+        const payload = await readJson(req);
+        const result = moteStoryStore.advance({
+          storyId,
+          eventId: payload.eventId,
+          stepId: payload.stepId,
+          activeId: moteStore.getState().activeId,
+        });
+        const story = moteStoryStore.list();
+        broadcast({ type: 'mote.story', story, progressed: result.event, state: result.state });
+        return sendJson(res, result.duplicate ? 200 : 201, { ok: true, ...result, story });
+      } catch (error) {
+        const status = /not found|must be active|has not started|out of order|already complete|reused/i.test(error.message) ? 409 : 400;
+        return sendJson(res, status, { ok: false, code: status === 409 ? 'story_step_conflict' : 'invalid_story_step', error: error.message });
+      }
+    }
     const storyBranchMatch = parsedUrl.pathname.match(/^\/api\/motes\/story\/([^/]+)\/branch$/);
     if (storyBranchMatch && req.method === 'POST') {
       try {
@@ -3497,6 +3548,11 @@ const handleHttpRequest = async (req, res) => {
             offline: payload.offline === true,
           });
         if (realityEventMatch[2] === 'start') {
+          result.encounter = describeExplorationEncounter({
+            eventId,
+            encounterId: result.encounter?.id,
+            moteId: moteStore.getState().activeId,
+          });
           result.story = progressMoteStory(`exploration-start:${eventId}`, { explorationCount: 1 });
         }
         if (realityEventMatch[2] === 'resolve') {

@@ -41,4 +41,28 @@ class MoteStoryProtocolTest {
         assertEquals("激活焰芽并成功完成一项任务", story.completion)
         assertEquals(11, story.rewardXp)
     }
+
+    @Test fun threeStepStoryProgressKeepsCurrentStepAndLegacyStoriesSafe() {
+        val entry = MoteStoryProtocol.parseRows(listOf(mapOf(
+            "id" to "exclusive-mote",
+            "title" to "星核的第一份推演",
+            "exclusive" to true,
+            "started" to true,
+            "stepIndex" to 1,
+            "steps" to listOf(
+                mapOf("id" to "chapter-1", "title" to "铺开星图", "description" to "第一步"),
+                mapOf("id" to "chapter-2", "title" to "验证关键假设", "description" to "第二步"),
+                mapOf("id" to "chapter-3", "title" to "记录推演结果", "description" to "第三步"),
+            ),
+        ))).single()
+
+        assertTrue(entry.started)
+        assertEquals(1, entry.stepIndex)
+        assertEquals(3, entry.steps.size)
+        assertEquals("chapter-2", entry.currentStep?.id)
+        assertEquals("验证关键假设", entry.currentStep?.title)
+        val legacy = MoteStoryProtocol.parseRows(listOf(mapOf("id" to "exclusive-mote", "exclusive" to true))).single()
+        assertEquals(0, legacy.stepIndex)
+        assertEquals(null, legacy.currentStep)
+    }
 }

@@ -1,6 +1,7 @@
 'use strict';
 
 const CLUE_TYPES = Object.freeze(['location', 'object', 'light']);
+const { resolveExplorationEncounter } = require('./exploration-encounters');
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_PROCESSED_EVENTS = 2048;
 const MAX_DAILY_DATES = 14;
@@ -251,7 +252,7 @@ class MoteGrowthStore {
         ...existing,
         businessStatus: 'duplicate',
         reason: 'event_already_processed',
-        reward: { xp: 0, dailyCompleted: false, boost: null },
+        reward: { xp: 0, dailyCompleted: false, boost: null, ...(existing.reward?.encounter ? { encounter: clone(existing.reward.encounter) } : {}) },
       };
       return this._result(replay);
     }
@@ -294,7 +295,10 @@ class MoteGrowthStore {
     this.state.seenEventIds.push(normalized.eventId);
     this.state.seenEventIds = this.state.seenEventIds.slice(-MAX_PROCESSED_EVENTS);
     daily.clues[normalized.clueType] = 1;
-    const baseXp = 2;
+    const encounter = payload.encounter && typeof payload.encounter === 'object'
+      ? resolveExplorationEncounter({ eventId: normalized.eventId, clueType: normalized.clueType, ...payload.encounter })
+      : null;
+    const baseXp = 2 + (encounter?.xpBonus || 0);
     this.state.xp += baseXp;
     let dailyCompleted = false;
     let boost = null;
@@ -315,7 +319,7 @@ class MoteGrowthStore {
       activityDate,
       region: normalized.region,
       clueType: normalized.clueType,
-      reward: { xp: baseXp + (dailyCompleted ? 10 : 0), dailyCompleted, boost },
+      reward: { xp: baseXp + (dailyCompleted ? 10 : 0), dailyCompleted, boost, ...(encounter ? { encounter } : {}) },
       createdAt: now,
     });
     try {

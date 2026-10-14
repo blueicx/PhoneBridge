@@ -144,6 +144,37 @@ test('accepted clue receipts survive restart and replay is business-idempotent',
   assert.equal(restored.snapshot().xp, accepted.state.xp);
 });
 
+test('accepted exploration stores a canonical encounter receipt and replay never repeats its XP', () => {
+  let saved = null;
+  const persistence = {
+    load: () => saved,
+    save: (_key, value) => { saved = JSON.parse(JSON.stringify(value)); },
+  };
+  const now = Date.parse('2026-10-14T04:00:00.000Z');
+  const eventId = MoteGrowthStore.buildClueEventId({ activityAt: now, region: 'camera', clueType: 'object', nonce: 'encounter' });
+  const store = new MoteGrowthStore({ now: () => now, persistence });
+  const accepted = store.recordClue({
+    eventId,
+    clueType: 'object',
+    region: 'camera',
+    activityAt: now,
+    encounter: { encounterId: 'encounter_01', action: 'skill', moteId: 'sprite', xpBonus: 999, outcome: 'CLIENT-CONTROLLED' },
+  });
+
+  assert.equal(accepted.reward.xp, 4);
+  assert.equal(accepted.reward.encounter.id, 'echo-beacon');
+  assert.equal(accepted.reward.encounter.action, 'skill');
+  assert.equal(accepted.reward.encounter.moteName, '叶狐');
+  assert.equal(accepted.reward.encounter.xpBonus, 2);
+  assert.equal(JSON.stringify(accepted.reward).includes('CLIENT-CONTROLLED'), false);
+  const restored = new MoteGrowthStore({ now: () => now, persistence });
+  const replay = restored.recordClue({ eventId, clueType: 'object', region: 'camera', activityAt: now });
+  assert.equal(replay.businessStatus, 'duplicate');
+  assert.equal(replay.reward.xp, 0);
+  assert.deepEqual(replay.reward.encounter, accepted.reward.encounter);
+  assert.equal(restored.snapshot().xp, accepted.state.xp);
+});
+
 test('a persistence failure rolls back an in-flight reward', () => {
   let fail = false;
   const persistence = {

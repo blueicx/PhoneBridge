@@ -3,6 +3,7 @@
 const { MOTE_PROFILES } = require('./mote-profiles');
 const { CLUE_TYPES } = require('./mote-growth');
 const { ITEMS } = require('./reality-engine');
+const { resolveExplorationEncounter } = require('./exploration-encounters');
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
@@ -109,6 +110,32 @@ function safeBoost(receipt) {
   return { id: 'field-focus', expiresAt, multiplier };
 }
 
+function safeEncounter(receipt) {
+  const source = receipt?.reward?.encounter;
+  if (!source || typeof source !== 'object') return null;
+  try {
+    const encounter = resolveExplorationEncounter({
+      eventId: receipt.eventId,
+      clueType: receipt.clueType,
+      id: source.id,
+      action: source.action,
+      moteId: source.moteId,
+    });
+    return {
+      id: encounter.id,
+      title: encounter.title,
+      action: encounter.action,
+      actionLabel: encounter.actionLabel,
+      quality: encounter.quality,
+      outcome: encounter.outcome,
+      moteId: encounter.moteId,
+      moteName: encounter.moteName,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 function activeProfile(moteProfiles) {
   const activeId = Array.isArray(moteProfiles)
     ? MOTE_PROFILES.find(profile => profile.initial)?.id
@@ -157,6 +184,8 @@ function buildRealityLog({ growthStore, realityEngine, moteProfiles, cursor = nu
   for (const receipt of listReceipts(realityEngine, 'realityEngine')) merge('reality', receipt);
 
   const entries = [...byEvent.values()].map(entry => {
+    const encounter = safeEncounter(entry.growthReceipt);
+    const storyProfile = encounter ? PROFILE_BY_ID.get(encounter.moteId) : profile;
     const reward = {
       xp: positiveInteger(entry.growthReceipt?.reward?.xp) + positiveInteger(entry.realityReceipt?.reward?.xp),
       items: safeRewardItem(entry.realityReceipt),
@@ -168,9 +197,10 @@ function buildRealityLog({ growthStore, realityEngine, moteProfiles, cursor = nu
       occurredAt: entry.occurredAt,
       coarseRegion: entry.region,
       clueType: entry.clueType,
-      moteId: profile.id,
-      observation: `${profile.name}：${OBSERVATIONS[entry.clueType]}`,
+      moteId: encounter?.moteId || profile.id,
+      observation: `${storyProfile.name}：${OBSERVATIONS[entry.clueType]}`,
       reward,
+      ...(encounter ? { encounter } : {}),
     };
   }).sort(compareEntriesDescending);
 

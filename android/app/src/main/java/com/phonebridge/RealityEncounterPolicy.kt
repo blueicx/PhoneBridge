@@ -5,6 +5,14 @@ object RealityEncounterPolicy {
 
     fun wireAction(value: String?): String? = value?.trim()?.lowercase()?.takeIf(allowedActions::contains)
 
+    fun encounterPrompt(title: String?, prompt: String?, observation: String): String {
+        val safeTitle = title.orEmpty().filterNot(Char::isISOControl).trim().take(48)
+        val safePrompt = prompt.orEmpty().filterNot(Char::isISOControl).trim().take(180)
+        val authored = listOf(safeTitle, safePrompt).filter(String::isNotBlank).joinToString("\n")
+        val safeObservation = observation.filterNot(Char::isISOControl).trim().take(240)
+        return listOf(safeObservation, authored).filter(String::isNotBlank).joinToString("\n\n")
+    }
+
     fun observationPrompt(
         appearance: PetAppearance,
         clueType: String?,

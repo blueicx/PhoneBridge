@@ -75,6 +75,27 @@ test('encounter start is replay-safe and resolution preserves the chosen action 
   assert.equal(started.encounter.id, replayedStart.encounter.id);
 });
 
+test('encounter receipt preserves the server-selected Mote for replay-stable presentation', () => {
+  const now = 1_700_000_000_000;
+  const engine = new RealityEngine({ now: () => now });
+  const event = engine.eventsFor('cell:4:5', now)[0];
+  engine.startEncounter({ eventId: event.id, region: event.region, at: now });
+
+  const accepted = engine.resolve({
+    eventId: event.id,
+    region: event.region,
+    clueType: event.clueType,
+    actions: ['skill'],
+    moteId: 'sprite',
+    at: now,
+  });
+
+  assert.equal(accepted.receipt.moteId, 'sprite');
+  assert.equal(engine.getReceipt(event.id).moteId, 'sprite');
+  const replay = engine.resolve({ eventId: event.id, region: event.region, clueType: event.clueType, actions: ['dodge'], moteId: 'ghost', at: now });
+  assert.equal(replay.receipt.moteId, 'sprite');
+});
+
 test('active time-limited boosts modify reality rewards and expire', () => {
   let now = 1_700_000_000_000;
   const engine = new RealityEngine({ now: () => now });

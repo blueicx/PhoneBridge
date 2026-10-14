@@ -2,6 +2,7 @@
 
 const crypto = require('node:crypto');
 const { RealityEventStore } = require('./reality-event-store');
+const { normalizeMoteId } = require('./exploration-encounters');
 
 const CLUE_TYPES = Object.freeze(['location', 'object', 'light']);
 const EVENT_KINDS = Object.freeze(['location', 'object', 'light', 'mote']);
@@ -361,7 +362,7 @@ class RealityEngine {
     return { duplicate: false, event, encounter: clone(encounter), state: this.snapshot() };
   }
 
-  resolve({ eventId, region, clueType = null, actions = [], at = this.now() } = {}) {
+  resolve({ eventId, region, clueType = null, actions = [], moteId = 'mote', at = this.now() } = {}) {
     const id = String(eventId || '');
     if (!id) throw new Error('eventId is required');
     if (this.state.seenEventIds.includes(id)) {
@@ -402,6 +403,7 @@ class RealityEngine {
       clueType: event.clueType,
       encounterId: encounter?.encounterId || null,
       action: selectedActions[0] || null,
+      moteId: normalizeMoteId(moteId),
       event: clone(event),
       reward: clone(reward),
       resolvedAt: this.now(),

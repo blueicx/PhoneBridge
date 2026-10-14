@@ -16,8 +16,9 @@
 - 批次 1：提交 `cfe0f97` 已推送；Node **250/250**、无头 Chromium、Android 单测/Lint/Debug 构建通过；GitHub Actions run **38350063660** 全部成功。
 - 批次 2：提交 `71f55e517b179e2ae878facbbafb02546a0694c7` 已推送；Node、Android、API 34 emulator 与 artifact verify 在 GitHub Actions run **38531370595** 全部成功。Web/Android 舞台聊天、任务/审批/活动卡和失败恢复已接通。
 - 批次 3：提交 `6377e763c0c277bfb792841276a2f6268d97f660` 已推送；GitHub Actions run **38536709334** 全部成功。Node **276/276**；Android JVM **189/189（49 suites）**、Lint、Debug 构建通过；真实本地服务 + Chromium、模拟 SSE、性能预算和敏感扫描通过。覆盖 provider 真流式/取消、会话恢复与隐私隔离、记忆来源/冲突/批量确认与合并、Android 离线记忆同步状态。
-- 批次 4：提交 `00d6176e9ee6846b10bf5335dac7b36fbf2c57b9` 已推送；GitHub Actions [run 38543293259](https://github.com/blueicx/PhoneBridge/actions/runs/38543293259) 的 Node、Android、API 34 emulator 与 APK verify 四个 job 全成功。本地 Node **297/297**、Android JVM **196/196**、Lint/Debug 构建、Chromium、内部 APK 门禁、秘密扫描、脚本语法及 diff 检查均通过。
-- 批次 5–6：待实施。实机和真实在线 provider 验收保持单独待办。
+- 批次 4：实现提交 `00d6176e9ee6846b10bf5335dac7b36fbf2c57b9` 已推送；GitHub Actions [run 38543293259](https://github.com/blueicx/PhoneBridge/actions/runs/38543293259) 的 Node、Android、API 34 emulator 与 APK verify 四个 job 全成功。本地 Node **297/297**、Android JVM **196/196**、Lint/Debug 构建、Chromium、内部 APK 门禁、秘密扫描、脚本语法及 diff 检查均通过。文档收尾提交 `2cf910786076b0174b11f1ecc862bbe4d89c617b` 的 Actions 状态需在继续推送前核实。
+- 批次 5：本机实现与自动验收通过，尚未提交/推送。20 个 Mote 的三章双结局剧情、12 种四动作遭遇、双端结果记录已落地；Node **312/312**、Android JVM **199/199**、Lint/Debug 构建、隔离 Chromium、APK 门禁、秘密扫描与性能预算通过。最新 SHA 的远端 Actions 和 Xperia 实机验收待完成。
+- 批次 6：待实施；恢复演练、最终交付与最新 SHA CI 留待后续。真实设备/AR/长时稳定性及真实在线 provider 验收保持单独待办。
 
 ## 验收
 

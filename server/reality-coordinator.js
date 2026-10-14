@@ -1,6 +1,7 @@
 'use strict';
 
 const { MoteGrowthStore } = require('./mote-growth');
+const { resolveExplorationEncounter } = require('./exploration-encounters');
 
 function createRealityCoordinator({
   moteStore,
@@ -28,16 +29,18 @@ function createRealityCoordinator({
       || eventId.startsWith('reality-lens:');
     if (growthEligible) MoteGrowthStore.validatePayload({ ...replayPayload, region: payload.region || 'camera' });
     const activityAt = replayPayload.offline === true ? Number(replayPayload.activityAt) : Number(now());
+    const moteState = typeof moteStore.getState === 'function' ? moteStore.getState() : null;
+    const encounterMoteId = priorRealityReceipt?.moteId || moteState?.activeId || 'mote';
     const realityReward = generatedEvent
       ? realityEngine.resolve({
         eventId: payload.eventId,
         region: payload.region,
         clueType: payload.clueType,
         actions: payload.actions,
+        moteId: encounterMoteId,
         at: activityAt,
       })
       : null;
-    const moteState = typeof moteStore.getState === 'function' ? moteStore.getState() : null;
     const hasExplorationTarget = moteState == null || Boolean(moteState.exploration?.targetId);
     const moteResult = hasExplorationTarget
       ? moteStore.collectClue({ eventId: payload.eventId, clueType: payload.clueType })
@@ -51,6 +54,15 @@ function createRealityCoordinator({
     }
     // Each ledger owns its own event-idempotency receipt. Always replay all
     // ledgers: a prior ledger may have committed before a later one failed.
+    const encounter = growthEligible ? resolveExplorationEncounter({
+      eventId: payload.eventId,
+      clueType: payload.clueType,
+      id: priorRealityReceipt?.encounterId || realityReward?.receipt?.encounterId,
+      actions: priorRealityReceipt?.action || realityReward?.receipt?.action
+        ? [priorRealityReceipt?.action || realityReward?.receipt?.action]
+        : payload.actions,
+      moteId: priorRealityReceipt?.moteId || realityReward?.receipt?.moteId || encounterMoteId,
+    }) : null;
     result.growth = !growthEligible
       ? { duplicate: result.duplicate, reward: { xp: 0, dailyCompleted: false, boost: null }, state: moteGrowthStore.snapshot() }
       : moteGrowthStore.recordClue({
@@ -59,7 +71,9 @@ function createRealityCoordinator({
           region: payload.region || 'camera',
           activityAt: replayPayload.activityAt,
           offline: replayPayload.offline === true,
+          encounter,
         });
+    result.encounter = result.growth?.reward?.encounter || null;
     const realityDuplicate = !realityReward || realityReward.duplicate === true;
     const moteDuplicate = !hasExplorationTarget || moteResult.duplicate === true;
     const growthDuplicate = !growthEligible || result.growth.duplicate === true || result.growth.businessStatus === 'duplicate';

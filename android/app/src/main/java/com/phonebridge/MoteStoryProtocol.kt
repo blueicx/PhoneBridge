@@ -9,6 +9,12 @@ data class MoteStoryBranch(
     val bonusXp: Int,
 )
 
+data class MoteStoryStep(
+    val id: String,
+    val title: String,
+    val description: String,
+)
+
 data class MoteStoryEntry(
     val id: String,
     val title: String,
@@ -25,6 +31,10 @@ data class MoteStoryEntry(
     val branchChoiceId: String = "",
     val branchOutcome: String = "",
     val completedAtMs: Long = 0L,
+    val started: Boolean = false,
+    val stepIndex: Int = 0,
+    val steps: List<MoteStoryStep> = emptyList(),
+    val currentStep: MoteStoryStep? = null,
 )
 
 object MoteStoryProtocol {
@@ -63,6 +73,20 @@ object MoteStoryProtocol {
                         "branchChoiceId" to value.optString("branchChoiceId"),
                         "branchOutcome" to value.optString("branchOutcome"),
                         "completedAtMs" to value.optLong("completedAt", 0L),
+                        "started" to value.optBoolean("started", false),
+                        "stepIndex" to value.optInt("stepIndex", 0),
+                        "steps" to value.optJSONArray("steps")?.let { steps ->
+                            buildList {
+                                for (stepIndex in 0 until minOf(steps.length(), 3)) {
+                                    val step = steps.optJSONObject(stepIndex) ?: continue
+                                    add(mapOf(
+                                        "id" to step.optString("id"),
+                                        "title" to step.optString("title"),
+                                        "description" to step.optString("description"),
+                                    ))
+                                }
+                            }
+                        },
                     )
                 )
                 if (entry != null) add(entry)
@@ -85,6 +109,14 @@ object MoteStoryProtocol {
                 bonusXp = (row["bonusXp"] as? Number)?.toInt()?.coerceAtLeast(0) ?: 0,
             )
         } ?: emptyList()
+        val steps = (value["steps"] as? List<*>)?.mapNotNull { raw ->
+            val row = raw as? Map<*, *> ?: return@mapNotNull null
+            val stepId = row["id"]?.toString()?.trim().orEmpty()
+            val title = row["title"]?.toString()?.trim().orEmpty()
+            if (stepId.isBlank() || title.isBlank()) return@mapNotNull null
+            MoteStoryStep(stepId, title, row["description"]?.toString().orEmpty())
+        }?.take(3) ?: emptyList()
+        val stepIndex = (value["stepIndex"] as? Number)?.toInt()?.coerceIn(0, steps.size) ?: 0
         return MoteStoryEntry(
             id = id,
             title = value["title"].toString().takeIf { it.isNotBlank() && it != "null" } ?: id,
@@ -101,6 +133,10 @@ object MoteStoryProtocol {
             branchChoiceId = value["branchChoiceId"].toString().takeUnless { it == "null" }.orEmpty(),
             branchOutcome = value["branchOutcome"].toString().takeUnless { it == "null" }.orEmpty(),
             completedAtMs = (value["completedAtMs"] as? Number)?.toLong()?.coerceAtLeast(0L) ?: 0L,
+            started = value["started"] as? Boolean ?: false,
+            stepIndex = stepIndex,
+            steps = steps,
+            currentStep = steps.getOrNull(stepIndex),
         )
     }
 

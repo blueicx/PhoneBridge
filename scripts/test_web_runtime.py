@@ -55,6 +55,42 @@ with sync_playwright() as playwright:
         assert page.locator("#moteVisual").get_attribute("data-touched") == "true"
         page.locator("#openDrawer").click()
         page.wait_for_selector("#commandDrawer.open")
+        page.locator("#realityRegion").fill("cell:17:29")
+        with page.expect_response(lambda response: "/api/reality/events?region=" in response.url) as events_response:
+            page.get_by_role("button", name="刷新事件", exact=True).click()
+        event_result = events_response.value
+        assert event_result.status == 200, f"reality events HTTP {event_result.status}: {event_result.text()}"
+        event_payload = event_result.json()
+        assert event_payload.get("events"), f"expected events for browser fixture region: {event_payload}"
+        page.wait_for_function(
+            "document.querySelectorAll('#realitySummary .item button').length >= 5",
+            timeout=5000,
+        )
+        first_encounter = page.locator("#realitySummary .item").first
+        assert first_encounter.locator("button").count() == 5, page.locator("#realitySummary").inner_text()
+        with page.expect_response(
+            lambda response: "/api/reality/events/" in response.url and response.url.endswith("/start"),
+            timeout=5000,
+        ) as start_response:
+            first_encounter.locator("button").first.click()
+        start_result = start_response.value
+        assert start_result.status in (200, 201), f"encounter start HTTP {start_result.status}: {start_result.text()}"
+        start_payload = start_result.json()
+        assert start_payload.get("encounter", {}).get("prompt"), f"missing server encounter prompt: {start_payload}"
+        page.wait_for_function(
+            "document.querySelector('#realitySummary')?.dataset.lastAction?.includes(':start:')",
+            timeout=5000,
+        )
+        encounter_prompt = page.locator("#realitySummary .item").last.inner_text()
+        assert start_payload["encounter"]["title"] in encounter_prompt and \
+            start_payload["encounter"]["prompt"] in encounter_prompt, \
+            f"starting an encounter must show its authored prompt; UI card={encounter_prompt!r}; JS errors={errors!r}"
+        assert first_encounter.locator("button").count() == 5, "encounter card must expose start plus four choices"
+        first_encounter.locator("button").nth(4).click()
+        page.wait_for_selector("#realityLogList .reality-log-row")
+        page.locator("#realityLogList .reality-log-row").first.click()
+        page.wait_for_function("document.querySelector('#realityLogDetail')?.innerText.includes('遭遇：')")
+        assert "选择使用 Mote 特长" in page.locator("#realityLogDetail").inner_text()
         assert page.locator("#stageChatResume").is_visible(), "resumed conversation context must appear in the chat drawer"
         assert "上次在准备项目演示" in page.locator("#stageChatResume").inner_text()
         page.locator("#closeDrawer").click()

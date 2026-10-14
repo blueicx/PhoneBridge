@@ -14,6 +14,17 @@ data class ExplorationLogBoost(
     val multiplier: Double
 )
 
+data class ExplorationLogEncounter(
+    val id: String,
+    val title: String,
+    val action: String,
+    val actionLabel: String,
+    val quality: String,
+    val outcome: String,
+    val moteId: String,
+    val moteName: String
+)
+
 data class ExplorationLogReward(
     val xp: Int,
     val items: List<ExplorationLogItem> = emptyList(),
@@ -28,6 +39,7 @@ data class ExplorationLogEntry(
     val clueType: String,
     val moteId: String? = null,
     val observation: String? = null,
+    val encounter: ExplorationLogEncounter? = null,
     val reward: ExplorationLogReward? = null,
     val reason: String? = null,
     val acknowledged: Boolean = false
@@ -41,7 +53,8 @@ data class ExplorationLogEntry(
             "clueType",
             "moteId",
             "observation",
-            "reward"
+            "reward",
+            "encounter"
         )
     }
 }
@@ -87,6 +100,16 @@ object ExplorationLogParser {
     private val safeReason = Regex("^[a-z0-9_.:-]{1,80}$")
     private val safeCursor = Regex("^[A-Za-z0-9_-]{1,$MAX_CURSOR_LENGTH}$")
     private val clueTypes = setOf("location", "object", "light")
+    private val encounterIds = setOf(
+        "echo-beacon", "wind-trace", "drifting-shadow", "glass-garden", "quiet-bridge", "orbit-courier",
+        "prism-rain", "moss-shelter", "stone-echo", "tide-marker", "lost-signal", "cloud-seed"
+    )
+    private val encounterActions = mapOf(
+        "observe" to "仔细观察",
+        "soothe" to "与 Mote 共鸣",
+        "dodge" to "绕开干扰",
+        "skill" to "使用 Mote 特长"
+    )
 
     fun parsePage(json: JSONObject): ExplorationLogPage {
         val source = json.optJSONArray("entries") ?: JSONArray()
@@ -155,6 +178,7 @@ object ExplorationLogParser {
             .trim()
             .take(MAX_TEXT_LENGTH)
             .takeIf(String::isNotBlank)
+        val encounter = parseEncounter(json.optJSONObject("encounter"))
         return ExplorationLogEntry(
             eventId = eventId,
             status = ExplorationLogStatus.CONFIRMED,
@@ -163,7 +187,34 @@ object ExplorationLogParser {
             clueType = clueType,
             moteId = moteId,
             observation = observation,
+            encounter = encounter,
             reward = reward
+        )
+    }
+
+    private fun parseEncounter(json: JSONObject?): ExplorationLogEncounter? {
+        json ?: return null
+        val id = json.optString("id").takeIf(encounterIds::contains) ?: return null
+        val action = json.optString("action").takeIf(encounterActions::containsKey) ?: return null
+        val quality = json.optString("quality").takeIf { it == "默契契合" || it == "别样发现" } ?: return null
+        fun safeText(key: String, limit: Int): String? = json.optString(key)
+            .filterNot(Char::isISOControl)
+            .trim()
+            .take(limit)
+            .takeIf(String::isNotBlank)
+        val title = safeText("title", 48) ?: return null
+        val outcome = safeText("outcome", MAX_TEXT_LENGTH) ?: return null
+        val moteId = json.optString("moteId").takeIf(safeId::matches) ?: return null
+        val moteName = safeText("moteName", 24) ?: return null
+        return ExplorationLogEncounter(
+            id = id,
+            title = title,
+            action = action,
+            actionLabel = encounterActions.getValue(action),
+            quality = quality,
+            outcome = outcome,
+            moteId = moteId,
+            moteName = moteName
         )
     }
 

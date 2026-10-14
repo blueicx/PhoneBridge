@@ -10,7 +10,8 @@
     "clueType",
     "moteId",
     "observation",
-    "reward"
+    "reward",
+    "encounter"
   ],
   "serverPage": {
     "entries": [
@@ -22,6 +23,16 @@
         "clueType": "object",
         "moteId": "sprite",
         "observation": "叶狐：一起留意可观察的物体线索。",
+        "encounter": {
+          "id": "echo-beacon",
+          "title": "回声信标",
+          "action": "observe",
+          "actionLabel": "仔细观察",
+          "quality": "别样发现",
+          "outcome": "你辨认出信号来自间歇闪烁的边缘。",
+          "moteId": "sprite",
+          "moteName": "叶狐"
+        },
         "reward": {
           "xp": 3,
           "items": [],

@@ -102,6 +102,37 @@ test('does not expose unknown persisted item identifiers as exploration rewards'
   assert.equal(JSON.stringify(result).includes('PRIVATE-ITEM-NAME'), false);
 });
 
+test('projects only allowlisted encounter choices and authored outcomes into confirmed history', () => {
+  const eventId = 'reality-lens:v2:2026-09-30:camera:object:encounter-log';
+  const args = stores({ growth: [{
+    eventId,
+    businessStatus: 'accepted',
+    createdAt: 500,
+    region: 'camera',
+    clueType: 'object',
+    reward: {
+      xp: 4,
+      encounter: {
+        id: 'echo-beacon',
+        action: 'skill',
+        moteId: 'sprite',
+        xpBonus: 2,
+        outcome: '替换为攻击者内容',
+        rawImage: 'PRIVATE-IMAGE',
+      },
+    },
+  }] });
+
+  const entry = buildRealityLog(args).entries[0];
+
+  assert.equal(entry.encounter.id, 'echo-beacon');
+  assert.equal(entry.encounter.title, '回声信标');
+  assert.equal(entry.encounter.action, 'skill');
+  assert.equal(entry.encounter.moteName, '叶狐');
+  assert.equal(entry.encounter.outcome.includes('攻击者'), false);
+  assert.equal(JSON.stringify(entry).includes('PRIVATE-IMAGE'), false);
+});
+
 test('uses deterministic descending occurredAt/eventId ordering and keyset pagination without gaps or overlap', () => {
   const entries = ['a', 'b', 'c', 'd', 'e'].map(eventId => ({
     eventId: `reality:v2:2026-09-30:camera:light:960:${eventId}`,

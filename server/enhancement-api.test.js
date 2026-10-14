@@ -221,16 +221,33 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     assert.equal(reality.response.status, 200);
     assert.equal(reality.body.events.length, 8);
     const event = reality.body.events[0];
+    const started = await request(`/api/reality/events/${encodeURIComponent(event.id)}/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ region: 'cell:1:2' })
+    });
+    assert.equal(started.response.status, 201);
+    assert.ok(started.body.encounter.title);
+    assert.ok(started.body.encounter.prompt);
+    assert.equal(Object.hasOwn(started.body.encounter, 'outcome'), false);
     const resolved = await request(`/api/reality/events/${encodeURIComponent(event.id)}/resolve`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ region: 'cell:1:2', clueType: event.clueType, actions: ['observe'] })
+      body: JSON.stringify({
+        region: 'cell:1:2', clueType: event.clueType, actions: ['skill'],
+        xpBonus: 9999, encounter: { outcome: 'CLIENT-CONTROLLED' },
+      })
     });
     assert.equal(resolved.response.status, 201, JSON.stringify(resolved.body));
+    assert.equal(resolved.body.encounter.action, 'skill');
+    assert.equal(resolved.body.encounter.xpBonus, resolved.body.growth.reward.encounter.xpBonus);
+    assert.ok(resolved.body.encounter.xpBonus >= 1 && resolved.body.encounter.xpBonus <= 2);
+    assert.equal(JSON.stringify(resolved.body.encounter).includes('CLIENT-CONTROLLED'), false);
     const duplicate = await request(`/api/reality/events/${encodeURIComponent(event.id)}/resolve`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ region: 'cell:1:2', clueType: event.clueType })
+      body: JSON.stringify({ region: 'cell:1:2', clueType: event.clueType, actions: ['dodge'] })
     });
     assert.equal(duplicate.body.duplicate, true);
+    assert.deepEqual(duplicate.body.encounter, resolved.body.encounter);
+    assert.equal(duplicate.body.growth.reward.xp, 0);
 
     const realityLog = await request('/api/reality/log?limit=10');
     assert.equal(realityLog.response.status, 200);
@@ -239,8 +256,10 @@ test('enhancement endpoints: timeline, diagnostics, and AI provider APIs', { tim
     assert.equal(realityLog.body.entries[0].status, 'confirmed');
     assert.equal(realityLog.body.entries[0].coarseRegion, 'cell:1:2');
     assert.equal(realityLog.body.entries[0].clueType, event.clueType);
+    assert.equal(realityLog.body.entries[0].encounter.action, 'skill');
+    assert.equal(realityLog.body.entries[0].encounter.outcome.includes('CLIENT'), false);
     assert.deepEqual(Object.keys(realityLog.body.entries[0]).sort(), [
-      'eventId', 'status', 'occurredAt', 'coarseRegion', 'clueType', 'moteId', 'observation', 'reward',
+      'eventId', 'status', 'occurredAt', 'coarseRegion', 'clueType', 'moteId', 'observation', 'reward', 'encounter',
     ].sort());
     const badRealityCursor = await request('/api/reality/log?cursor=not-a-valid-cursor');
     assert.equal(badRealityCursor.response.status, 400);

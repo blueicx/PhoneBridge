@@ -173,6 +173,57 @@ class ExplorationLogTest {
     }
 
     @Test
+    fun parsesAuthoredEncounterChoiceAndOutcomeWithSafeDefaults() {
+        val eventId = "reality-lens:v2:2026-09-30:cell:1:2:object:encounter-ui"
+        val encounter = JSONObject()
+            .put("id", "echo-beacon")
+            .put("title", "回声信标")
+            .put("action", "skill")
+            .put("actionLabel", "使用 Mote 特长")
+            .put("quality", "默契契合")
+            .put("outcome", "叶狐把散乱信号排成序列。")
+            .put("moteId", "sprite")
+            .put("moteName", "叶狐")
+            .put("rawImage", "PRIVATE-IMAGE")
+        val page = ExplorationLogParser.parsePage(
+            JSONObject()
+                .put("entries", org.json.JSONArray().put(
+                    JSONObject()
+                        .put("eventId", eventId)
+                        .put("status", "confirmed")
+                        .put("occurredAt", 1_790_769_600_000L)
+                        .put("coarseRegion", "cell:1:2")
+                        .put("clueType", "object")
+                        .put("moteId", "sprite")
+                        .put("reward", JSONObject().put("xp", 4))
+                        .put("encounter", encounter)
+                ))
+        )
+        val parsed = page.entries.single().encounter
+        assertEquals("echo-beacon", parsed?.id)
+        assertEquals("skill", parsed?.action)
+        assertEquals("使用 Mote 特长", parsed?.actionLabel)
+        assertEquals("默契契合", parsed?.quality)
+        assertEquals("叶狐把散乱信号排成序列。", parsed?.outcome)
+        assertFalse(parsed.toString().contains("PRIVATE-IMAGE"))
+
+        val unknown = JSONObject(encounter.toString()).put("id", "attacker-id")
+        val safePage = ExplorationLogParser.parsePage(
+            JSONObject().put("entries", org.json.JSONArray().put(
+                JSONObject()
+                    .put("eventId", eventId)
+                    .put("status", "confirmed")
+                    .put("occurredAt", 1_790_769_600_000L)
+                    .put("coarseRegion", "cell:1:2")
+                    .put("clueType", "object")
+                    .put("reward", JSONObject().put("xp", 4))
+                    .put("encounter", unknown)
+            ))
+        )
+        assertNull(safePage.entries.single().encounter)
+    }
+
+    @Test
     fun sharedFixtureMatchesAndroidParserAndServerFieldAllowlist() {
         val fixture = loadFixture()
         assertEquals("progress", fixture.getString("privacyCategory"))
@@ -183,6 +234,9 @@ class ExplorationLogTest {
         assertEquals(ExplorationLogStatus.CONFIRMED, entry.status)
         assertEquals("cell:1:2", entry.coarseRegion)
         assertEquals(3, entry.reward?.xp)
+        assertEquals("echo-beacon", entry.encounter?.id)
+        assertEquals("observe", entry.encounter?.action)
+        assertEquals("你辨认出信号来自间歇闪烁的边缘。", entry.encounter?.outcome)
         val allowed = (0 until fixture.getJSONArray("allowedServerEntryFields").length())
             .map { fixture.getJSONArray("allowedServerEntryFields").getString(it) }
             .toSet()
