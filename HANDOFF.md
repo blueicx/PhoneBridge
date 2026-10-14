@@ -13,9 +13,9 @@
 - 批次 4 验收期间发现并修复两类回归：Reality coordinator 旧测试替身未声明新增投影接口；使用/制作成功但响应丢失时，库存变化曾使重试入口消失。已补 Node/Android 回归覆盖。
 - 实机边界：批次 4 未做 Xperia 实机拖拽/观感验收。Xperia 首屏、PTT、卡片触控、冷启动、帧耗时和两小时稳定性仍待设备验证，不以浏览器/构建证据代替。正式 Release 签名仍遵守独立加密恢复副本门禁。
 - 批次 5 本机实现与自动验收已完成：Mote Story v4 为 20 个角色提供服务端持久化三章进度和双结局；12 种探索遭遇包含原创提示及四类动作的差异结果；Web/Android 展示遭遇提示、选择与已确认收据。奖励继续由服务端按稳定 eventId 幂等结算。
-- 批次 5 本机门禁：Node **312/312**；Android JVM **199/199（51 suites）**、`lintDebug`、`assembleDebug`；隔离本地节点 + Chromium 窄屏完整遭遇交互；APK 内部门禁、签名解析器、workflow 契约、秘密扫描、性能预算和 `git diff --check` 均通过。最新变更还未提交/推送，GitHub Actions 对该批的状态尚未取得。
+- 批次 5 本机门禁：Node **312/312**；Android JVM **199/199（51 suites）**、`lintDebug`、`assembleDebug`；隔离本地节点 + Chromium 窄屏完整遭遇交互；APK 内部门禁、签名解析器、workflow 契约、秘密扫描、性能预算和 `git diff --check` 均通过。实现提交 `d926be1` 已在本地创建但尚未推送，因此该提交的 GitHub Actions 尚未触发。
 - 实机边界：未运行 ADB，也未操作手机；20 只角色的实际辨识度、Xperia 镜头遭遇与奖励回显、AR 重定位和长时稳定性仍待实机。浏览器测试使用独立模拟节点，不代表真机/地理位置验收。正式 Release 签名仍遵守独立加密恢复副本门禁。
-- 下一步：先核对批次 4 文档收尾 SHA 的 Actions，再提交/推送批次 5 并验收其最新 SHA；随后执行批次 6 的备份恢复、性能/发布产物与总验收，设备证据缺失项继续明确保留。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+- 下一步：先核对批次 4 文档收尾 SHA 的 Actions，再推送 `d926be1` 并验收批次 5 最新 SHA；随后执行批次 6 的备份恢复、性能/发布产物与总验收，设备证据缺失项继续明确保留。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 
 更新时间：2026-10-14（本节为当前状态；下面 2026-10-03 及更早内容为历史交接）
 

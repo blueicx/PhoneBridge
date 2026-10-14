@@ -101,7 +101,7 @@
 - 现实遭遇增加 12 个原创场景，每个都提供独立提示，并分别为观察、共鸣、绕行和 Mote 特长编写不同结果。开始只展示提示，用户选择后服务端决定结果与有限经验加成；客户端提交的剧情文字和经验不会被信任。
 - Web 与 Android 探索记录显示已确认遭遇、角色选择与结果；共享 fixture 向旧协议兼容，日志仅投影服务端白名单收据。
 - 本机验证：Node **312/312**；Android JVM **199/199（51 suites）**，`:app:lintDebug` 与 `:app:assembleDebug` 成功；隔离本地服务 + Chromium 覆盖窄屏遭遇提示、四选一和历史收据；APK 内部门禁、签名解析器、Android CI workflow 契约、秘密扫描与 `git diff --check` 通过。性能基准 `elapsedMs=1.286`、完整快照 **1694 bytes**、摘要 **48 bytes**、缓存命中 **10000**、突发广播 **1**。
-- 本节记录的是本机自动化验收；最新代码对应的 GitHub Actions 尚待提交后核验。未用浏览器/模拟器结果替代 Xperia 实机剧情、镜头线索、奖励回显及两小时运行验收；正式 Release 签名仍受独立加密恢复副本门禁约束。
+- 本节记录的是本机自动化验收；批次实现已本地提交 `d926be1`，推送后再核验对应 GitHub Actions。未用浏览器/模拟器结果替代 Xperia 实机剧情、镜头线索、奖励回显及两小时运行验收；正式 Release 签名仍受独立加密恢复副本门禁约束。
 
 实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 
