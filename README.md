@@ -108,7 +108,7 @@
 ## 2026-10-14 大版本深化·批次 6：恢复与交付预检
 
 - `scripts/test_runtime_backup.ps1` 在隔离临时目录通过：v3 清单与哈希、敏感文件/日志/精确位置/原图字段排除、加密包错误口令、VerifyOnly 不写入、替换失败回滚、成功恢复、篡改/缺失/路径穿越/空备份拒绝，以及 v2 迁移。故事、成长收据和进行中的 Reality 遭遇均纳入清单；恢复后重新创建真实 `RuntimePersistence`、`MoteStoryStore` 与 `MoteGrowthStore`，重放故事步骤和线索事件均被去重，不会重复推进或发 XP。
-- GitHub Actions 的 PowerShell 门禁已加入同一恢复演练，工作流契约测试会检查此步骤存在；本机恢复脚本与 CI 契约检查通过。该 CI 改动尚未提交/推送，远端 Actions 仍待触发。
+- GitHub Actions 的 PowerShell 门禁已加入同一恢复演练，工作流契约测试会检查此步骤存在；本机恢复脚本与 CI 契约检查通过。该改动已本地提交 `e046832`，尚未推送，远端 Actions 仍待触发。
 - 当前 Debug APK 在干净工作树上通过 `scripts/verify_release_gates.ps1 -Channel internal-debug -RequireClean`；包名、版本和 Android 签名校验通过。此结果不等同正式 Release 签名。
 - 实机前置探测：`192.168.101.68:39663` TCP 不可达；ADB 使用隔离端口 5038 查询后无已连接设备。本轮未连接、安装或操作手机。
 - 批次 6 尚未完成：需要先核对前置提交的最新 SHA Actions，再提交并推送批次 5/6；随后核验最新 SHA Actions、最终性能/备份报告、Debug artifact 交付。可用设备实测仍待设备恢复；正式签名继续受独立加密恢复副本门禁约束。
