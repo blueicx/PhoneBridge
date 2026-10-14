@@ -101,7 +101,16 @@
 - 现实遭遇增加 12 个原创场景，每个都提供独立提示，并分别为观察、共鸣、绕行和 Mote 特长编写不同结果。开始只展示提示，用户选择后服务端决定结果与有限经验加成；客户端提交的剧情文字和经验不会被信任。
 - Web 与 Android 探索记录显示已确认遭遇、角色选择与结果；共享 fixture 向旧协议兼容，日志仅投影服务端白名单收据。
 - 本机验证：Node **312/312**；Android JVM **199/199（51 suites）**，`:app:lintDebug` 与 `:app:assembleDebug` 成功；隔离本地服务 + Chromium 覆盖窄屏遭遇提示、四选一和历史收据；APK 内部门禁、签名解析器、Android CI workflow 契约、秘密扫描与 `git diff --check` 通过。性能基准 `elapsedMs=1.286`、完整快照 **1694 bytes**、摘要 **48 bytes**、缓存命中 **10000**、突发广播 **1**。
-- 本节记录的是本机自动化验收；批次实现已本地提交 `d926be1`，推送后再核验对应 GitHub Actions。未用浏览器/模拟器结果替代 Xperia 实机剧情、镜头线索、奖励回显及两小时运行验收；正式 Release 签名仍受独立加密恢复副本门禁约束。
+- 本节记录的是本机自动化验收；批次实现已本地提交 `d926be1`，推送后再核验对应 GitHub Actions。Xperia 无线调试地址 `192.168.101.68:39663` 当前不可达，本轮未操作手机；正式 Release 签名仍受独立加密恢复副本门禁约束。
+
+实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+
+## 2026-10-14 大版本深化·批次 6：恢复与交付预检
+
+- `scripts/test_runtime_backup.ps1` 在隔离临时目录通过：v3 清单与哈希、敏感文件/日志排除、加密包错误口令、VerifyOnly 不写入、替换失败回滚、成功恢复、篡改/缺失/路径穿越/空备份拒绝，以及 v2 迁移。
+- 当前 Debug APK 在干净工作树上通过 `scripts/verify_release_gates.ps1 -Channel internal-debug -RequireClean`；包名、版本和 Android 签名校验通过。此结果不等同正式 Release 签名。
+- 实机前置探测：`192.168.101.68:39663` TCP 不可达；ADB 使用隔离端口 5038 查询后无已连接设备。本轮未连接、安装或操作手机。
+- 批次 6 尚未完成：需要批次 5 推送并核对最新 SHA Actions、最终性能/备份报告、可用设备实测和 Debug artifact 交付。正式签名继续受独立加密恢复副本门禁约束。
 
 实施账本：[`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 

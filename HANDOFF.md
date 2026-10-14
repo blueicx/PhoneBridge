@@ -14,8 +14,9 @@
 - 实机边界：批次 4 未做 Xperia 实机拖拽/观感验收。Xperia 首屏、PTT、卡片触控、冷启动、帧耗时和两小时稳定性仍待设备验证，不以浏览器/构建证据代替。正式 Release 签名仍遵守独立加密恢复副本门禁。
 - 批次 5 本机实现与自动验收已完成：Mote Story v4 为 20 个角色提供服务端持久化三章进度和双结局；12 种探索遭遇包含原创提示及四类动作的差异结果；Web/Android 展示遭遇提示、选择与已确认收据。奖励继续由服务端按稳定 eventId 幂等结算。
 - 批次 5 本机门禁：Node **312/312**；Android JVM **199/199（51 suites）**、`lintDebug`、`assembleDebug`；隔离本地节点 + Chromium 窄屏完整遭遇交互；APK 内部门禁、签名解析器、workflow 契约、秘密扫描、性能预算和 `git diff --check` 均通过。实现提交 `d926be1` 已在本地创建但尚未推送，因此该提交的 GitHub Actions 尚未触发。
-- 实机边界：未运行 ADB，也未操作手机；20 只角色的实际辨识度、Xperia 镜头遭遇与奖励回显、AR 重定位和长时稳定性仍待实机。浏览器测试使用独立模拟节点，不代表真机/地理位置验收。正式 Release 签名仍遵守独立加密恢复副本门禁。
-- 下一步：先核对批次 4 文档收尾 SHA 的 Actions，再推送 `d926be1` 并验收批次 5 最新 SHA；随后执行批次 6 的备份恢复、性能/发布产物与总验收，设备证据缺失项继续明确保留。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
+- 实机边界：`192.168.101.68:39663` TCP 不可达；隔离 ADB 5038 设备列表为空。本轮只做连通性/设备列表探测，未连接、安装或操作手机。20 只角色的实际辨识度、Xperia 镜头遭遇与奖励回显、AR 重定位和长时稳定性仍待实机；浏览器模拟不代表真机/地理位置验收。
+- 批次 6 本机恢复预检：`scripts/test_runtime_backup.ps1` 全部故障场景通过，含 v2→v3 迁移、VerifyOnly、敏感文件排除、哈希校验、路径穿越/篡改/缺失/空备份拒绝、替换失败回滚与成功恢复。Debug APK 在干净树通过内部签名/版本门禁；正式 Release 签名仍遵守独立加密恢复副本门禁。
+- 当前提交：批次 5 实现 `d926be1` 与文档状态收尾 `eacb6d4` 均在本地，尚未推送；批次 4 文档收尾 SHA 的 Actions 状态仍需核对，批次 5 Actions 将在推送后触发。下一步先确认前置 CI，再推送并核验最新 SHA；随后完成批次 6 的最终性能/备份报告、artifact 与可用设备验收。计划见 [`docs/superpowers/plans/2026-10-13-phonebridge-deepening.md`](docs/superpowers/plans/2026-10-13-phonebridge-deepening.md)。
 
 更新时间：2026-10-14（本节为当前状态；下面 2026-10-03 及更早内容为历史交接）
 

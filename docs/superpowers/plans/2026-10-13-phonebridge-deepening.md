@@ -18,7 +18,7 @@
 - 批次 3：提交 `6377e763c0c277bfb792841276a2f6268d97f660` 已推送；GitHub Actions run **38536709334** 全部成功。Node **276/276**；Android JVM **189/189（49 suites）**、Lint、Debug 构建通过；真实本地服务 + Chromium、模拟 SSE、性能预算和敏感扫描通过。覆盖 provider 真流式/取消、会话恢复与隐私隔离、记忆来源/冲突/批量确认与合并、Android 离线记忆同步状态。
 - 批次 4：实现提交 `00d6176e9ee6846b10bf5335dac7b36fbf2c57b9` 已推送；GitHub Actions [run 38543293259](https://github.com/blueicx/PhoneBridge/actions/runs/38543293259) 的 Node、Android、API 34 emulator 与 APK verify 四个 job 全成功。本地 Node **297/297**、Android JVM **196/196**、Lint/Debug 构建、Chromium、内部 APK 门禁、秘密扫描、脚本语法及 diff 检查均通过。文档收尾提交 `2cf910786076b0174b11f1ecc862bbe4d89c617b` 的 Actions 状态需在继续推送前核实。
 - 批次 5：本机实现与自动验收通过，实现提交 `d926be1` 已本地创建、尚未推送。20 个 Mote 的三章双结局剧情、12 种四动作遭遇、双端结果记录已落地；Node **312/312**、Android JVM **199/199**、Lint/Debug 构建、隔离 Chromium、APK 门禁、秘密扫描与性能预算通过。推送后的最新 SHA Actions 和 Xperia 实机验收待完成。
-- 批次 6：待实施；恢复演练、最终交付与最新 SHA CI 留待后续。真实设备/AR/长时稳定性及真实在线 provider 验收保持单独待办。
+- 批次 6：本地恢复预检已通过，尚未最终完成。`scripts/test_runtime_backup.ps1` 覆盖 v3 清单/哈希、VerifyOnly、旧 v2 迁移、敏感文件排除、损坏/缺失/路径穿越/空备份拒绝及恢复回滚；Debug APK 内部门禁在干净树通过。无线 ADB `192.168.101.68:39663` 不可达，隔离 ADB 5038 无设备；远端最新 SHA Actions、完整交付报告/artifact 与实机验收待完成。真实 AR/长时稳定性及真实在线 provider 验收保持单独待办。
 
 ## 验收
 
